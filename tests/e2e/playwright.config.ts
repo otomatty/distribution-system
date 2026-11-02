@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // E2E テストは wrangler dev（開発用ログインが有効な環境）に対して実行する。
-const PORT = 8788;
+const PORT = Number(process.env["E2E_PORT"] ?? "8788");
 const executablePath = process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"];
 
 export default defineConfig({
