@@ -24,11 +24,12 @@
 
 ```sh
 bun install
-cp .dev.vars.example .dev.vars   # 値を入れる（開発用ログインだけなら空でもよい）
+cp .dev.vars.example .dev.vars   # 値を入れる（開発用ログインだけなら Google の値は空でもよい）
 bun run dev                      # http://localhost:8787
 ```
 
-`/dev/login` から、登録済みの社員のメールアドレスでログインできます（開発環境とテストだけで有効）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。テストデータは `bun run db:seed` で入れます。
+`/dev/login` から、登録済みの社員のメールアドレスでログインできます（`ENVIRONMENT` が `development` か `test` のときだけ有効）。
+`wrangler.jsonc` の既定の `ENVIRONMENT` は開発用ログインが有効にならない値（`unconfigured`）なので、`bun run dev` と `.dev.vars` で `development` を渡しています（テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で渡す）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。テストデータは `bun run db:seed` で入れます。
 
 ## 検査
 

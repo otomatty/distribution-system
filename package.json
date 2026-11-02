@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler d1 migrations apply AUTH_DB --local && wrangler dev",
+    "dev": "wrangler d1 migrations apply AUTH_DB --local && wrangler dev --var ENVIRONMENT:development",
     "build:assets": "node scripts/copy-assets.mjs",
     "check": "bun run fmt:check && bun run lint && bun run typecheck && bun run test && bun run knip",
     "fmt": "oxfmt .",

@@ -133,6 +133,8 @@ docs/requirements.md 要件定義書の写し
 | `bun run db:migrate:local`          | ログイン情報（D1）のマイグレーションを手元に適用                                            |
 | `bun run cf-typegen`                | `wrangler.jsonc` からバインディングの型を生成                                               |
 
+開発用ログインは `ENVIRONMENT` が `development` か `test` のときだけ有効です。`wrangler.jsonc` の既定の値（`unconfigured`）では有効にならないので、`--env` を付けずに配備しても開きません。手元の開発は `bun run dev`（`--var ENVIRONMENT:development`）と `.dev.vars`、テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で値を明示的に渡します。
+
 E2E テストの Chromium は `bunx playwright install chromium` で入れます。別の場所にある Chromium を使う場合は、環境変数 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` にパスを指定してください。
 
 デプロイは CI からだけ行います。手元から本番にデプロイしないでください。
