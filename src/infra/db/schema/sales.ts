@@ -200,7 +200,11 @@ export const customerPayments = sqliteTable(
     memo: text("memo"),
     ...auditColumns,
   },
-  (t) => [index("customer_payments_customer").on(t.customerId, t.receivedOn)],
+  (t) => [
+    index("customer_payments_customer").on(t.customerId, t.receivedOn),
+    // 売掛残高の未消込の入金の集計（表を読まずに索引だけで足す）
+    index("customer_payments_customer_amount").on(t.customerId, t.cancelled, t.amount),
+  ],
 );
 
 export const paymentAllocations = sqliteTable(
@@ -218,6 +222,8 @@ export const paymentAllocations = sqliteTable(
   (t) => [
     index("payment_allocations_payment").on(t.paymentId),
     index("payment_allocations_invoice").on(t.invoiceId),
+    // 売掛残高の入金ごとの消込の集計（表を読まずに索引だけで足す）
+    index("payment_allocations_payment_amount").on(t.paymentId, t.cancelled, t.amount),
   ],
 );
 

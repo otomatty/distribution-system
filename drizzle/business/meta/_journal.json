@@ -43,6 +43,13 @@
       "when": 1793617229888,
       "tag": "0005_list_and_period_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793622287070,
+      "tag": "0006_dashboard_and_receivables_indexes",
+      "breakpoints": true
     }
   ]
 }
