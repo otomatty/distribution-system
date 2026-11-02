@@ -113,8 +113,8 @@ export function maskAddress(address: string): string {
   return at <= 0 ? "***" : `${address[0] ?? ""}***${address.slice(at)}`;
 }
 
+/** 開発・テスト用：送らずに、件名と添付の大きさだけをログに出す */
 const logMailer: Mailer = {
-  // oxlint の require-await を満たすため、Promise を明示的に返す
   send(m) {
     log("info", "mail not sent (no EMAIL binding)", {
       to: m.to.map(maskAddress),

@@ -701,6 +701,16 @@ body.touch .table th {
   height: 100%;
   background: var(--primary);
 }
+/* htmx の通信中の表示（htmx が自分で足す <style> は CSP で使えないため、ここに書く） */
+.htmx-indicator {
+  opacity: 0;
+}
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+  transition: opacity 200ms ease-in;
+}
+
 /* 進み具合（<progress>。CSP で style 属性を使えないため、幅は value で表す） */
 progress.progress-bar {
   appearance: none;

@@ -39,6 +39,12 @@ function conditions(filter: DocumentFilter): SQL | undefined {
   if (filter.amountMin !== undefined) conds.push(gte(documents.amount, filter.amountMin));
   if (filter.amountMax !== undefined) conds.push(lte(documents.amount, filter.amountMax));
   if (filter.partnerId) conds.push(eq(documents.partnerId, filter.partnerId));
+  if (filter.partnerQuery) {
+    const p = likePattern(filter.partnerQuery);
+    conds.push(
+      sql`${documents.partnerId} IN (SELECT p.id FROM ${partners} p WHERE p.name LIKE ${p} ESCAPE '\\' OR p.kana LIKE ${p} ESCAPE '\\')`,
+    );
+  }
   if (filter.documentType) conds.push(eq(documents.documentType, filter.documentType));
   if (filter.documentTypes) conds.push(inArray(documents.documentType, [...filter.documentTypes]));
   if (filter.number) {

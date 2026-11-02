@@ -4,7 +4,7 @@
  * 在庫の引当や採番が競合しない（要件定義書 8章）。
  */
 import { DurableObject } from "cloudflare:workers";
-import { and, asc, eq, getTableName, is, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, is, lt, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -624,7 +624,50 @@ export class BusinessDb extends DurableObject<Env> {
       .run();
   }
 
-  // ---- 定期処理（バックアップ、受付番号の掃除、エラーの通知） --------------------------
+  // ---- 定期処理（バックアップ、受付番号の掃除、止まった処理、エラーの通知） ------------------
+
+  /**
+   * 時間内に終わらなかった処理（Worker が途中で止まり、結果を記録できなかったもの）を失敗にする。
+   * その処理で送っていた帳票の送付も失敗にする（画面から再送できる）。失敗にした件数を返す。
+   * 進み具合を記録している処理は updated_at が新しくなるので対象にならない。
+   */
+  failStaleJobs(before: string, message: string): number {
+    const at = new Date().toISOString();
+    return this.db.transaction((tx) => {
+      const stale = tx
+        .select({ id: schema.jobs.id })
+        .from(schema.jobs)
+        .where(
+          and(
+            inArray(schema.jobs.status, ["queued", "running"]),
+            lt(schema.jobs.updatedAt, before),
+          ),
+        )
+        .all()
+        .map((j) => j.id);
+      if (stale.length === 0) return 0;
+      tx.update(schema.jobs)
+        .set({ status: "failed", error: message, finishedAt: at, updatedAt: at })
+        .where(inArray(schema.jobs.id, stale))
+        .run();
+      tx.update(schema.documentSends)
+        .set({
+          status: "failed",
+          error: message,
+          updatedAt: at,
+          updatedBy: SYSTEM_ACTOR.employeeId,
+          version: sql`${schema.documentSends.version} + 1`,
+        })
+        .where(
+          and(
+            inArray(schema.documentSends.jobId, stale),
+            eq(schema.documentSends.status, "pending"),
+          ),
+        )
+        .run();
+      return stale.length;
+    });
+  }
 
   /** 古い受付番号（冪等キー）を消す。消した件数を返す */
   purgeIdempotencyKeys(before: string): number {

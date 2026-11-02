@@ -123,6 +123,63 @@ describe("日次バックアップ", () => {
   });
 });
 
+/** 送付の処理（job）の行 */
+function sendJobRow(id: string, at: string) {
+  return {
+    id,
+    type: "send_document",
+    payloadJson: JSON.stringify({ sendId: `send-${id}` }),
+    status: "running" as const,
+    createdAt: at,
+    createdBy: "system",
+    updatedAt: at,
+    updatedBy: "system",
+  };
+}
+
+describe("止まった処理の片付け", () => {
+  it("毎時、1時間以上進まない処理を失敗にし、その処理の送付も失敗にする", async () => {
+    const old = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const recent = new Date().toISOString();
+    await runInDurableObject(businessDb(env), (_instance, state) => {
+      const db = drizzle(state.storage, { schema });
+      db.insert(schema.jobs)
+        .values([
+          sendJobRow("STALEJOB0000000000000000001", old),
+          sendJobRow("FRESHJOB0000000000000000001", recent),
+        ])
+        .run();
+      db.insert(schema.documentSends)
+        .values({
+          id: "send-STALEJOB0000000000000000001",
+          documentId: "doc-stale",
+          method: "email",
+          recipient: "stale@example.com",
+          status: "pending",
+          jobId: "STALEJOB0000000000000000001",
+          createdAt: old,
+          createdBy: "system",
+          updatedAt: old,
+          updatedBy: "system",
+        })
+        .run();
+    });
+
+    await worker.scheduled(createScheduledController({ cron: "30 * * * *" }), env);
+
+    const jobs = await readDb((db) => db.select().from(schema.jobs).all());
+    const stale = jobs.find((j) => j.id === "STALEJOB0000000000000000001");
+    expect(stale?.status).toBe("failed");
+    expect(stale?.error).toContain("処理が時間内に終わりませんでした");
+    expect(jobs.find((j) => j.id === "FRESHJOB0000000000000000001")?.status).toBe("running");
+    const sends = await readDb((db) => db.select().from(schema.documentSends).all());
+    expect(sends.find((x) => x.id === "send-STALEJOB0000000000000000001")).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("処理が時間内に終わりませんでした"),
+    });
+  });
+});
+
 describe("ダッシュボード", () => {
   it("役割ごとに今日やることを表示し、各項目から絞り込み済みの一覧に移れる", async () => {
     const purchasing = await createEmployee(["purchasing"]);

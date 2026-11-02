@@ -88,6 +88,7 @@ function filterFrom(get: (name: string) => string) {
     amountMin: amountParam(get("amountMin")),
     amountMax: amountParam(get("amountMax")),
     partnerId: text("partnerId"),
+    partnerQuery: text("partnerQuery"),
     number: text("number"),
     cancelled: pick("cancelled", ["exclude", "only"] as const),
     renderStatus: pick("renderStatus", ["pending", "ready", "failed"] as const),
@@ -105,15 +106,21 @@ function inputValue(v: string | number | undefined): string {
   return v === undefined ? "" : String(v);
 }
 
-async function partnerOptions(c: Context<AppEnv>) {
-  const [suppliers, customers] = await Promise.all([
-    runQuery(c, "partners.options", { role: "supplier" }),
-    runQuery(c, "partners.options", { role: "customer" }),
-  ]);
-  const byId = new Map([...suppliers, ...customers].map((p) => [p.id, p]));
-  return [...byId.values()]
-    .toSorted((a, b) => a.kana.localeCompare(b.kana, "ja"))
-    .map((p) => ({ value: p.id, label: p.name }));
+/** 検索の条件のエラー（絞り込みでは表の部分だけを差し替えるので、項目ごとの内容もここに出す） */
+function FilterError(props: { error: DomainError }) {
+  const fields = props.error.fields ?? [];
+  return (
+    <Alert kind="error">
+      <strong>{props.error.message}</strong>
+      {fields.length > 0 ? (
+        <ul>
+          {fields.map((f) => (
+            <li>{f.message}</li>
+          ))}
+        </ul>
+      ) : null}
+    </Alert>
+  );
 }
 
 // ---- 表示の部品 -------------------------------------------------------------------
@@ -206,7 +213,10 @@ documentRoutes.get("/", async (c) => {
     return c.text(result.error.message, result.error.code === "forbidden" ? 403 : 400);
   }
   const errors = result.ok ? {} : toFormErrors(result.error);
-  const partners = await partnerOptions(c);
+  // 取引先の画面などから取引先を指定して開いた場合は、その取引先の名前を出す
+  const partner = filter.partnerId
+    ? await runQuery(c, "partners.get", { id: filter.partnerId })
+    : null;
   const query = filterQuery(filter);
   const notice = c.req.query("notice") === "bulk_empty" ? "PDF にする帳票を選んでください" : null;
   return c.html(
@@ -226,7 +236,7 @@ documentRoutes.get("/", async (c) => {
         hx-select="#results"
         hx-swap="outerHTML"
         hx-push-url="true"
-        hx-trigger="change, input changed delay:400ms from:input[name=number]"
+        hx-trigger="change, input changed delay:400ms from:input[type=search]"
       >
         <Field label="種類" name="documentType">
           <Select
@@ -248,14 +258,18 @@ documentRoutes.get("/", async (c) => {
         <Field label="金額（以下）" name="amountMax" error={errors["amountMax"]}>
           <Input name="amountMax" inputmode="numeric" value={inputValue(filter.amountMax)} />
         </Field>
-        <Field label="取引先" name="partnerId">
-          <Select
-            name="partnerId"
-            value={filter.partnerId ?? ""}
-            options={partners}
-            empty="すべて"
-          />
+        <Field label="取引先（名称・読み仮名）" name="partnerQuery">
+          <Input name="partnerQuery" type="search" value={filter.partnerQuery} maxlength={100} />
         </Field>
+        {filter.partnerId ? (
+          <div class="field">
+            <input type="hidden" name="partnerId" value={filter.partnerId} />
+            <p class="hint">
+              取引先：{partner?.name ?? "（見つかりません）"}{" "}
+              <a href={paths.documents({ ...query, partnerId: undefined })}>指定を外す</a>
+            </p>
+          </div>
+        ) : null}
         <Field label="番号" name="number">
           <Input name="number" type="search" value={filter.number} maxlength={50} />
         </Field>
@@ -290,7 +304,7 @@ documentRoutes.get("/", async (c) => {
         </noscript>
       </form>
       <section id="results">
-        {result.ok ? null : <ErrorSummary error={result.error} />}
+        {result.ok ? null : <FilterError error={result.error} />}
         <div class="toolbar">
           <CsvButton action={paths.documentsCsv()} filters={query} />
         </div>

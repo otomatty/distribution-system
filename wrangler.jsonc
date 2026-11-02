@@ -28,8 +28,8 @@
     "consumers": [{ "queue": "distribution-jobs-dev", "max_batch_size": 5, "max_retries": 3 }],
   },
   "triggers": {
-    // 毎日 03:00（日本時間）に日次バックアップを実行する
-    "crons": ["0 18 * * *"],
+    // 毎日 03:00（日本時間）に日次バックアップを実行する。毎時30分に止まった処理を片付ける
+    "crons": ["0 18 * * *", "30 * * * *"],
   },
   "vars": {
     "ENVIRONMENT": "development",
@@ -66,7 +66,7 @@
           { "queue": "distribution-jobs-staging", "max_batch_size": 5, "max_retries": 3 },
         ],
       },
-      "triggers": { "crons": ["0 18 * * *"] },
+      "triggers": { "crons": ["0 18 * * *", "30 * * * *"] },
       // 帳票の PDF 化（Browser Rendering）。開発とテストでは付けず、HTML のまま保存する
       "browser": { "binding": "BROWSER" },
       // 帳票のメール送付（Cloudflare Email Service）。開発とテストでは付けず、ログに出力する
@@ -98,7 +98,7 @@
           { "queue": "distribution-jobs-production", "max_batch_size": 5, "max_retries": 3 },
         ],
       },
-      "triggers": { "crons": ["0 18 * * *"] },
+      "triggers": { "crons": ["0 18 * * *", "30 * * * *"] },
       // 帳票の PDF 化（Browser Rendering）。開発とテストでは付けず、HTML のまま保存する
       "browser": { "binding": "BROWSER" },
       // 帳票のメール送付（Cloudflare Email Service）。開発とテストでは付けず、ログに出力する

@@ -9,6 +9,8 @@ export interface DocumentFilter {
   readonly amountMin?: number | undefined;
   readonly amountMax?: number | undefined;
   readonly partnerId?: string | undefined;
+  /** 取引先の名称・読み仮名の部分一致（取引終了の取引先も含む） */
+  readonly partnerQuery?: string | undefined;
   readonly documentType?: DocumentType | undefined;
   /** 番号の部分一致 */
   readonly number?: string | undefined;

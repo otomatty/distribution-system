@@ -133,6 +133,14 @@ describe("帳票の検索", () => {
       "PO-2026-100001",
     ]);
     expect(await search({ partnerId: partnerA, renderStatus: "failed" })).toEqual([]);
+    // 取引先は名称・読み仮名の部分一致でも探せる（取引終了の取引先も含む）
+    expect(mine(await search({ partnerQuery: "検索テスト商店B" }))).toEqual([
+      "INV-2026-100002",
+      "PO-2026-100002",
+    ]);
+    expect(
+      mine(await search({ partnerQuery: "チョウヒョウ", documentType: "delivery_note" })),
+    ).toEqual(["DN-2026-100001"]);
   });
 
   it("取消済みの帳票も検索結果に残し、取消済みと表示する", async () => {
@@ -147,6 +155,9 @@ describe("帳票の検索", () => {
     // 絞り込みは表の部分だけを差し替え、条件を URL に残す
     expect(html).toContain('hx-push-url="true"');
     expect(html).toContain('hx-select="#results"');
+    // 取引先を指定して開いた場合は名前を出し、指定を外せる
+    expect(html).toContain("取引先：検索テスト商店A");
+    expect(html).toContain("指定を外す");
   });
 
   it("範囲の指定が逆なら、エラーを表示する", async () => {
@@ -159,6 +170,16 @@ describe("帳票の検索", () => {
     expect(amount).toContain("上限の金額は下限の金額以上にしてください");
     const notNumber = await (await as(user).get("/documents?amountMin=abc")).text();
     expect(notNumber).toContain("条件を確認してください");
+    expect(notNumber).toContain("金額は数字で入力してください");
+    // 絞り込み（htmx）で表の部分だけを差し替えるときも、内容がわかるように出す
+    const partial = await (
+      await as(user).get("/documents?dateFrom=2026-11-01&dateTo=2026-10-01", {
+        "HX-Request": "true",
+      })
+    ).text();
+    expect(partial).toMatch(
+      /<section id="results">.*終わりの日付は始まりの日付以降にしてください/s,
+    );
   });
 
   it("CSV は BOM 付きの UTF-8・CRLF で、絞り込みと同じ内容を日本語の列名で出す", async () => {
