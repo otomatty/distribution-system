@@ -9,6 +9,8 @@ export const salesPaths = {
   salesOrder: (id: string, query?: Query) => withQuery(`/sales-orders/${enc(id)}`, query),
   salesOrderEdit: (id: string) => `/sales-orders/${enc(id)}/edit`,
   salesOrderShip: (id: string) => `/sales-orders/${enc(id)}/ship`,
+  /** 発送日を変えたときの、納品書の発行日の初期値（部分 HTML） */
+  salesOrderDeliveryNoteDate: (id: string) => `/sales-orders/${enc(id)}/ship/delivery-note-date`,
   salesOrderCancel: (id: string) => `/sales-orders/${enc(id)}/cancel`,
   salesOrderSplit: (id: string) => `/sales-orders/${enc(id)}/split`,
   /** 受注の作成・編集の画面の部分 HTML：商品選択ダイアログから明細の行を追加する */

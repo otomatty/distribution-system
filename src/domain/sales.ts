@@ -1,4 +1,5 @@
 /** 受注・発送・請求書・入金のルール（要件定義書 3.8〜3.11、4章）。 */
+import { closingPeriod } from "./dates";
 import {
   lineAmount,
   summarizeTax,
@@ -47,6 +48,49 @@ export function cancelShipment(
   if (hasActiveReturns)
     return err("invalid_state", "返品伝票があります。先に返品伝票を取り消してください");
   return ok("received");
+}
+
+/**
+ * 納品書の発行日の初期値（要件定義書 3.10「発行日は発行の操作で決める（初期値は当日、月締めなら締め日）」）。
+ * 月締めの販売先（締め日あり）は、発送日を含む締め期間の締め日。そうでなければ当日（発送の操作をした日）
+ */
+export function defaultDeliveryNoteDate(input: {
+  readonly shippedOn: string;
+  readonly today: string;
+  readonly closingDay: number | null;
+}): string {
+  return input.closingDay === null
+    ? input.today
+    : closingPeriod(input.shippedOn, input.closingDay).to;
+}
+
+/**
+ * 納品書の発行日を決める。指定がなければ初期値（defaultDeliveryNoteDate）。
+ * 指定するときは、発送日（取引年月日）より前にできず、初期値と今日の遅いほうより後にもできない
+ * （請求書の発行日が最後の取引日より前にも、今日より後にもできないのに合わせる。月締めの販売先は締め日まで）
+ */
+export function deliveryNoteIssueDate(input: {
+  readonly shippedOn: string;
+  readonly today: string;
+  readonly closingDay: number | null;
+  readonly requested: string | null;
+}): Result<string> {
+  const initial = defaultDeliveryNoteDate(input);
+  if (input.requested === null) return ok(initial);
+  const field = "deliveryNoteIssuedOn";
+  if (input.requested < input.shippedOn) {
+    const message = `納品書の発行日は発送日（${input.shippedOn}）以降にしてください`;
+    return err("validation", message, { fields: [{ field, message }] });
+  }
+  const latest = initial > input.today ? initial : input.today;
+  if (input.requested > latest) {
+    const message =
+      input.closingDay === null
+        ? "納品書の発行日は今日より後にできません"
+        : `納品書の発行日は締め日（${latest}）より後にできません`;
+    return err("validation", message, { fields: [{ field, message }] });
+  }
+  return ok(input.requested);
 }
 
 /** 受注の分割：各明細の分割数は 0〜元の数量。すべて 0、またはすべて全数は不可。 */

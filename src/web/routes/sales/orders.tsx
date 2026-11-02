@@ -677,8 +677,27 @@ salesOrderRoutes.post("/form/ship-date", async (c) => {
 
 // ---- 詳細 ---------------------------------------------------------------------
 
+const DELIVERY_NOTE_DATE_ID = "delivery-note-date";
+
+/** 納品書の発行日の欄（発送日を変えると、初期値を計算し直してこの欄だけを差し替える） */
+function DeliveryNoteDateField(props: { value: string }) {
+  return (
+    <div id={DELIVERY_NOTE_DATE_ID}>
+      <Field
+        label="納品書の発行日"
+        name="deliveryNoteIssuedOn"
+        hint="初期値は当日（月締めの販売先は、発送日を含む締め期間の締め日）。空なら初期値にします"
+      >
+        <Input name="deliveryNoteIssuedOn" type="date" value={props.value} />
+      </Field>
+    </div>
+  );
+}
+
 function DetailBody(props: {
   view: SalesOrderView;
+  /** 今日発送するときの納品書の発行日の初期値（発送できる受注だけ） */
+  deliveryNoteDefault?: string | null | undefined;
   /** 返品伝票の欄（請求の区分の照会） */
   returns: OrderReturns | null;
   canManage: boolean;
@@ -785,9 +804,18 @@ function DetailBody(props: {
           >
             <FormKey />
             <Version value={order.version} />
-            <Field label="発送日" name="shippedOn" required>
-              <Input name="shippedOn" type="date" value={today} max={today} />
-            </Field>
+            <div
+              hx-post={paths.salesOrderDeliveryNoteDate(order.id)}
+              hx-trigger="change"
+              hx-target={`#${DELIVERY_NOTE_DATE_ID}`}
+              hx-swap="outerHTML"
+              hx-confirm="unset"
+            >
+              <Field label="発送日" name="shippedOn" required>
+                <Input name="shippedOn" type="date" value={today} max={today} />
+              </Field>
+            </div>
+            <DeliveryNoteDateField value={props.deliveryNoteDefault ?? today} />
             <button type="submit" class="btn btn-primary btn-lg">
               発送する
             </button>
@@ -938,6 +966,7 @@ function DetailBody(props: {
 const ACTION_FIELD_LABELS: Readonly<Record<string, string>> = {
   reason: "取り消す理由",
   shippedOn: "発送日",
+  deliveryNoteIssuedOn: "納品書の発行日",
 };
 
 /** 詳細での操作のエラー。項目のエラーは「項目名：内容」の一覧にする */
@@ -970,9 +999,16 @@ async function detailBody(
   const makerDirect = view.order.makerDirect
     ? await runQuery(c, "purchaseOrders.makerDirectPlan", { salesOrderId: id })
     : null;
+  const deliveryNoteDefault = view.actions.ship
+    ? await runQuery(c, "shipments.deliveryNoteDate", {
+        salesOrderId: id,
+        shippedOn: toBusinessDate(new Date()),
+      })
+    : null;
   return (
     <DetailBody
       view={view}
+      deliveryNoteDefault={deliveryNoteDefault}
       returns={returns}
       canManage={hasPermission(roles, "salesOrders.manage")}
       canShip={hasPermission(roles, "shipments.manage")}
@@ -1030,10 +1066,27 @@ salesOrderRoutes.post("/:id/ship", async (c) => {
   const result = await runCommand(
     c,
     "shipments.ship",
-    { id, version: int(form, "version"), shippedOn: str(form, "shippedOn") },
+    {
+      id,
+      version: int(form, "version"),
+      shippedOn: str(form, "shippedOn"),
+      deliveryNoteIssuedOn: str(form, "deliveryNoteIssuedOn"),
+    },
     formKey(form),
   );
   return afterAction(c, id, result, "shipped");
+});
+
+/** 発送日を変えたときの、納品書の発行日の初期値（欄だけを差し替える） */
+salesOrderRoutes.post("/:id/ship/delivery-note-date", async (c) => {
+  const form = await readForm(c);
+  const result = await queryAs(c.env, c.get("actorRef"), "shipments.deliveryNoteDate", {
+    salesOrderId: c.req.param("id"),
+    shippedOn: str(form, "shippedOn"),
+  });
+  // 発送日が正しくなければ、入力中の発行日のまま（発送するときに検証する）
+  const value = result.ok && result.value ? result.value : str(form, "deliveryNoteIssuedOn");
+  return c.html(<DeliveryNoteDateField value={value} />);
 });
 
 salesOrderRoutes.post("/:id/cancel", async (c) => {

@@ -9,6 +9,8 @@ import {
   canEditSalesOrder,
   chargeAmount,
   creditNoteRequired,
+  defaultDeliveryNoteDate,
+  deliveryNoteIssueDate,
   invoiceStatus,
   isPriceOverridden,
   lotWarnings,
@@ -24,6 +26,46 @@ import {
 } from "./sales";
 
 describe("sales order", () => {
+  it("納品書の発行日の初期値：当日、月締めの販売先は発送日を含む締め期間の締め日", () => {
+    const base = { shippedOn: "2026-10-15", today: "2026-11-02" };
+    expect(defaultDeliveryNoteDate({ ...base, closingDay: null })).toBe("2026-11-02");
+    expect(defaultDeliveryNoteDate({ ...base, closingDay: 31 })).toBe("2026-10-31");
+    expect(defaultDeliveryNoteDate({ ...base, closingDay: 20 })).toBe("2026-10-20");
+    expect(defaultDeliveryNoteDate({ ...base, shippedOn: "2026-10-21", closingDay: 20 })).toBe(
+      "2026-11-20",
+    );
+  });
+  it("納品書の発行日の指定：発送日以降で、初期値と今日の遅いほうまで", () => {
+    const plain = { shippedOn: "2026-10-30", today: "2026-11-02", closingDay: null };
+    expect(deliveryNoteIssueDate({ ...plain, requested: null })).toEqual({
+      ok: true,
+      value: "2026-11-02",
+    });
+    expect(deliveryNoteIssueDate({ ...plain, requested: "2026-10-30" }).ok).toBe(true);
+    const early = deliveryNoteIssueDate({ ...plain, requested: "2026-10-29" });
+    expect(early.ok ? null : early.error.fields?.[0]).toEqual({
+      field: "deliveryNoteIssuedOn",
+      message: "納品書の発行日は発送日（2026-10-30）以降にしてください",
+    });
+    expect(deliveryNoteIssueDate({ ...plain, requested: "2026-11-03" })).toMatchObject({
+      ok: false,
+      error: { message: "納品書の発行日は今日より後にできません" },
+    });
+    // 月締め：締め日（今日より後）までは指定できる
+    const closing = { shippedOn: "2026-11-02", today: "2026-11-02", closingDay: 31 };
+    expect(deliveryNoteIssueDate({ ...closing, requested: null })).toEqual({
+      ok: true,
+      value: "2026-11-30",
+    });
+    expect(deliveryNoteIssueDate({ ...closing, requested: "2026-11-02" }).ok).toBe(true);
+    expect(deliveryNoteIssueDate({ ...closing, requested: "2026-12-01" })).toMatchObject({
+      ok: false,
+      error: { message: "納品書の発行日は締め日（2026-11-30）より後にできません" },
+    });
+    // 締め日を過ぎた期間の発送（さかのぼって記録）は、今日まで指定できる
+    const past = { shippedOn: "2026-10-10", today: "2026-11-02", closingDay: 31 };
+    expect(deliveryNoteIssueDate({ ...past, requested: "2026-11-02" }).ok).toBe(true);
+  });
   it("状態遷移", () => {
     expect(canEditSalesOrder("received")).toBe(true);
     expect(canEditSalesOrder("shipped")).toBe(false);
