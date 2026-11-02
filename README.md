@@ -16,7 +16,7 @@
 | ファイル   | R2（帳票 PDF、CSV、バックアップ）                      |
 | 非同期処理 | Queues、Cron Triggers                                  |
 | 帳票       | Browser Rendering で PDF 化                            |
-| メール     | Cloudflare Email Service                               |
+| メール     | Cloudflare Email Service（予備は Resend）              |
 
 ## 手元での開発
 

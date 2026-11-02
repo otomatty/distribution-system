@@ -5,4 +5,6 @@ interface __BaseEnv_Env {
   BETTER_AUTH_SECRET: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  /** MAIL_PROVIDER が resend のときだけ使う（docs/operations.md 1章） */
+  RESEND_API_KEY?: string;
 }

@@ -53,7 +53,31 @@ npx wrangler r2 bucket info distribution-files-<環境>
 4. 新しいアカウントは1日の送信数が少なめに設定されるので、稼働前の検証期間から検証環境で送信しておく
 5. 送れないときのエラーコード（`E_SENDER_NOT_VERIFIED` など）は送付履歴に日本語の説明つきで残ります
 
-Email Service に問題が出た場合は、`src/infra/mail/mailer.ts` の `Mailer` を実装した Resend の送信に差し替えます（API キーは Secrets に置く）。
+### メールの送信の切り替え（Email Service ⇔ Resend）
+
+送信の部分は `wrangler.jsonc` の変数 `MAIL_PROVIDER` で選びます（`src/infra/mail/mailer.ts`）。値は送信のたびに検証し、誤りがあれば送付は
+「メールの送信の設定が正しくありません」で失敗します（送付履歴に残り、設定を直した後に画面から再送できる）。
+
+| `MAIL_PROVIDER`         | 送信の部分                                            | 必要なもの                                                              |
+| ----------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| `email_service`（既定） | Cloudflare Email Service（バインディング `EMAIL`）    | `send_email` のバインディング（開発・テストでは付けず、ログに出すだけ） |
+| `resend`（予備）        | Resend の REST API（`https://api.resend.com/emails`） | Secrets の `RESEND_API_KEY`、Resend で確認済みの送信元のドメイン        |
+
+Email Service（ベータ）で問題が出たら、次の手順で Resend に切り替えます。先に検証環境で切り替え、帳票を1件送って届くことを確かめてから本番で行います。
+
+1. Resend に会社のドメインを登録し、表示される SPF・DKIM のレコードを DNS に追加する（`MAIL_FROM` のドメイン。DMARC は Email Service と共通）
+2. Resend で送信だけの権限の API キーを作り、Secrets に入れる
+   ```sh
+   npx wrangler secret put RESEND_API_KEY --env <環境>
+   ```
+3. `wrangler.jsonc` の `env.<環境>.vars.MAIL_PROVIDER` を `"resend"` にして PR を出し、CI から配備する
+4. 帳票を1件メールで送り、送付履歴が「送付済み」になって届くことを確かめる。失敗した送付は帳票の詳細から再送する
+5. Email Service に戻すときは `MAIL_PROVIDER` を `"email_service"` に戻して配備し、`npx wrangler secret delete RESEND_API_KEY --env <環境>` で API キーを消す（Resend の側でもキーを無効にする）
+
+- Resend へは、送付履歴の ID を `Idempotency-Key` に付けて送ります。Queues の再試行で同じ送付が重ねて届いても、24時間は1通だけ送られます
+- Resend のエラー（`validation_error`、`daily_quota_exceeded` など）は、送付履歴に日本語の説明と名前つきで残ります。混み合い（429）と 5xx は自動で再試行します
+- 添付を含めて1通 40MB（Base64 にした後）までです（Email Service は 25MiB）
+- 重大なエラーの管理者への通知も、同じ送信の部分を使います
 
 ### 帳票の PDF 化（Browser Rendering）
 
