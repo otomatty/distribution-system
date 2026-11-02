@@ -32,7 +32,8 @@ async function reachable(url) {
 }
 
 async function startServer() {
-  const port = Number(args.port ?? 8799);
+  // 投入先の URL のポートで起動する（既定は bun run dev と同じ 8787）
+  const port = Number(new URL(base).port || 8787);
   const persist = args["persist-to"];
   const cmd = [
     "wrangler",
