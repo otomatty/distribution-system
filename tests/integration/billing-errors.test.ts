@@ -36,6 +36,14 @@ describe("請求書の業務エラー", () => {
       version: shipment.version,
       reason: "誤り",
     });
+    const future = await shipOrder(setup);
+    expect(
+      await systemCommandResult("invoices.issue", {
+        shipmentId: future.shipmentId,
+        version: future.shipmentVersion,
+        issuedOn: addDays(today(), 1),
+      }),
+    ).toMatchObject({ ok: false, error: { message: "発行日は今日より後にできません" } });
     expect(
       await systemCommandResult("invoices.issue", {
         shipmentId: cancelled.shipmentId,
@@ -345,6 +353,13 @@ describe("返品伝票と返還請求書の業務エラー", () => {
         issuedOn: addDays(today(), -1),
       }),
     ).toMatchObject({ ok: false, error: { fields: [{ field: "issuedOn" }] } });
+    expect(
+      await systemCommandResult("creditNotes.issue", {
+        salesReturnId: ret.id,
+        version: v,
+        issuedOn: addDays(today(), 1),
+      }),
+    ).toMatchObject({ ok: false, error: { message: "発行日は今日より後にできません" } });
     expect(
       await systemCommandResult("creditNotes.issue", {
         salesReturnId: ret.id,

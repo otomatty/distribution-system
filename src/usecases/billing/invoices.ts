@@ -194,6 +194,7 @@ function issueInvoice(
     issuedOn: a.issuedOn,
     dueOn: a.dueOn,
     lastTransactionDate: plan.value.lastTransactionDate,
+    today: ctx.clock.today(),
   });
   if (!dates.ok) return dates;
   const { summary, lines } = plan.value;
@@ -614,6 +615,8 @@ export const listInvoices = defineQuery({
         overdueAsOf: input.overdue ? today : undefined,
         number: input.q || undefined,
         sendStatus: input.sendFailed ? "failed" : undefined,
+        // 送付の失敗は、取り消していない請求書だけを数える（ダッシュボードの件数と合わせる）
+        excludeCancelled: input.sendFailed,
       },
       "issued",
       input.page,

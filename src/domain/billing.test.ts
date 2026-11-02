@@ -231,12 +231,13 @@ describe("請求書の明細と金額", () => {
     );
   });
 
-  it("発行日は最後の取引日以降、支払期限は発行日以降", () => {
+  it("発行日は最後の取引日以降・今日まで、支払期限は発行日以降", () => {
     expect(
       validateIssueDates({
         issuedOn: "2026-10-31",
         dueOn: "2026-11-30",
         lastTransactionDate: "2026-10-31",
+        today: "2026-11-02",
       }).ok,
     ).toBe(true);
     expect(
@@ -245,6 +246,7 @@ describe("請求書の明細と金額", () => {
           issuedOn: "2026-10-30",
           dueOn: null,
           lastTransactionDate: "2026-10-31",
+          today: "2026-11-02",
         }),
       ).fields?.[0]?.field,
     ).toBe("issuedOn");
@@ -254,9 +256,20 @@ describe("請求書の明細と金額", () => {
           issuedOn: "2026-10-31",
           dueOn: "2026-10-01",
           lastTransactionDate: "2026-10-01",
+          today: "2026-11-02",
         }),
       ).fields?.[0]?.field,
     ).toBe("dueOn");
+    expect(
+      unwrapErr(
+        validateIssueDates({
+          issuedOn: "2026-11-03",
+          dueOn: null,
+          lastTransactionDate: "2026-10-01",
+          today: "2026-11-02",
+        }),
+      ).message,
+    ).toBe("発行日は今日より後にできません");
   });
 });
 

@@ -208,12 +208,20 @@ export function planInvoice(input: {
   return ok({ lines, summary, lastTransactionDate });
 }
 
-/** 発行日と支払期限の確認。発行日は最後の取引日より前にできず、支払期限は発行日より前にできない */
+/**
+ * 発行日と支払期限の確認。発行日は最後の取引日より前にも、今日より後にもできず、
+ * 支払期限は発行日より前にできない
+ */
 export function validateIssueDates(input: {
   readonly issuedOn: string;
   readonly dueOn: string | null;
   readonly lastTransactionDate: string;
+  readonly today: string;
 }): Result<void> {
+  if (input.issuedOn > input.today) {
+    const message = "発行日は今日より後にできません";
+    return err("validation", message, { fields: [{ field: "issuedOn", message }] });
+  }
   if (input.issuedOn < input.lastTransactionDate) {
     const message = `発行日は最後の取引日（${input.lastTransactionDate}）以降にしてください`;
     return err("validation", message, { fields: [{ field: "issuedOn", message }] });

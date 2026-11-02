@@ -233,6 +233,8 @@ export const issueCreditNote = defineCommand({
     if (!issuable.ok) return issuable;
     if (issuedOn < ret.returnedOn)
       return fieldError("issuedOn", `発行日は返品日（${ret.returnedOn}）以降にしてください`);
+    if (issuedOn > ctx.clock.today())
+      return fieldError("issuedOn", "発行日は今日より後にできません");
     const customer = ctx.stores.partners.get(ret.customerId);
     if (!customer) return err("not_found", "販売先が見つかりません");
     const plan = creditNotePlan(ctx, ret);
