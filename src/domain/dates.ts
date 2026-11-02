@@ -64,6 +64,59 @@ export function closingPeriod(date: string, closingDay: number): { from: string;
   return { from: addDays(prevClosing, 1), to };
 }
 
+/**
+ * date の時点で締め終わっている、最も新しい締め期間。date が締め日ならその日で終わる期間、
+ * そうでなければ1つ前の期間（仕入先請求書の登録で、請求の対象の入荷を選んでおく範囲）。
+ */
+export function latestClosedPeriod(date: string, closingDay: number): { from: string; to: string } {
+  const current = closingPeriod(date, closingDay);
+  return current.to === date ? current : closingPeriod(addDays(current.from, -1), closingDay);
+}
+
+/** date を含む週（月曜〜日曜） */
+export function weekRange(date: string): { from: string; to: string } {
+  const day = toUtcDate(date).getUTCDay();
+  const fromMonday = (day + 6) % 7;
+  const from = addDays(date, -fromMonday);
+  return { from, to: addDays(from, 6) };
+}
+
+/** 業務日の月（YYYY-MM） */
+export function monthOf(date: string): string {
+  return toUtcDate(date).toISOString().slice(0, 7);
+}
+
+/** YYYY-MM の検証 */
+export function isMonth(text: string): boolean {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(text);
+}
+
+/** from〜to（YYYY-MM、両端を含む）の月の一覧。to が from より前なら空 */
+export function monthsBetween(from: string, to: string, max = 36): string[] {
+  if (!isMonth(from) || !isMonth(to)) return [];
+  const out: string[] = [];
+  let y = Number(from.slice(0, 4));
+  let m = Number(from.slice(5, 7));
+  for (;;) {
+    const month = `${y}-${String(m).padStart(2, "0")}`;
+    if (month > to || out.length >= max) break;
+    out.push(month);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
+/** 月の初日と末日（YYYY-MM-DD） */
+export function monthRange(month: string): { from: string; to: string } {
+  const y = Number(month.slice(0, 4));
+  const m0 = Number(month.slice(5, 7)) - 1;
+  return { from: makeDate(y, m0, 1), to: makeDate(y, m0, 31) };
+}
+
 /** 取引日から、取引条件に従った支払期日を計算する。 */
 export function paymentDueDate(transactionDate: string, terms: ClosingTerms): string {
   const { to } = closingPeriod(transactionDate, terms.closingDay);

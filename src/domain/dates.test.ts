@@ -5,10 +5,16 @@ import {
   closingPeriod,
   formatJapaneseDate,
   isBusinessDate,
+  isMonth,
+  latestClosedPeriod,
+  monthOf,
+  monthRange,
+  monthsBetween,
   paymentDueDate,
   plannedShipDate,
   toBusinessDate,
   validateClosingTerms,
+  weekRange,
   yearOf,
 } from "./dates";
 
@@ -64,5 +70,30 @@ describe("dates", () => {
     expect(plannedShipDate("2026-11-05", 2)).toBe("2026-11-03");
     expect(plannedShipDate("2026-11-05", -1)).toBe("2026-11-05");
     expect(formatJapaneseDate("2026-11-02")).toBe("2026年11月2日");
+  });
+  it("締め終わっている最も新しい締め期間", () => {
+    expect(latestClosedPeriod("2026-10-31", 31)).toEqual({ from: "2026-10-01", to: "2026-10-31" });
+    expect(latestClosedPeriod("2026-11-02", 31)).toEqual({ from: "2026-10-01", to: "2026-10-31" });
+    expect(latestClosedPeriod("2026-11-25", 20)).toEqual({ from: "2026-10-21", to: "2026-11-20" });
+    expect(latestClosedPeriod("2026-11-20", 20)).toEqual({ from: "2026-10-21", to: "2026-11-20" });
+  });
+  it("週（月曜〜日曜）と月", () => {
+    // 2026-11-02 は月曜日
+    expect(weekRange("2026-11-02")).toEqual({ from: "2026-11-02", to: "2026-11-08" });
+    expect(weekRange("2026-11-08")).toEqual({ from: "2026-11-02", to: "2026-11-08" });
+    expect(weekRange("2026-11-04")).toEqual({ from: "2026-11-02", to: "2026-11-08" });
+    expect(monthOf("2026-11-02")).toBe("2026-11");
+    expect(isMonth("2026-13")).toBe(false);
+    expect(isMonth("2026-01")).toBe(true);
+    expect(monthsBetween("2026-11", "2027-02")).toEqual([
+      "2026-11",
+      "2026-12",
+      "2027-01",
+      "2027-02",
+    ]);
+    expect(monthsBetween("2026-11", "2026-10")).toEqual([]);
+    expect(monthsBetween("bad", "2026-10")).toEqual([]);
+    expect(monthsBetween("2020-01", "2029-12", 3)).toHaveLength(3);
+    expect(monthRange("2028-02")).toEqual({ from: "2028-02-01", to: "2028-02-29" });
   });
 });
