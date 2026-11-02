@@ -15,19 +15,21 @@
  */
 import type { Context } from "hono";
 
+import { PAYMENT_METHOD_LABELS } from "../domain/billing";
 import { toBusinessDate } from "../domain/dates";
 import {
   DOCUMENT_TYPE_LABELS,
   RENDER_STATUS_LABELS,
   SEND_STATUS_LABELS,
 } from "../domain/documents";
+import { formatRate } from "../domain/money";
 import {
   DESTINATION_LABELS,
   PURCHASE_ORDER_STATUS_LABELS,
   SUPPLIER_INVOICE_STATUS_LABELS,
 } from "../domain/purchasing";
 import type { Result } from "../domain/result";
-import { SALES_ORDER_STATUS_LABELS } from "../domain/sales";
+import { INVOICE_STATUS_LABELS, SALES_ORDER_STATUS_LABELS } from "../domain/sales";
 import type { ActorRef } from "../infra/do/actor-ref";
 import type { QueryInput, QueryName, QueryOutput } from "../usecases/registry";
 import { csvResponse, type CsvValue } from "./csv";
@@ -178,6 +180,101 @@ export const csvExports = {
     fileName: "支払予定一覧",
     fetch: (q, filter, page, pageSize) => q("payables.list", { ...filter, page, pageSize }),
     columns: supplierInvoiceColumns(),
+  }),
+  // ---- 請求・入金・販売先廃棄 ----
+  invoices: defineCsvExport({
+    fileName: "請求書一覧",
+    fetch: (q, filter, page, pageSize) => q("invoices.list", { ...filter, page, pageSize }),
+    columns: [
+      { header: "請求書番号", value: (i) => i.number },
+      { header: "状態", value: (i) => INVOICE_STATUS_LABELS[i.status] },
+      { header: "期限超過", value: (i) => (i.overdue ? "超過" : "") },
+      { header: "販売先", value: (i) => i.customerName },
+      { header: "発行日", value: (i) => i.issuedOn },
+      { header: "締め期間（から）", value: (i) => i.periodFrom },
+      { header: "締め期間（まで）", value: (i) => i.periodTo },
+      { header: "支払期限", value: (i) => i.dueOn },
+      { header: "小計（税抜）", value: (i) => i.subtotal },
+      { header: "消費税", value: (i) => i.tax },
+      { header: "合計（税込）", value: (i) => i.total },
+      { header: "消込済み", value: (i) => i.allocated },
+      { header: "残高", value: (i) => (i.status === "cancelled" ? null : i.outstanding) },
+      {
+        header: "最新の送付",
+        value: (i) =>
+          i.document?.lastSendStatus ? SEND_STATUS_LABELS[i.document.lastSendStatus] : "未送付",
+      },
+      { header: "取消の理由", value: (i) => i.cancelReason },
+      { header: "発行日時", value: (i) => dateTime(i.createdAt) },
+    ],
+  }),
+  customerPayments: defineCsvExport({
+    fileName: "入金一覧",
+    fetch: (q, filter, page, pageSize) => q("customerPayments.list", { ...filter, page, pageSize }),
+    columns: [
+      { header: "入金日", value: (p) => p.receivedOn },
+      { header: "販売先", value: (p) => p.customerName },
+      { header: "方法", value: (p) => PAYMENT_METHOD_LABELS[p.method] },
+      { header: "入金額", value: (p) => p.amount },
+      { header: "消込済み", value: (p) => p.allocatedAmount },
+      { header: "未消込", value: (p) => p.unallocated },
+      { header: "取消", value: (p) => (p.cancelled ? "取消" : "") },
+      { header: "メモ", value: (p) => p.memo },
+      { header: "記録日時", value: (p) => dateTime(p.createdAt) },
+    ],
+  }),
+  receivables: defineCsvExport({
+    fileName: "売掛残高",
+    fetch: (q, filter, page, pageSize) => q("receivables.balances", { ...filter, page, pageSize }),
+    columns: [
+      { header: "販売先", value: (r) => r.customerName },
+      { header: "請求残高", value: (r) => r.billed },
+      { header: "うち期限超過", value: (r) => r.overdue },
+      { header: "未消込の入金", value: (r) => r.unallocated },
+      { header: "売掛残高", value: (r) => r.balance },
+      { header: "未入金の請求書", value: (r) => r.openCount },
+      { header: "期限超過の請求書", value: (r) => r.overdueCount },
+      { header: "次の支払期限", value: (r) => r.nextDueOn },
+    ],
+  }),
+  receiptSchedule: defineCsvExport({
+    fileName: "入金予定",
+    fetch: (q, filter, page, pageSize) => q("receivables.schedule", { ...filter, page, pageSize }),
+    columns: [
+      { header: "支払期限", value: (r) => r.dueOn },
+      { header: "期限超過", value: (r) => (r.overdue ? "超過" : "") },
+      { header: "請求書番号", value: (r) => r.number },
+      { header: "状態", value: (r) => INVOICE_STATUS_LABELS[r.status] },
+      { header: "販売先", value: (r) => r.customerName },
+      { header: "発行日", value: (r) => r.issuedOn },
+      { header: "合計（税込）", value: (r) => r.total },
+      { header: "残高", value: (r) => r.outstanding },
+    ],
+  }),
+  disposals: defineCsvExport({
+    fileName: "販売先廃棄",
+    fetch: (q, filter, page, pageSize) => q("disposals.list", { ...filter, page, pageSize }),
+    columns: [
+      { header: "廃棄伝票", value: (d) => d.number },
+      { header: "廃棄日", value: (d) => d.disposedOn },
+      { header: "販売先", value: (d) => d.customerName },
+      { header: "先方の担当者", value: (d) => d.contactName },
+      { header: "商品数", value: (d) => d.lineCount },
+      { header: "数量の合計", value: (d) => d.totalQuantity },
+      { header: "登録日時", value: (d) => dateTime(d.createdAt) },
+    ],
+  }),
+  disposalRates: defineCsvExport({
+    fileName: "廃棄率",
+    fetch: (q, filter, page, pageSize) => q("disposals.rates", { ...filter, page, pageSize }),
+    columns: [
+      { header: "販売先", value: (r) => r.customerName },
+      { header: "商品コード", value: (r) => r.itemCode },
+      { header: "商品", value: (r) => r.itemName },
+      { header: "廃棄数", value: (r) => r.disposed },
+      { header: "出荷数", value: (r) => r.shipped },
+      { header: "廃棄率（%）", value: (r) => (r.rateBps === null ? null : formatRate(r.rateBps)) },
+    ],
   }),
 } satisfies Readonly<Record<string, CsvExport>>;
 
