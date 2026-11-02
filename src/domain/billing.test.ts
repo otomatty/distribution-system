@@ -5,6 +5,7 @@ import { unwrap, unwrapErr } from "../../tests/support/result";
 import {
   applyAllocation,
   buildInvoiceLines,
+  cancelDisposal,
   cancelPayment,
   cancelRefund,
   cancelSalesReturn,
@@ -774,6 +775,18 @@ describe("販売先廃棄", () => {
       ]),
     );
     expect(dup.fields?.map((f) => f.field)).toEqual(["lines.1.quantity", "lines.1.itemId"]);
+  });
+
+  it("取消は取り消していない伝票だけで、理由が必須", () => {
+    expect(cancelDisposal({ cancelled: false }, "販売先の数え間違い")).toEqual({
+      ok: true,
+      value: "cancelled",
+    });
+    expect(unwrapErr(cancelDisposal({ cancelled: true }, "x")).message).toBe(
+      "この廃棄伝票はすでに取り消されています",
+    );
+    const blank = unwrapErr(cancelDisposal({ cancelled: false }, " "));
+    expect(blank).toMatchObject({ code: "validation", fields: [{ field: "reason" }] });
   });
 
   it("廃棄率は廃棄数 ÷ 出荷数（出荷がなければ表示しない）。キーごとに合計する", () => {

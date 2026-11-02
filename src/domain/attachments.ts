@@ -42,7 +42,7 @@ export function attachmentFileName(name: string): string {
   return withExt.length > 200 ? `${withExt.slice(0, 196).join("")}.pdf` : withExt.join("");
 }
 
-/** 添付できる請求書の状態（未払い・支払済み。取消は不可） */
+/** 添付できる請求書の状態（未払い・一部支払・支払済み。取消は不可） */
 export function canAttachToSupplierInvoice(status: SupplierInvoiceStatus): Result<true> {
   return status === "cancelled"
     ? err("invalid_state", "取り消した請求書には PDF を添付できません")

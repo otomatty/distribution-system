@@ -239,6 +239,7 @@ export const csvExports = {
       { header: "消込済み", value: (p) => p.allocatedAmount },
       { header: "未消込", value: (p) => p.unallocated },
       { header: "取消", value: (p) => (p.cancelled ? "取消" : "") },
+      { header: "取消の理由", value: (p) => p.cancelReason },
       { header: "メモ", value: (p) => p.memo },
       { header: "記録日時", value: (p) => dateTime(p.createdAt) },
       // 返還請求書の返還額（請求書で差し引けない返品を精算したもの）。今までの列の並びは変えずに後ろに足す
@@ -285,6 +286,8 @@ export const csvExports = {
       { header: "先方の担当者", value: (d) => d.contactName },
       { header: "商品数", value: (d) => d.lineCount },
       { header: "数量の合計", value: (d) => d.totalQuantity },
+      { header: "取消", value: (d) => (d.cancelled ? "取消" : "") },
+      { header: "取消の理由", value: (d) => d.cancelReason },
       { header: "登録日時", value: (d) => dateTime(d.createdAt) },
     ],
   }),
@@ -330,7 +333,10 @@ function supplierInvoiceColumns(): CsvColumn<{
   readonly difference: number;
   readonly differenceReason: string | null;
   readonly paymentDueOn: string | null;
-  readonly payment: { readonly paidOn: string; readonly amount: number } | null;
+  readonly paidAmount: number;
+  readonly remaining: number;
+  readonly lastPaidOn: string | null;
+  readonly cancelReason: string | null;
 }>[] {
   return [
     { header: "仕入先", value: (i) => i.supplierName },
@@ -343,8 +349,10 @@ function supplierInvoiceColumns(): CsvColumn<{
     { header: "差額", value: (i) => i.difference },
     { header: "差額の理由", value: (i) => i.differenceReason },
     { header: "支払予定日", value: (i) => i.paymentDueOn },
-    { header: "支払日", value: (i) => i.payment?.paidOn ?? null },
-    { header: "支払額", value: (i) => i.payment?.amount ?? null },
+    { header: "支払済みの額", value: (i) => (i.status === "cancelled" ? null : i.paidAmount) },
+    { header: "残りの額", value: (i) => (i.status === "cancelled" ? null : i.remaining) },
+    { header: "最後の支払日", value: (i) => i.lastPaidOn },
+    { header: "取消の理由", value: (i) => i.cancelReason },
   ];
 }
 

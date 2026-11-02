@@ -13,6 +13,10 @@ export interface CustomerPaymentRecord {
   readonly method: PaymentMethod;
   readonly memo: string | null;
   readonly cancelled: boolean;
+  /** 取消の理由・日時（UTC）・操作者（取り消していなければ null） */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledByName: string | null;
   /**
    * 返還請求書の返還額（請求書で差し引けない返品を返還請求書で精算したもの）なら、その返品伝票。
    * 普通の入金は null
@@ -53,6 +57,9 @@ export interface AllocationRecord {
   readonly adjustment: number;
   readonly adjustmentKind: AllocationAdjustmentKind | null;
   readonly cancelled: boolean;
+  /** 取消の理由と日時（UTC）。入金の取消でまとめて取り消した消込は「入金の取消：（入金の取消の理由）」 */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
   readonly version: number;
   readonly createdAt: string;
 }
@@ -91,7 +98,15 @@ export interface CustomerPaymentStore {
   insert(
     record: Omit<
       CustomerPaymentRecord,
-      "cancelled" | "version" | "createdAt" | "createdByName" | "customerName" | "salesReturnNumber"
+      | "cancelled"
+      | "cancelReason"
+      | "cancelledAt"
+      | "cancelledByName"
+      | "version"
+      | "createdAt"
+      | "createdByName"
+      | "customerName"
+      | "salesReturnNumber"
     >,
     meta: WriteMeta,
   ): void;
@@ -99,8 +114,8 @@ export interface CustomerPaymentStore {
   activeCreditFor(salesReturnId: string): CustomerPaymentRecord | undefined;
   /** 版番号が一致したときだけ版番号を上げる（消込を足す・外すとき）。更新できたら true */
   touch(id: string, expectedVersion: number, meta: WriteMeta): boolean;
-  /** 版番号が一致したときだけ取消済みにする。更新できたら true */
-  cancel(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ取消済みにする（理由・日時・操作者を記録する）。更新できたら true */
+  cancel(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 入金の消込（新しい順。取り消したものも含む） */
   allocations(paymentId: string): AllocationRecord[];
   getAllocation(id: string): AllocationRecord | undefined;
@@ -115,8 +130,8 @@ export interface CustomerPaymentStore {
     }[],
     meta: WriteMeta,
   ): void;
-  /** 版番号が一致したときだけ消込を取消済みにする。更新できたら true */
-  cancelAllocation(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ消込を取消済みにする（理由・日時・操作者を記録する）。更新できたら true */
+  cancelAllocation(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 返還額の返金（新しい順。取り消したものも含む） */
   refunds(paymentId: string): RefundRecord[];
   getRefund(id: string): RefundRecord | undefined;

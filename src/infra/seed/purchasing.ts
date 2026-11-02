@@ -1,11 +1,11 @@
 /**
  * テストデータの手順（毎日）：発注（在庫が減った商品を仕入先ごとに）、入荷（分納・その場の返品・打ち切り）、
- * 仕入返品、入荷の取消、発注の取消、仕入先請求書（締め日・週ごと）、支払。
+ * 仕入返品、入荷の取消、発注の取消、仕入先請求書（締め日・週ごと）、支払（ごく一部は2回に分ける）。
  */
 import { and, asc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
 
 import { addDays, latestClosedPeriod } from "../../domain/dates";
-import { remainingQuantity } from "../../domain/purchasing";
+import { OPEN_SUPPLIER_INVOICE_STATUSES, remainingQuantity } from "../../domain/purchasing";
 import {
   cancelPurchaseOrder,
   confirmPurchaseOrder,
@@ -16,9 +16,11 @@ import { cancelPurchaseReceipt, recordPurchaseReceipt } from "../../usecases/pur
 import {
   createSupplierInvoice,
   payBulkSupplierInvoices,
+  paySupplierInvoiceCommand,
   previewSupplierInvoice,
 } from "../../usecases/purchasing/supplier-invoices";
 import * as schema from "../db/schema";
+import { inList } from "../db/sql-helpers";
 import type { SeedEmployeeKey } from "./names";
 import { incomingByItem, loadBalances, purchaseOrderLines } from "./reads";
 import { DayClock, dayNumber, weekday, type SeedDay, type SeedSession } from "./session";
@@ -510,32 +512,69 @@ export function registerSupplierInvoices(session: SeedSession, world: World, day
   }
 }
 
-/** 支払予定日になった仕入先請求書を一括で支払う（ごく一部は10日遅れる） */
+/** 2回に分けて支払う請求書の、1回目から2回目（残りの額）までの日数 */
+const SPLIT_PAYMENT_GAP_DAYS = 7;
+
+/**
+ * 支払予定日になった仕入先請求書を一括で支払う（ごく一部は10日遅れる）。
+ * ごく一部（5% と、投入の1回ごとに最初の1件）は2回に分けて支払う：支払予定日に請求額の半分を払い（一部支払）、
+ * 7日後の一括支払いで残りの額を払う
+ */
 export function paySupplierInvoices(session: SeedSession, day: SeedDay): void {
-  const due = session.db
+  const rows = session.db
     .select({
       id: schema.supplierInvoices.id,
       version: schema.supplierInvoices.version,
+      status: schema.supplierInvoices.status,
       invoiceNumber: schema.supplierInvoices.invoiceNumber,
       invoicedAmount: schema.supplierInvoices.invoicedAmount,
       paymentDueOn: schema.supplierInvoices.paymentDueOn,
+      lastPaidOn: sql<string | null>`(SELECT max(p.paid_on) FROM supplier_payments p
+        WHERE p.supplier_invoice_id = supplier_invoices.id AND p.cancelled = 0)`,
     })
     .from(schema.supplierInvoices)
     .where(
       and(
-        eq(schema.supplierInvoices.status, "unpaid"),
+        inList(schema.supplierInvoices.status, OPEN_SUPPLIER_INVOICE_STATUSES),
         lte(schema.supplierInvoices.paymentDueOn, day.date),
       ),
     )
     .orderBy(asc(schema.supplierInvoices.paymentDueOn), asc(schema.supplierInvoices.invoiceNumber))
-    .all()
-    .filter((x) => {
-      // 0円以下の請求書は支払わない（一括支払いは1件でも支払えなければ何も支払わない）
-      if (x.invoicedAmount <= 0) return false;
-      const late = session.random("pay", x.invoiceNumber ?? x.id).chance(0.02) ? 10 : 0;
-      return x.paymentDueOn !== null && addDays(x.paymentDueOn, late) <= day.date;
-    });
+    .all();
   const clock = new DayClock(day.date, 10);
+  const due: typeof rows = [];
+  for (const x of rows) {
+    // 0円以下の請求書は支払わない（一括支払いは1件でも支払えなければ何も支払わない）
+    if (x.invoicedAmount <= 0 || x.paymentDueOn === null) continue;
+    if (x.status === "partial") {
+      // 1回目を払った請求書は、7日後の一括支払いで残りの額を払う
+      if (x.lastPaidOn !== null && addDays(x.lastPaidOn, SPLIT_PAYMENT_GAP_DAYS) <= day.date)
+        due.push(x);
+      continue;
+    }
+    const key = x.invoiceNumber ?? x.id;
+    const late = session.random("pay", key).chance(0.02) ? 10 : 0;
+    if (addDays(x.paymentDueOn, late) > day.date) continue;
+    // 2回に分けるのは 5%。投入の1回ごとに最初の1件も分ける（tiny のように請求書が少なくても、一部支払が必ずできる）
+    const split = session.random("pay-split", key).chance(0.05) || session.once("pay-split");
+    if (x.invoicedAmount >= 2 && split) {
+      session.run(
+        paySupplierInvoiceCommand,
+        {
+          id: x.id,
+          version: x.version,
+          paidOn: day.date,
+          amount: Math.floor(x.invoicedAmount / 2),
+          memo: "振込（1回目。残りは後日）",
+        },
+        "accounting1",
+        clock.next(),
+        `一部支払（${key}）`,
+      );
+      continue;
+    }
+    due.push(x);
+  }
   for (let i = 0; i < due.length; i += 200) {
     session.run(
       payBulkSupplierInvoices,

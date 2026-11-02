@@ -312,10 +312,17 @@ describe("返品伝票の画面", () => {
       await as(sales).hx(`/sales-returns/${ret.id}/cancel`, {
         _key: newKey(),
         version: String(v),
-        reason: "誤り",
+        reason: "返品数の数え間違い",
       })
     ).text();
     expect(html).toContain("返品伝票を取り消しました");
+    // 取消の理由を返品伝票と、受注詳細の返品伝票の一覧に出す
+    expect(html).toContain("返品数の数え間違い");
+    const detail = await (await as(sales).get(`/sales-returns/${ret.id}`)).text();
+    expect(detail).toContain("取消の理由");
+    expect(detail).toContain("返品数の数え間違い");
+    const order = await (await as(sales).get(`/sales-orders/${shipped.order.id}`)).text();
+    expect(order).toContain("取消の理由：返品数の数え間違い");
     const notFound = await as(sales).get("/sales-returns/new?orderId=missing");
     expect(notFound.status).toBe(404);
   });
@@ -391,14 +398,31 @@ describe("入金の画面", () => {
 
     const allocation = (await systemQuery("customerPayments.get", { id: paymentId }))!
       .allocations[0]!;
+    // 消込の取消は理由が必須。理由がなければ入金の画面に理由を出す（取り消さない）
+    const noReason = await (
+      await as(user).hx(`/receipts/allocations/${allocation.id}/cancel`, {
+        _key: newKey(),
+        version: String(allocation.version),
+        paymentId,
+        reason: "",
+      })
+    ).text();
+    expect(noReason).toContain('id="receipt-detail"');
+    expect(noReason).toContain("消込の取消の理由を入力してください");
+    expect((await invoiceView(second.id)).invoice.status).toBe("partial");
     const released = await (
       await as(user).hx(`/receipts/allocations/${allocation.id}/cancel`, {
         _key: newKey(),
         version: String(allocation.version),
+        paymentId,
+        reason: "請求書を取り違えた",
       })
     ).text();
     expect(released).toContain("消込を取り消しました");
+    expect(released).toContain("取消の理由：請求書を取り違えた");
     expect((await invoiceView(second.id)).invoice.status).toBe("unpaid");
+    const invoicePage = await (await as(user).get(`/invoices/${second.id}`)).text();
+    expect(invoicePage).toContain("取消の理由：請求書を取り違えた");
 
     const current = (await systemQuery("customerPayments.get", { id: paymentId }))!.payment;
     const cancelled = await (
@@ -410,17 +434,26 @@ describe("入金の画面", () => {
     ).text();
     expect(cancelled).toContain("入金を取り消しました");
     expect((await invoiceView(invoice.id)).invoice.status).toBe("unpaid");
+    // 取消の理由を入金の画面（/receipts/:id）と、一覧・CSV に出す
+    const receiptPage = await (await as(user).get(`/receipts/${paymentId}`)).text();
+    expect(receiptPage).toContain("取消の理由");
+    expect(receiptPage).toContain("二重記録");
+    expect(receiptPage).toContain("取消の理由：入金の取消：二重記録");
 
     const list = await (
       await as(user).get(`/receipts?customerId=${setup.customer.id}&includeCancelled=1`)
     ).text();
     expect(list).toContain("取消");
+    expect(list).toContain("取消の理由：二重記録");
     const csv = await as(user).post("/receipts/csv", {
       _key: newKey(),
       customerId: setup.customer.id,
       includeCancelled: "1",
     });
-    expect(csvRows(await csv.text())[1]).toContain("振込,3000");
+    const rows = csvRows(await csv.text());
+    expect(rows[0]).toContain("取消の理由");
+    expect(rows[1]).toContain("振込,3000");
+    expect(rows[1]).toContain("二重記録");
 
     const sales = await createEmployee(["sales"]);
     expect(await (await as(sales).get("/receipts/new")).text()).toContain(
@@ -429,6 +462,7 @@ describe("入金の画面", () => {
     const missing = await as(user).post(`/receipts/allocations/missing/cancel`, {
       _key: newKey(),
       version: "1",
+      reason: "x",
     });
     expect(missing.status).toBe(409);
   });

@@ -58,14 +58,14 @@ export const payablesSection: DashboardSection = {
         label: "今週の支払予定",
         count: week.count,
         href: paths.payables({ dueFrom: week.from, dueTo: week.to }),
-        note: `${week.from.slice(5).replace("-", "/")}〜${week.to.slice(5).replace("-", "/")} 合計 ${yen(week.amount)}`,
+        note: `${week.from.slice(5).replace("-", "/")}〜${week.to.slice(5).replace("-", "/")} 残りの合計 ${yen(week.amount)}`,
       },
       {
-        label: "支払予定日を過ぎた未払いの仕入先請求書",
+        label: "支払予定日を過ぎた、支払の残っている仕入先請求書",
         count: summary.overduePayables.count,
         href: paths.payables({ overdue: 1 }),
         attention: true,
-        note: `合計 ${yen(summary.overduePayables.amount)}`,
+        note: `残りの合計 ${yen(summary.overduePayables.amount)}`,
       },
     ];
     return items;

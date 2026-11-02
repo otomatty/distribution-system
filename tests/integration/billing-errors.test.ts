@@ -247,6 +247,7 @@ describe("入金と消込の業務エラー", () => {
       await systemCommandResult("paymentAllocations.cancel", {
         allocationId: "missing",
         version: 1,
+        reason: "x",
       }),
     ).toMatchObject({ ok: false, error: { code: "not_found" } });
     expect(

@@ -50,6 +50,34 @@
       "when": 1793627675502,
       "tag": "0006_credit_notes_for_unbilled_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793632283018,
+      "tag": "0007_supplier_invoice_partial_payment",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793632283884,
+      "tag": "0008_purchase_return_cancel",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793632284760,
+      "tag": "0009_disposal_cancel",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1793632285744,
+      "tag": "0010_cancel_reasons",
+      "breakpoints": true
     }
   ]
 }

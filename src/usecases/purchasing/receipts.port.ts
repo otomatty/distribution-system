@@ -82,8 +82,12 @@ export interface ReceiptStore {
   markCancelled(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 取り消していない入荷の件数 */
   activeCount(orderId: string): number;
-  /** 発注明細ごとの、取り消していない入荷の受入数の合計（仕入単位） */
-  acceptedByLine(orderId: string): { lineId: string; accepted: number }[];
+  /**
+   * 発注明細ごとの、取り消していない入荷の受入数の合計（仕入単位）と、受入のある最も早い入荷日（受入がなければ null）
+   */
+  acceptedByLine(
+    orderId: string,
+  ): { lineId: string; accepted: number; firstAcceptedOn: string | null }[];
   /** 発注済みで残りのある明細（入荷予定一覧）。納品希望日の順。deliveryOn は納品希望日がその日のものだけ */
   scheduled(filter: {
     locationId?: string | undefined;

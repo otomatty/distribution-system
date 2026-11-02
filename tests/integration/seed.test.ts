@@ -211,6 +211,16 @@ describe("テストデータの投入（tiny）", () => {
     const verify = await seedValue<SeedVerifyResult>({ action: "verify" });
     expect(verify.checks.filter((c) => !c.ok)).toEqual([]);
     expect(verify.ok).toBe(true);
+    // 仕入先請求書の支払の確かめ：支払済みは支払の合計 = 請求額、一部支払は支払の合計 < 請求額
+    expect(verify.checks.map((c) => c.name)).toEqual(
+      expect.arrayContaining([
+        "仕入先請求書の支払済みの額 = 有効な支払の合計",
+        "支払済みの請求書は支払の合計 = 請求額、一部支払は支払の合計 < 請求額",
+      ]),
+    );
+    expect(verify.checks.map((c) => c.name)).not.toContain("支払済みの請求書には支払が1件");
+    // ごく一部の仕入先請求書は2回に分けて支払う（1回目で一部支払、7日後の一括支払いで残りを払う）
+    expect(verify.counts["2回に分けて支払った仕入先請求書"]).toBeGreaterThan(0);
 
     // 業務の流れの各状態がそろっている
     const shape = await readDb((db) => ({

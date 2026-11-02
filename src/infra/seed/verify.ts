@@ -3,7 +3,9 @@
  * - 在庫：集計表の現在庫 = 台帳の合計、現在庫 ≥ 0、引当数 = 受注済みの受注（メーカー直を除く）の数量の合計
  * - 受注：発送済みの受注には有効な発送が1件、それ以外は0件
  * - 発注：明細の入荷済みの数 = 有効な入荷の受入数 + 返品数、入荷済み・支払済みの発注は残りが0
- * - 仕入先請求書：支払済みの請求書には有効な支払が1件、支払済みの発注の入荷（受入のあるもの）はすべて支払済みの請求書に入っている
+ * - 仕入先請求書：支払済みの額 = 有効な支払の合計。支払済みの請求書は支払の合計 = 請求額、一部支払の請求書は
+ *   0 < 支払の合計 < 請求額、未払い・取消の請求書には有効な支払がない。支払済みの発注の入荷（受入のあるもの）は
+ *   すべて支払済みの請求書に入っている
  * - 請求：請求書の消込済みの額 = 有効な消込の合計、状態（未入金・一部入金・入金済み）が消込と合う、
  *   請求した発送は有効な請求書に載っている、締め日のない販売先の発送は今日の分を除いて請求済み、
  *   入金より多く消し込み・返金していない
@@ -129,15 +131,30 @@ function purchasingChecks(db: Db): SeedCheck[] {
     .map((l) => `${l.number}（${l.status}）に残りがある`);
   const invoices = db
     .select({
-      id: schema.supplierInvoices.id,
+      number: sql<string>`coalesce(${schema.supplierInvoices.invoiceNumber}, ${schema.supplierInvoices.id})`,
       status: schema.supplierInvoices.status,
+      invoicedAmount: schema.supplierInvoices.invoicedAmount,
+      paidAmount: schema.supplierInvoices.paidAmount,
       payments: sql<number>`(SELECT count(*) FROM supplier_payments p WHERE p.supplier_invoice_id = supplier_invoices.id AND p.cancelled = 0)`,
+      paidTotal: sql<number>`coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = supplier_invoices.id AND p.cancelled = 0), 0)`,
     })
     .from(schema.supplierInvoices)
     .all();
+  const paidAmount = invoices
+    .filter((i) => i.paidAmount !== i.paidTotal)
+    .map((i) => `${i.number} 支払済みの額 ${i.paidAmount} / 支払の合計 ${i.paidTotal}`);
+  const settled = (i: (typeof invoices)[number]): boolean => {
+    if (i.status === "paid") return i.payments > 0 && i.paidTotal === i.invoicedAmount;
+    if (i.status === "partial")
+      return i.payments > 0 && i.paidTotal > 0 && i.paidTotal < i.invoicedAmount;
+    return i.payments === 0;
+  };
   const paid = invoices
-    .filter((i) => (i.status === "paid" ? i.payments !== 1 : i.payments !== 0))
-    .map((i) => `${i.id}（${i.status}）の支払 ${i.payments} 件`);
+    .filter((i) => !settled(i))
+    .map(
+      (i) =>
+        `${i.number}（${i.status}）請求額 ${i.invoicedAmount} / 支払 ${i.payments} 件・合計 ${i.paidTotal}`,
+    );
   const paidOrders = db
     .select({
       number: schema.purchaseOrders.number,
@@ -155,7 +172,8 @@ function purchasingChecks(db: Db): SeedCheck[] {
   return [
     check("発注明細の入荷済みの数 = 入荷の合計", received),
     check("入荷済みの発注に残りがない", done),
-    check("支払済みの請求書には支払が1件", paid),
+    check("仕入先請求書の支払済みの額 = 有効な支払の合計", paidAmount),
+    check("支払済みの請求書は支払の合計 = 請求額、一部支払は支払の合計 < 請求額", paid),
     check("支払済みの発注の入荷はすべて支払済み", paidOrders),
   ];
 }
@@ -446,6 +464,25 @@ export function verifySeed(db: Db): SeedVerifyResult {
     仕入返品: n(db.select({ n: count() }).from(schema.purchaseReturns).get()),
     仕入先請求書: n(db.select({ n: count() }).from(schema.supplierInvoices).get()),
     支払: n(db.select({ n: count() }).from(schema.supplierPayments).get()),
+    一部支払の仕入先請求書: n(
+      db
+        .select({ n: count() })
+        .from(schema.supplierInvoices)
+        .where(eq(schema.supplierInvoices.status, "partial"))
+        .get(),
+    ),
+    "2回に分けて支払った仕入先請求書": n(
+      db
+        .select({ n: count() })
+        .from(schema.supplierInvoices)
+        .where(
+          and(
+            eq(schema.supplierInvoices.status, "paid"),
+            sql`(SELECT count(*) FROM supplier_payments p WHERE p.supplier_invoice_id = supplier_invoices.id AND p.cancelled = 0) >= 2`,
+          ),
+        )
+        .get(),
+    ),
     受注: n(db.select({ n: count() }).from(schema.salesOrders).get()),
     受注明細: n(db.select({ n: count() }).from(schema.salesOrderLines).get()),
     発送: n(db.select({ n: count() }).from(schema.shipments).get()),

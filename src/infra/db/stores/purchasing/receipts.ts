@@ -136,6 +136,9 @@ export function receiptStore(db: Db): ReceiptStore {
         .select({
           lineId: receiptLines.purchaseOrderLineId,
           accepted: sql<number>`coalesce(sum(${receiptLines.accepted}), 0)`,
+          firstAcceptedOn: sql<
+            string | null
+          >`min(CASE WHEN ${receiptLines.accepted} > 0 THEN ${receipts.receivedOn} END)`,
         })
         .from(receiptLines)
         .innerJoin(receipts, eq(receipts.id, receiptLines.receiptId))

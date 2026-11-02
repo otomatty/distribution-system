@@ -171,6 +171,11 @@ describe("返品伝票", () => {
     expect((await level(setup.a.id, setup.locationId)).onHand).toBe(onHand - 2);
     const view = await systemQuery("salesReturns.get", { id: ret.id });
     expect(view?.ret.cancelled).toBe(true);
+    // 取消の理由・日時・操作者を返品伝票に記録する（操作履歴だけでなく、伝票の画面に出す）
+    expect(view?.ret).toMatchObject({
+      cancelReason: "数え間違い",
+      cancelledAt: expect.any(String),
+    });
     expect(view?.cancelBlocker).toBeNull();
     expect(
       await systemCommandResult("salesReturns.cancel", {

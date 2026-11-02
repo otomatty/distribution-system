@@ -1,11 +1,16 @@
 /**
  * 支払予定一覧と買掛残高（要件定義書 3.7）。
- * - 支払予定一覧：未払いの仕入先請求書（支払予定日の順）と合計。チェックで選んで一括で支払済みにできる（1つのトランザクション）
- * - 買掛残高：仕入先別・月別の月末の残高。どちらも CSV で出力できる
+ * - 支払予定一覧：支払の残っている（未払い・一部支払の）仕入先請求書（支払予定日の順）と、請求額・支払済み・残りの合計。
+ *   状態で絞り込める。チェックで選んで、それぞれの残りの額を一括で支払える（1つのトランザクション）
+ * - 買掛残高：仕入先別・月別の月末の残高（請求額 − 支払額）。どちらも CSV で出力できる
  */
 import { Hono, type Context } from "hono";
 
 import { toBusinessDate } from "../../../domain/dates";
+import {
+  OPEN_SUPPLIER_INVOICE_STATUSES,
+  SUPPLIER_INVOICE_STATUS_LABELS,
+} from "../../../domain/purchasing";
 import type { DomainError } from "../../../domain/result";
 import { csvResponse, type CsvValue } from "../../csv";
 import { exportCsv } from "../../csv-exports";
@@ -34,9 +39,15 @@ import { InvoiceTable } from "./supplier-invoices";
 
 export const payableRoutes = new Hono<AppEnv>();
 
+const STATUS_OPTIONS: Option[] = OPEN_SUPPLIER_INVOICE_STATUSES.map((s) => ({
+  value: s,
+  label: SUPPLIER_INVOICE_STATUS_LABELS[s],
+}));
+
 function filterFrom(get: (name: string) => string) {
   const text = (name: string) => get(name).trim() || undefined;
   return {
+    status: OPEN_SUPPLIER_INVOICE_STATUSES.find((s) => s === get("status")),
     supplierId: text("supplierId"),
     dueFrom: text("dueFrom"),
     dueTo: text("dueTo"),
@@ -86,20 +97,21 @@ async function Results(props: {
     <section id="results">
       {props.result ? (
         <Alert kind="success">
-          {props.result.count}件の仕入先請求書を支払済みにしました（合計 {yen(props.result.amount)}
-          ）
+          {props.result.count}件の仕入先請求書の残りの額を支払い、支払済みにしました（合計{" "}
+          {yen(props.result.amount)}）
         </Alert>
       ) : null}
       <ErrorSummary error={props.error} />
       <div class="toolbar">
         <p>
-          未払い <strong>{list.totals.count}件</strong>・合計{" "}
-          <strong id="payables-total">{yen(list.totals.amount)}</strong>
+          支払の残っている請求書 <strong>{list.totals.count}件</strong>・請求額{" "}
+          {yen(list.totals.invoiced)}・支払済み {yen(list.totals.paid)}・残りの合計{" "}
+          <strong id="payables-total">{yen(list.totals.remaining)}</strong>
         </p>
         <CsvButton action={paths.payablesCsv()} filters={query} />
       </div>
       {list.rows.length === 0 ? (
-        <EmptyState message="条件に合う未払いの仕入先請求書はありません" />
+        <EmptyState message="条件に合う、支払の残っている仕入先請求書はありません" />
       ) : canPay ? (
         <form
           id="bulk-pay"
@@ -108,7 +120,7 @@ async function Results(props: {
           hx-post={paths.payablesBulkPay()}
           hx-target="#results"
           hx-swap="outerHTML"
-          hx-confirm="選んだ仕入先請求書を、それぞれの請求額で支払済みにします（請求額が 0 円以下のものは、請求額で精算します）。よろしいですか？"
+          hx-confirm="選んだ仕入先請求書の残りの額をそれぞれ支払い、支払済みにします（一部支払の請求書は残りの額、請求額が 0 円以下のものは請求額で精算します）。よろしいですか？"
           class="form"
         >
           <FormKey />
@@ -123,7 +135,7 @@ async function Results(props: {
               <Input name="paidOn" type="date" value={toBusinessDate(new Date())} />
             </Field>
             <button type="submit" class="btn btn-primary">
-              選んだ請求書を支払済みにする
+              選んだ請求書の残りを支払う
             </button>
           </div>
         </form>
@@ -166,6 +178,14 @@ payableRoutes.get("/", async (c) => {
         hx-push-url="true"
         hx-trigger="change"
       >
+        <Field label="状態" name="status">
+          <Select
+            name="status"
+            value={f.status}
+            options={STATUS_OPTIONS}
+            empty="未払い・一部支払"
+          />
+        </Field>
         <Field label="仕入先" name="supplierId">
           <Select name="supplierId" value={f.supplierId} options={suppliers} empty="すべて" />
         </Field>

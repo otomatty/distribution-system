@@ -124,6 +124,10 @@ export const purchaseReturns = sqliteTable(
     locationId: text("location_id").notNull(),
     supplierInvoiceId: text("supplier_invoice_id"),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（仕入返品の取消） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     ...auditColumns,
   },
@@ -172,7 +176,12 @@ export const supplierInvoices = sqliteTable(
     difference: integer("difference").notNull().default(0),
     differenceReason: text("difference_reason"),
     paymentDueOn: text("payment_due_on"),
-    status: text("status", { enum: ["unpaid", "paid", "cancelled"] }).notNull(),
+    status: text("status", { enum: ["unpaid", "partial", "paid", "cancelled"] }).notNull(),
+    /**
+     * 支払済みの額（取り消していない支払の合計・円）。支払・支払の取消のたびに domain で計算して持つ
+     * （支払予定・一覧・CSV の残りの額 = 請求額 − 支払済みの額に使う）
+     */
+    paidAmount: integer("paid_amount").notNull().default(0),
     attachmentKey: text("attachment_key"),
     cancelReason: text("cancel_reason"),
     memo: text("memo"),

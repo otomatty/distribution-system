@@ -453,6 +453,17 @@ function DetailBody(props: {
             ["返還請求書", ret.creditNoteNumber],
             ["メモ", ret.memo ? <span class="pre">{ret.memo}</span> : null],
             ["登録", `${dateTime(ret.createdAt)} ${ret.createdByName ?? ""}`],
+            ...(ret.cancelled
+              ? ([
+                  ["取消の理由", ret.cancelReason ?? "（理由の記録なし）"],
+                  [
+                    "取消",
+                    ret.cancelledAt
+                      ? `${dateTime(ret.cancelledAt)} ${ret.cancelledByName ?? ""}`
+                      : null,
+                  ],
+                ] as const)
+              : []),
           ]}
         />
       </section>

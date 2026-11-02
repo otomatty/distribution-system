@@ -3,6 +3,7 @@ import type { Child, PropsWithChildren } from "hono/jsx";
 
 import type { DomainError } from "../../domain/result";
 import { newFormKey } from "../form";
+import { dateTime } from "./format";
 
 export type FormErrors = Readonly<Record<string, string>>;
 
@@ -265,5 +266,24 @@ export function DescriptionList(props: { items: readonly (readonly [string, Chil
         </>
       ))}
     </dl>
+  );
+}
+
+/** 取り消した伝票の「取消：理由（日時 担当者）」の表示（理由のない古い記録は「理由の記録なし」） */
+export function CancelledNote(props: {
+  reason: string | null;
+  at?: string | null | undefined;
+  by?: string | null | undefined;
+}) {
+  return (
+    <div class="small">
+      取消の理由：{props.reason ?? "（理由の記録なし）"}
+      {props.at ? (
+        <span class="muted">
+          {" "}
+          （{dateTime(props.at)} {props.by ?? ""}）
+        </span>
+      ) : null}
+    </div>
   );
 }

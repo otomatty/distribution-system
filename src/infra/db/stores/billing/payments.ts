@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, gte, isNotNull, lte, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 
 import type {
   AllocationRecord,
@@ -46,6 +47,8 @@ function paymentConditions(filter: CustomerPaymentFilter): SQL | undefined {
   return conds.length > 0 ? and(...conds) : undefined;
 }
 
+const cancelledBy = alias(employees, "cancelled_by_employee");
+
 const paymentColumns = {
   id: customerPayments.id,
   customerId: customerPayments.customerId,
@@ -55,6 +58,9 @@ const paymentColumns = {
   method: customerPayments.method,
   memo: customerPayments.memo,
   cancelled: customerPayments.cancelled,
+  cancelReason: customerPayments.cancelReason,
+  cancelledAt: customerPayments.cancelledAt,
+  cancelledByName: cancelledBy.name,
   salesReturnId: customerPayments.salesReturnId,
   salesReturnNumber: salesReturns.number,
   version: customerPayments.version,
@@ -86,6 +92,8 @@ const allocationColumns = {
   adjustment: paymentAllocations.adjustment,
   adjustmentKind: paymentAllocations.adjustmentKind,
   cancelled: paymentAllocations.cancelled,
+  cancelReason: paymentAllocations.cancelReason,
+  cancelledAt: paymentAllocations.cancelledAt,
   version: paymentAllocations.version,
   createdAt: paymentAllocations.createdAt,
 };
@@ -180,6 +188,7 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
         .innerJoin(partners, eq(partners.id, customerPayments.customerId))
         .leftJoin(salesReturns, eq(salesReturns.id, customerPayments.salesReturnId))
         .leftJoin(employees, eq(employees.id, customerPayments.createdBy))
+        .leftJoin(cancelledBy, eq(cancelledBy.id, customerPayments.cancelledBy))
         .where(eq(customerPayments.id, id))
         .get();
     },
@@ -208,6 +217,7 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
         .innerJoin(partners, eq(partners.id, customerPayments.customerId))
         .leftJoin(salesReturns, eq(salesReturns.id, customerPayments.salesReturnId))
         .leftJoin(employees, eq(employees.id, customerPayments.createdBy))
+        .leftJoin(cancelledBy, eq(cancelledBy.id, customerPayments.cancelledBy))
         .where(where)
         .orderBy(desc(customerPayments.receivedOn), desc(customerPayments.id))
         .limit(pageSize)
@@ -229,10 +239,16 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
         .all();
       return rows.length === 1;
     },
-    cancel(id, expectedVersion, meta) {
+    cancel(id, expectedVersion, reason, meta) {
       const rows = db
         .update(customerPayments)
-        .set({ cancelled: true, ...bump(meta) })
+        .set({
+          cancelled: true,
+          cancelReason: reason,
+          cancelledAt: meta.at,
+          cancelledBy: meta.by,
+          ...bump(meta),
+        })
         .where(
           and(
             eq(customerPayments.id, id),
@@ -266,11 +282,14 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
       for (const batch of insertBatches(values, ALLOCATION_COLUMNS))
         db.insert(paymentAllocations).values(batch).run();
     },
-    cancelAllocation(id, expectedVersion, meta) {
+    cancelAllocation(id, expectedVersion, reason, meta) {
       const rows = db
         .update(paymentAllocations)
         .set({
           cancelled: true,
+          cancelReason: reason,
+          cancelledAt: meta.at,
+          cancelledBy: meta.by,
           version: sql`${paymentAllocations.version} + 1`,
           updatedAt: meta.at,
           updatedBy: meta.by,

@@ -161,6 +161,10 @@ export const salesReturns = sqliteTable(
     creditNoteNumber: text("credit_note_number"),
     creditNotePdfKey: text("credit_note_pdf_key"),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（伝票と一覧に出す） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     ...auditColumns,
   },
@@ -197,6 +201,10 @@ export const customerPayments = sqliteTable(
     amount: integer("amount").notNull(),
     method: text("method", { enum: ["transfer", "cash", "offset", "other"] }).notNull(),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（伝票と一覧に出す） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     /**
      * 返還請求書の返還額（請求書で差し引けない返品を、返還請求書で精算したもの）なら、その返品伝票。
@@ -246,6 +254,10 @@ export const paymentAllocations = sqliteTable(
     adjustment: integer("adjustment").notNull().default(0),
     adjustmentKind: text("adjustment_kind", { enum: ["bank_fee", "discount", "other"] }),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者。入金の取消でまとめて取り消した消込は、入金の取消の理由 */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     ...auditColumns,
   },
   (t) => [
@@ -265,6 +277,11 @@ export const disposals = sqliteTable(
     disposedOn: text("disposed_on").notNull(),
     contactName: text("contact_name"),
     memo: text("memo"),
+    /** 取消（取り消した伝票は一覧に残し、廃棄率の集計から除く）と、その理由・日時（UTC）・操作者 */
+    cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     ...auditColumns,
   },
   (t) => [index("disposals_customer").on(t.customerId, t.disposedOn)],

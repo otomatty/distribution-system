@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNull, lte, sql, sum, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 
 import type {
   SalesReturnLineRecord,
@@ -22,6 +23,8 @@ import { inList, insertBatches } from "../../sql-helpers";
 /** 返品伝票の明細の1行あたりの列数（INSERT を分ける単位の計算に使う） */
 const LINE_COLUMNS = 10;
 
+const cancelledBy = alias(employees, "cancelled_by_employee");
+
 export function salesReturnStore(db: Db): SalesReturnStore {
   /** 条件に合う返品伝票と明細を読む（並びは orderBy のとおり） */
   function load(where: SQL | undefined, orderBy: SQL[], limit?: number): SalesReturnRecord[] {
@@ -33,6 +36,7 @@ export function salesReturnStore(db: Db): SalesReturnStore {
         invoiceNumber: invoices.number,
         invoiceStatus: invoices.status,
         createdByName: employees.name,
+        cancelledByName: cancelledBy.name,
         creditPaymentId: customerPayments.id,
       })
       .from(salesReturns)
@@ -48,6 +52,7 @@ export function salesReturnStore(db: Db): SalesReturnStore {
         ),
       )
       .leftJoin(employees, eq(employees.id, salesReturns.createdBy))
+      .leftJoin(cancelledBy, eq(cancelledBy.id, salesReturns.cancelledBy))
       .where(where)
       .orderBy(...orderBy);
     const heads = limit === undefined ? query.all() : query.limit(limit).all();
@@ -100,6 +105,9 @@ export function salesReturnStore(db: Db): SalesReturnStore {
       creditNoteNumber: h.ret.creditNoteNumber,
       creditPaymentId: h.creditPaymentId,
       cancelled: h.ret.cancelled,
+      cancelReason: h.ret.cancelReason,
+      cancelledAt: h.ret.cancelledAt,
+      cancelledByName: h.cancelledByName,
       memo: h.ret.memo,
       version: h.ret.version,
       createdAt: h.ret.createdAt,
@@ -165,11 +173,14 @@ export function salesReturnStore(db: Db): SalesReturnStore {
       for (const batch of insertBatches(values, LINE_COLUMNS))
         db.insert(salesReturnLines).values(batch).run();
     },
-    cancel(id, expectedVersion, meta) {
+    cancel(id, expectedVersion, reason, meta) {
       const rows = db
         .update(salesReturns)
         .set({
           cancelled: true,
+          cancelReason: reason,
+          cancelledAt: meta.at,
+          cancelledBy: meta.by,
           version: sql`${salesReturns.version} + 1`,
           updatedAt: meta.at,
           updatedBy: meta.by,

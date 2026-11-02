@@ -1,6 +1,7 @@
 /**
  * 仕入先請求書（要件定義書 3.7）：一覧・登録（仕入先を起点に入荷を選んで突き合わせる）・詳細（支払、支払の取消、取消）。
  * 登録画面では、チェックのたびにシステムの計算額と請求額の差額をその場で計算し直す。
+ * 支払は残りの額まで何回でも記録でき（残りより少なければ一部支払）、支払の取消は1件ずつ行う。
  */
 import { Hono, type Context } from "hono";
 
@@ -22,6 +23,7 @@ import { queryAs, runCommand, runQuery } from "../../usecase";
 import {
   Alert,
   Badge,
+  CancelledNote,
   DescriptionList,
   EmptyState,
   ErrorSummary,
@@ -45,12 +47,13 @@ import { AttachmentSection } from "../../views/supplier-invoice-attachments";
 
 export const supplierInvoiceRoutes = new Hono<AppEnv>();
 
-const STATUSES = ["unpaid", "paid", "cancelled"] as const;
+const STATUSES = ["unpaid", "partial", "paid", "cancelled"] as const;
 
 const SI_NOTICES: Readonly<Record<string, string>> = {
   ...NOTICES,
   created: "仕入先請求書を登録しました",
   paid: "支払を記録しました",
+  partial: "支払を記録しました（一部支払）。残りの額は、この画面か支払予定から続けて支払えます",
   paymentCancelled: "支払を取り消しました",
   cancelled: "仕入先請求書を取り消しました。結びつけていた入荷は、別の請求書に入れ直せます",
   attached: "請求書の PDF を保存しました",
@@ -230,6 +233,8 @@ export function InvoiceTable(props: {
             <th>支払予定日</th>
             <th>状態</th>
             <th class="num">請求額</th>
+            <th class="num">支払済み</th>
+            <th class="num">残り</th>
             <th class="num">差額</th>
           </tr>
         </thead>
@@ -262,6 +267,16 @@ export function InvoiceTable(props: {
                     <Badge kind="info">精算（相殺・返金）</Badge>
                   </div>
                 ) : null}
+              </td>
+              <td class="num">{i.status === "cancelled" ? "" : yen(i.paidAmount)}</td>
+              <td class="num">
+                {i.status === "cancelled" ? (
+                  ""
+                ) : i.status === "partial" ? (
+                  <strong>{yen(i.remaining)}</strong>
+                ) : (
+                  yen(i.remaining)
+                )}
               </td>
               <td class={i.difference === 0 ? "num" : "num text-danger"}>
                 {i.difference === 0 ? "" : yen(i.difference)}
@@ -706,7 +721,7 @@ function PayForm(props: {
   const i = props.view.invoice;
   const v = props.values ?? {
     paidOn: toBusinessDate(new Date()),
-    amount: String(i.invoicedAmount),
+    amount: String(props.view.remaining),
     memo: "",
   };
   const e = props.error ? toFormErrors(props.error) : {};
@@ -727,7 +742,12 @@ function PayForm(props: {
           請求額が {yen(i.invoicedAmount)}{" "}
           のため、お金は払いません。請求額と同じ額で精算します（マイナスは、相殺するか返金を受ける額です）。
         </p>
-      ) : null}
+      ) : (
+        <p class="hint">
+          残りの額は {yen(props.view.remaining)} です。残りより少ない額は一部支払になり、残りが 0
+          になるまで続けて支払えます。残りより多くは支払えません。
+        </p>
+      )}
       <ErrorSummary error={props.error} />
       <FormKey />
       <Version value={i.version} />
@@ -736,7 +756,7 @@ function PayForm(props: {
           <Input name="paidOn" type="date" value={v.paidOn} />
         </Field>
         <Field
-          label={settlement ? "精算額（円・請求額と同じ額）" : "支払額（円）"}
+          label={settlement ? "精算額（円・請求額と同じ額）" : "支払額（円・残りの額まで）"}
           name="amount"
           required
           error={e["amount"]}
@@ -749,7 +769,7 @@ function PayForm(props: {
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-          {settlement ? "精算する（相殺・返金）" : "支払済みにする"}
+          {settlement ? "精算する（相殺・返金）" : "支払を記録する"}
         </button>
       </div>
     </form>
@@ -763,10 +783,17 @@ function ReasonForm(props: {
   button: string;
   version: number;
   error?: DomainError | null | undefined;
+  /** 取消の欄を小さく出す（表の行の中に置くとき） */
+  inline?: boolean;
+  hidden?: Readonly<Record<string, string>>;
 }) {
   return (
-    <details class="card" id={props.id} open={props.error ? true : undefined}>
-      <summary>{props.title}</summary>
+    <details
+      class={props.inline ? undefined : "card"}
+      id={props.id}
+      open={props.error ? true : undefined}
+    >
+      <summary class={props.inline ? "btn btn-secondary btn-sm" : undefined}>{props.title}</summary>
       <form
         method="post"
         action={props.action}
@@ -778,6 +805,9 @@ function ReasonForm(props: {
         <ErrorSummary error={props.error} />
         <FormKey />
         <Version value={props.version} />
+        {Object.entries(props.hidden ?? {}).map(([name, value]) => (
+          <input type="hidden" name={name} value={value} />
+        ))}
         <Field label="理由" name={`${props.id}-reason`} required>
           <textarea id={`f-${props.id}-reason`} name="reason" rows={2}></textarea>
         </Field>
@@ -791,15 +821,23 @@ function ReasonForm(props: {
   );
 }
 
-function CancelPaymentForm(props: { view: SupplierInvoiceView; error?: DomainError | null }) {
+/** 支払1件の取消（支払の記録の表の行に置く）。取り消すと、支払が残れば一部支払、残らなければ未払いに戻る */
+function CancelPaymentForm(props: {
+  invoiceId: string;
+  paymentId: string;
+  version: number;
+  error?: DomainError | null;
+}) {
   return (
     <ReasonForm
-      id="si-cancel-payment"
-      action={paths.supplierInvoiceCancelPayment(props.view.invoice.id)}
-      title="支払を取り消す"
-      button="支払を取り消す"
-      version={props.view.invoice.version}
+      id={`si-cancel-payment-${props.paymentId}`}
+      action={paths.supplierInvoiceCancelPayment(props.invoiceId)}
+      title="取消"
+      button="この支払を取り消す"
+      version={props.version}
       error={props.error}
+      inline
+      hidden={{ paymentId: props.paymentId }}
     />
   );
 }
@@ -823,6 +861,7 @@ supplierInvoiceRoutes.get("/:id", async (c) => {
   const i = view.invoice;
   const title = `仕入先請求書 ${i.invoiceNumber ?? "（番号なし）"}`;
   const notice = SI_NOTICES[c.req.query("notice") ?? ""];
+  const cancellablePayments = new Set(view.cancellablePaymentIds);
   return c.html(
     <Layout title={title} actor={c.get("actor")} current={paths.supplierInvoices()}>
       <PageHeader
@@ -844,6 +883,8 @@ supplierInvoiceRoutes.get("/:id", async (c) => {
             ["仕入先", <a href={paths.partner(i.supplierId)}>{i.supplierName}</a>],
             ["請求日", i.invoiceDate],
             ["請求額", yen(i.invoicedAmount)],
+            ["支払済みの額", i.status === "cancelled" ? null : yen(i.paidAmount)],
+            ["残りの額", i.status === "cancelled" ? null : yen(view.remaining)],
             ["送料", yen(i.shippingFee)],
             ["計算額", yen(i.computedAmount)],
             [
@@ -926,19 +967,27 @@ supplierInvoiceRoutes.get("/:id", async (c) => {
                 <th class="num">支払額</th>
                 <th>メモ</th>
                 <th>記録</th>
+                <th>
+                  <span class="sr-only">操作</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {view.payments.map((p) => (
                 <tr class={p.cancelled ? "muted" : undefined}>
                   <td>
-                    {p.paidOn}
-                    {p.cancelled ? `（取消：${p.cancelReason ?? ""}）` : ""}
+                    {p.paidOn} {p.cancelled ? <Badge>取消</Badge> : null}
+                    {p.cancelled ? <CancelledNote reason={p.cancelReason} /> : null}
                   </td>
                   <td class="num">{yen(p.amount)}</td>
                   <td>{p.memo ?? ""}</td>
                   <td class="small">
                     {dateTime(p.createdAt)} {p.createdByName ?? ""}
+                  </td>
+                  <td>
+                    {cancellablePayments.has(p.id) ? (
+                      <CancelPaymentForm invoiceId={i.id} paymentId={p.id} version={i.version} />
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -946,7 +995,6 @@ supplierInvoiceRoutes.get("/:id", async (c) => {
           </table>
         </section>
       ) : null}
-      {view.actions.cancelPayment ? <CancelPaymentForm view={view} /> : null}
       {view.actions.cancel ? <CancelInvoiceForm view={view} /> : null}
     </Layout>,
   );
@@ -972,7 +1020,11 @@ supplierInvoiceRoutes.post("/:id/pay", async (c) => {
     },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, paths.supplierInvoice(id, { notice: "paid" }));
+  if (result.ok)
+    return redirectTo(
+      c,
+      paths.supplierInvoice(id, { notice: result.value.status === "partial" ? "partial" : "paid" }),
+    );
   const view = await runQuery(c, "supplierInvoices.get", { id });
   if (!view) return c.notFound();
   return c.html(<PayForm view={view} error={result.error} values={values} />);
@@ -981,16 +1033,23 @@ supplierInvoiceRoutes.post("/:id/pay", async (c) => {
 supplierInvoiceRoutes.post("/:id/cancel-payment", async (c) => {
   const id = c.req.param("id");
   const form = await readForm(c);
+  const paymentId = str(form, "paymentId");
+  const version = int(form, "version");
   const result = await runCommand(
     c,
     "supplierInvoices.cancelPayment",
-    { id, version: int(form, "version"), reason: str(form, "reason") },
+    { id, version, paymentId, reason: str(form, "reason") },
     formKey(form),
   );
   if (result.ok) return redirectTo(c, paths.supplierInvoice(id, { notice: "paymentCancelled" }));
-  const view = await runQuery(c, "supplierInvoices.get", { id });
-  if (!view) return c.notFound();
-  return c.html(<CancelPaymentForm view={view} error={result.error} />);
+  return c.html(
+    <CancelPaymentForm
+      invoiceId={id}
+      paymentId={paymentId}
+      version={version}
+      error={result.error}
+    />,
+  );
 });
 
 supplierInvoiceRoutes.post("/:id/cancel", async (c) => {

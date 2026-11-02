@@ -250,6 +250,7 @@ export function invoiceStore(db: Db): InvoiceStore {
           adjustment: paymentAllocations.adjustment,
           adjustmentKind: paymentAllocations.adjustmentKind,
           cancelled: paymentAllocations.cancelled,
+          cancelReason: paymentAllocations.cancelReason,
           version: paymentAllocations.version,
           createdAt: paymentAllocations.createdAt,
         })

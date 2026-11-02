@@ -379,6 +379,7 @@ describe("返還額の消込・返金と、返還請求書の取消", () => {
     await systemCommand("paymentAllocations.cancel", {
       allocationId: allocation.id,
       version: allocation.version,
+      reason: "消込の誤り",
     });
     expect((await returnView(ret.id)).credit).toMatchObject({
       allocated: 0,

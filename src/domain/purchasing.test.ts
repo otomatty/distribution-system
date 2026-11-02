@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { unwrap, unwrapErr } from "../../tests/support/result";
 import {
   cancelOrder,
+  cancelPurchaseReturn,
   cancelReceipt,
   cancelSupplierInvoice,
   cancelSupplierPayment,
@@ -28,10 +29,14 @@ import {
   revertReceipt,
   settledOrderStatus,
   stockQuantity,
+  SUPPLIER_INVOICE_STATUS_LABELS,
   validateReceivedOn,
+  validateReturnedOn,
   supplierInvoiceAmount,
+  supplierInvoiceRemaining,
   type PurchaseOrderLineState,
 } from "./purchasing";
+import type { Result } from "./result";
 
 const lines = [
   { id: "l1", quantity: 10, receivedQuantity: 0, closed: false },
@@ -202,17 +207,24 @@ describe("入荷", () => {
   it("入荷の取消：取り消した後の明細から発注の状態を決める", () => {
     const open = [{ id: "l1", quantity: 10, receivedQuantity: 6, closed: false }];
     const closed = [{ id: "l1", quantity: 10, receivedQuantity: 3, closed: true }];
-    expect(cancelReceipt("received", false, open, 1)).toEqual({ ok: true, value: "ordered" });
-    expect(cancelReceipt("ordered", false, open, 0)).toEqual({ ok: true, value: "ordered" });
+    expect(cancelReceipt("received", null, open, 1)).toEqual({ ok: true, value: "ordered" });
+    expect(cancelReceipt("ordered", "unpaid", open, 0)).toEqual({ ok: true, value: "ordered" });
     // ほかの入荷の打ち切りが残っていれば、入荷済みのまま
-    expect(cancelReceipt("received", false, closed, 1)).toEqual({ ok: true, value: "received" });
+    expect(cancelReceipt("received", null, closed, 1)).toEqual({ ok: true, value: "received" });
     // 支払うものが残っていなければ支払済み
-    expect(cancelReceipt("received", false, closed, 0)).toEqual({ ok: true, value: "paid" });
-    expect(cancelReceipt("received", true, open, 0).ok).toBe(false);
-    expect(cancelReceipt("paid", false, open, 0).ok).toBe(false);
-    expect(receiptCancellable("ordered", false)).toEqual({ ok: true, value: true });
-    expect(unwrapErr(receiptCancellable("received", true)).message).toContain("支払済みの請求書");
-    expect(receiptCancellable("draft", false).ok).toBe(false);
+    expect(cancelReceipt("received", null, closed, 0)).toEqual({ ok: true, value: "paid" });
+    expect(cancelReceipt("received", "paid", open, 0).ok).toBe(false);
+    expect(cancelReceipt("paid", null, open, 0).ok).toBe(false);
+    expect(receiptCancellable("ordered", null)).toEqual({ ok: true, value: true });
+    expect(receiptCancellable("received", "unpaid")).toEqual({ ok: true, value: true });
+    expect(unwrapErr(receiptCancellable("received", "paid")).message).toContain(
+      "支払済みの請求書に含まれる入荷",
+    );
+    // 一部支払の請求書の入荷も、先に支払をすべて取り消すまで取り消せない
+    expect(unwrapErr(receiptCancellable("received", "partial")).message).toBe(
+      "一部支払の請求書に含まれる入荷は取り消せません。先に請求書の支払をすべて取り消してください",
+    );
+    expect(receiptCancellable("draft", null).ok).toBe(false);
   });
   it("発注の状態：残りがあれば発注済み、残りがなく未払いの入荷があれば入荷済み、なければ支払済み", () => {
     const done = [
@@ -365,6 +377,37 @@ describe("仕入返品", () => {
       recordPurchaseReturn("draft", returnable, [{ lineId: "l1", units: 1 }], "floor").ok,
     ).toBe(false);
   });
+  it("取消は入荷の取消と同じ条件：支払（一部を含む）を記録した請求書から差し引いたものは取り消せない。理由が必須", () => {
+    expect(cancelPurchaseReturn(false, null, "数え間違い")).toEqual({ ok: true, value: true });
+    expect(cancelPurchaseReturn(false, "unpaid", "数え間違い")).toEqual({ ok: true, value: true });
+    expect(unwrapErr(cancelPurchaseReturn(false, "paid", "x")).message).toBe(
+      "支払済みの請求書に含まれる仕入返品は取り消せません",
+    );
+    expect(unwrapErr(cancelPurchaseReturn(false, "partial", "x")).message).toContain(
+      "先に請求書の支払をすべて取り消してください",
+    );
+    expect(unwrapErr(cancelPurchaseReturn(true, null, "x")).message).toBe(
+      "この仕入返品はすでに取り消されています",
+    );
+    const blank = unwrapErr(cancelPurchaseReturn(false, null, "  "));
+    expect(blank.code).toBe("validation");
+    expect(blank.fields?.[0]?.field).toBe("reason");
+  });
+  it("返品日は、返品する商品の入荷日（明細が複数なら最も遅いもの）以降", () => {
+    expect(validateReturnedOn("2026-10-10", ["2026-10-10"]).ok).toBe(true);
+    expect(validateReturnedOn("2026-10-20", ["2026-10-10", "2026-10-15", null]).ok).toBe(true);
+    // 受入のない明細だけなら、返品できる数で止める（ここでは止めない）
+    expect(validateReturnedOn("2026-01-01", [null]).ok).toBe(true);
+    expect(validateReturnedOn("2026-01-01", []).ok).toBe(true);
+    expect(
+      unwrapErr(validateReturnedOn("2026-10-12", ["2026-10-10", "2026-10-15"])).fields,
+    ).toEqual([
+      {
+        field: "returnedOn",
+        message: "返品日は、返品する商品の入荷日（2026-10-15）以降にしてください",
+      },
+    ]);
+  });
   it("仕入返品した数を下回る入荷の取消はできない", () => {
     expect(
       receiptCancelBlockedByReturns([
@@ -406,38 +449,152 @@ describe("仕入先請求書と支払", () => {
   it("登録・支払・取消の遷移", () => {
     expect(registerSupplierInvoice(1)).toEqual({ ok: true, value: "unpaid" });
     expect(registerSupplierInvoice(0).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 100, 100)).toEqual({ ok: true, value: "paid" });
-    // 請求額が1円以上なら、請求額と違う額でも1円以上なら支払える
-    expect(paySupplierInvoice("unpaid", 100, 60)).toEqual({ ok: true, value: "paid" });
-    expect(paySupplierInvoice("paid", 100, 100).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 100, 0).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 100, -100).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 100, 1.5).ok).toBe(false);
-    expect(cancelSupplierPayment("paid", "二重払い")).toEqual({ ok: true, value: "unpaid" });
-    expect(cancelSupplierPayment("unpaid", "二重払い").ok).toBe(false);
-    expect(cancelSupplierPayment("paid", "").ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 0, 100)).toEqual({
+      ok: true,
+      value: { status: "paid", paidAmount: 100 },
+    });
+    expect(paySupplierInvoice("paid", 100, 100, 1).ok).toBe(false);
+    expect(paySupplierInvoice("cancelled", 100, 0, 100).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 0, 0).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 0, -100).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 0, 1.5).ok).toBe(false);
     expect(cancelSupplierInvoice("unpaid", "請求書の誤り")).toEqual({
       ok: true,
       value: "cancelled",
     });
-    expect(unwrapErr(cancelSupplierInvoice("paid", "x")).message).toContain("先に支払を取り消し");
+    expect(unwrapErr(cancelSupplierInvoice("paid", "x")).message).toBe(
+      "支払済みの請求書は取り消せません。先に支払をすべて取り消してください",
+    );
+    expect(unwrapErr(cancelSupplierInvoice("partial", "x")).message).toBe(
+      "一部支払の請求書は取り消せません。先に支払をすべて取り消してください",
+    );
     expect(cancelSupplierInvoice("cancelled", "x").ok).toBe(false);
     expect(cancelSupplierInvoice("unpaid", " ").ok).toBe(false);
+  });
+  it("一部支払：残りより少ない支払は一部支払、残りが 0 になれば支払済み。残りより多い支払はできない", () => {
+    expect(SUPPLIER_INVOICE_STATUS_LABELS.partial).toBe("一部支払");
+    const first = unwrap(paySupplierInvoice("unpaid", 1000, 0, 400));
+    expect(first).toEqual({ status: "partial", paidAmount: 400 });
+    const second = unwrap(paySupplierInvoice(first.status, 1000, first.paidAmount, 500));
+    expect(second).toEqual({ status: "partial", paidAmount: 900 });
+    const over = unwrapErr(paySupplierInvoice("partial", 1000, 900, 101));
+    expect(over.message).toBe("支払額が残りの額（100 円）を超えています");
+    expect(over.fields?.[0]?.field).toBe("amount");
+    expect(paySupplierInvoice("unpaid", 1000, 0, 1001).ok).toBe(false);
+    expect(paySupplierInvoice("partial", 1000, 900, 100)).toEqual({
+      ok: true,
+      value: { status: "paid", paidAmount: 1000 },
+    });
+    expect(
+      supplierInvoiceRemaining({ status: "partial", invoicedAmount: 1000, paidAmount: 900 }),
+    ).toBe(100);
+    expect(
+      supplierInvoiceRemaining({ status: "paid", invoicedAmount: 1000, paidAmount: 1000 }),
+    ).toBe(0);
+    expect(
+      supplierInvoiceRemaining({ status: "cancelled", invoicedAmount: 1000, paidAmount: 0 }),
+    ).toBe(0);
+    // 精算（0 円以下）の請求書の残りは、精算するまで請求額
+    expect(
+      supplierInvoiceRemaining({ status: "unpaid", invoicedAmount: -1296, paidAmount: 0 }),
+    ).toBe(-1296);
+  });
+  it("支払の取消は1件ずつ。ほかの支払が残れば一部支払、残らなければ未払いに戻る。理由が必須", () => {
+    const live = { amount: 400, cancelled: false };
+    expect(cancelSupplierPayment("paid", 1000, live, 1, "二重払い")).toEqual({
+      ok: true,
+      value: { status: "partial", paidAmount: 600 },
+    });
+    expect(cancelSupplierPayment("partial", 400, live, 0, "二重払い")).toEqual({
+      ok: true,
+      value: { status: "unpaid", paidAmount: 0 },
+    });
+    expect(cancelSupplierPayment("paid", 1000, { amount: 1000, cancelled: false }, 0, "x")).toEqual(
+      { ok: true, value: { status: "unpaid", paidAmount: 0 } },
+    );
+    // 精算（マイナス）の取消は未払いに戻る
+    expect(
+      cancelSupplierPayment("paid", -1296, { amount: -1296, cancelled: false }, 0, "x"),
+    ).toEqual({ ok: true, value: { status: "unpaid", paidAmount: 0 } });
+    expect(unwrapErr(cancelSupplierPayment("unpaid", 0, live, 0, "x")).message).toBe(
+      "支払済み・一部支払の請求書だけ支払を取り消せます",
+    );
+    expect(
+      unwrapErr(cancelSupplierPayment("paid", 1000, { amount: 400, cancelled: true }, 1, "x"))
+        .message,
+    ).toBe("この支払はすでに取り消されています");
+    expect(cancelSupplierPayment("paid", 1000, live, 1, "").ok).toBe(false);
+  });
+  it("支払と取消を繰り返しても、支払済みの額は有効な支払の合計で、状態は額と件数から決まる", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 100_000 }),
+        fc.array(fc.oneof(fc.integer({ min: 1, max: 60_000 }), fc.constant(-1)), {
+          maxLength: 30,
+        }),
+        (invoiced, ops) => {
+          let status: "unpaid" | "partial" | "paid" = "unpaid";
+          let paid = 0;
+          const payments: number[] = [];
+          const problems: string[] = [];
+          for (const op of ops) {
+            const amount = op === -1 ? payments.pop() : op;
+            if (op === -1 && amount === undefined) {
+              // 支払のない請求書の支払は取り消せない
+              if (cancelSupplierPayment(status, paid, { amount: 1, cancelled: false }, 0, "x").ok)
+                problems.push("支払のない請求書の支払を取り消せた");
+              continue;
+            }
+            const next: Result<{ status: "unpaid" | "partial" | "paid"; paidAmount: number }> =
+              op === -1
+                ? cancelSupplierPayment(
+                    status,
+                    paid,
+                    { amount: amount ?? 0, cancelled: false },
+                    payments.length,
+                    "x",
+                  )
+                : paySupplierInvoice(status, invoiced, paid, op);
+            if (!next.ok) {
+              // 支払えないのは、支払済みか残りより多いときだけ（取消は必ずできる）
+              if (op === -1 || !(status === "paid" || op > invoiced - paid))
+                problems.push(`${status} ${paid}/${invoiced} の ${op} が失敗した`);
+              continue;
+            }
+            if (op !== -1) payments.push(op);
+            status = next.value.status;
+            paid = next.value.paidAmount;
+            const total = payments.reduce((s, a) => s + a, 0);
+            const expected =
+              payments.length === 0 ? "unpaid" : paid === invoiced ? "paid" : "partial";
+            if (paid !== total || paid > invoiced || status !== expected)
+              problems.push(`${status}（${expected}）${paid}/${invoiced}・支払の合計 ${total}`);
+          }
+          expect(problems).toEqual([]);
+        },
+      ),
+    );
   });
   it("請求額が 0 円以下の請求書は、請求額と同じ額で精算する（相殺・返金を受ける）", () => {
     expect(isSettlementInvoice(0)).toBe(true);
     expect(isSettlementInvoice(-1296)).toBe(true);
     expect(isSettlementInvoice(1)).toBe(false);
-    expect(paySupplierInvoice("unpaid", -1296, -1296)).toEqual({ ok: true, value: "paid" });
-    expect(paySupplierInvoice("unpaid", 0, 0)).toEqual({ ok: true, value: "paid" });
-    const wrong = unwrapErr(paySupplierInvoice("unpaid", -1296, 0));
+    expect(paySupplierInvoice("unpaid", -1296, 0, -1296)).toEqual({
+      ok: true,
+      value: { status: "paid", paidAmount: -1296 },
+    });
+    expect(paySupplierInvoice("unpaid", 0, 0, 0)).toEqual({
+      ok: true,
+      value: { status: "paid", paidAmount: 0 },
+    });
+    const wrong = unwrapErr(paySupplierInvoice("unpaid", -1296, 0, 0));
     expect(wrong.message).toBe(
       "請求額が -1,296 円の請求書は、請求額と同じ額（-1,296 円）で精算してください",
     );
     expect(wrong.fields?.[0]?.field).toBe("amount");
-    expect(paySupplierInvoice("unpaid", -1296, 1296).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 0, 1).ok).toBe(false);
-    expect(paySupplierInvoice("paid", 0, 0).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", -1296, 0, 1296).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 0, 0, 1).ok).toBe(false);
+    expect(paySupplierInvoice("paid", 0, 0, 0).ok).toBe(false);
   });
   it("支払で発注が支払済みになるのは、入荷済みで全部の入荷が支払済みのとき。支払の取消で入荷済みに戻る", () => {
     const done = [{ id: "l1", quantity: 2, receivedQuantity: 2, closed: false }];

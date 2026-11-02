@@ -2,6 +2,7 @@
 import { z } from "zod";
 
 import { addDays, weekRange } from "../../domain/dates";
+import { OPEN_SUPPLIER_INVOICE_STATUSES } from "../../domain/purchasing";
 import { defineQuery } from "../core";
 
 export interface PurchasingDashboard {
@@ -12,14 +13,17 @@ export interface PurchasingDashboard {
   readonly failedSends: number;
   /** 納品希望日を過ぎた未入荷の発注（発注済み） */
   readonly overdueReceipts: number;
-  /** 今週（月曜〜日曜）が支払予定日の未払いの仕入先請求書 */
+  /**
+   * 今週（月曜〜日曜）が支払予定日の、支払の残っている（未払い・一部支払の）仕入先請求書。
+   * amount は残りの額（請求額 − 支払済みの額）の合計
+   */
   readonly payablesThisWeek: {
     readonly count: number;
     readonly amount: number;
     readonly from: string;
     readonly to: string;
   };
-  /** 支払予定日を過ぎた未払いの仕入先請求書（予定日は昨日まで） */
+  /** 支払予定日を過ぎた、支払の残っている仕入先請求書（予定日は昨日まで）。amount は残りの額の合計 */
   readonly overduePayables: {
     readonly count: number;
     readonly amount: number;
@@ -34,6 +38,13 @@ export const purchasingDashboard = defineQuery({
     const today = ctx.clock.today();
     const week = weekRange(today);
     const yesterday = addDays(today, -1);
+    const open = (filter: { dueFrom?: string; dueTo: string }) => {
+      const t = ctx.stores.supplierInvoices.totals({
+        statuses: OPEN_SUPPLIER_INVOICE_STATUSES,
+        ...filter,
+      });
+      return { count: t.count, amount: t.remaining };
+    };
     return {
       today,
       draftOrders: ctx.stores.purchaseOrders.count({ status: "draft" }),
@@ -46,18 +57,8 @@ export const purchasingDashboard = defineQuery({
         status: "ordered",
         deliveryBefore: today,
       }),
-      payablesThisWeek: {
-        ...ctx.stores.supplierInvoices.totals({
-          status: "unpaid",
-          dueFrom: week.from,
-          dueTo: week.to,
-        }),
-        ...week,
-      },
-      overduePayables: {
-        ...ctx.stores.supplierInvoices.totals({ status: "unpaid", dueTo: yesterday }),
-        to: yesterday,
-      },
+      payablesThisWeek: { ...open({ dueFrom: week.from, dueTo: week.to }), ...week },
+      overduePayables: { ...open({ dueTo: yesterday }), to: yesterday },
     };
   },
 });

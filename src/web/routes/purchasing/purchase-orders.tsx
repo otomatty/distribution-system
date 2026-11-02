@@ -27,6 +27,7 @@ import { runCommand, runQuery } from "../../usecase";
 import {
   Alert,
   Badge,
+  CancelledNote,
   Checkbox,
   DescriptionList,
   EmptyState,
@@ -52,6 +53,7 @@ import {
   destinationText,
   ORDER_STATUS_OPTIONS,
   OrderStatusBadge,
+  PurchaseReturnCancelForm,
   ReceiptCancelForm,
   SupplierInvoiceStatusBadge,
 } from "../../views/purchasing";
@@ -69,6 +71,8 @@ const PO_NOTICES: Readonly<Record<string, string>> = {
   cancelled: "発注を取り消しました",
   receiptCancelled: "入荷を取り消しました。在庫を打ち消しの行で戻しました",
   returned: "仕入返品を記録しました",
+  returnCancelled:
+    "仕入返品を取り消しました。在庫を打ち消しの行で戻しました（未払いの仕入先請求書からは外しました）",
 };
 
 // ---- 一覧 ---------------------------------------------------------------------
@@ -1221,6 +1225,7 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
   const { view } = props;
   const { order, actions } = view;
   const cancellable = new Set(view.cancellableReceiptIds);
+  const cancellableReturns = new Set(view.cancellableReturnIds);
   return (
     <>
       {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
@@ -1356,7 +1361,7 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                           {l.closedRemaining ? "・残りを打ち切り" : ""}
                         </div>
                       ))}
-                      {r.cancelReason ? <div>取消の理由：{r.cancelReason}</div> : null}
+                      {r.cancelled ? <CancelledNote reason={r.cancelReason} /> : null}
                     </td>
                     <td class="num">{yen(r.subtotal)}</td>
                     <td>
@@ -1398,12 +1403,18 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                   <th>保管場所</th>
                   <th>内容</th>
                   <th class="num">返品額（税抜）</th>
+                  <th>仕入先請求書</th>
+                  <th>
+                    <span class="sr-only">操作</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {view.returns.map((r) => (
-                  <tr>
-                    <td class="nowrap">{r.number}</td>
+                  <tr class={r.cancelled ? "muted" : undefined}>
+                    <td class="nowrap">
+                      {r.number} {r.cancelled ? <Badge>取消</Badge> : null}
+                    </td>
                     <td class="nowrap">{r.returnedOn}</td>
                     <td>{r.locationName}</td>
                     <td class="small">
@@ -1414,8 +1425,38 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                         </div>
                       ))}
                       {r.memo ? <div>{r.memo}</div> : null}
+                      {r.cancelled ? (
+                        <CancelledNote
+                          reason={r.cancelReason}
+                          at={r.cancelledAt}
+                          by={r.cancelledByName}
+                        />
+                      ) : null}
                     </td>
                     <td class="num">{yen(r.subtotal)}</td>
+                    <td>
+                      {r.supplierInvoiceId ? (
+                        <a href={paths.supplierInvoice(r.supplierInvoiceId)}>
+                          {r.supplierInvoiceStatus ? (
+                            <SupplierInvoiceStatusBadge status={r.supplierInvoiceStatus} />
+                          ) : (
+                            "請求書"
+                          )}
+                        </a>
+                      ) : (
+                        ""
+                      )}
+                    </td>
+                    <td>
+                      {cancellableReturns.has(r.id) ? (
+                        <PurchaseReturnCancelForm
+                          orderId={order.id}
+                          returnId={r.id}
+                          number={r.number}
+                          version={r.version}
+                        />
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1434,7 +1475,8 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
           <ul>
             {view.invoices.map((i) => (
               <li>
-                <a href={paths.supplierInvoice(i.id)}>{i.invoiceNumber ?? "（番号なし）"}</a>
+                <a href={paths.supplierInvoice(i.id)}>{i.invoiceNumber ?? "（番号なし）"}</a>{" "}
+                <SupplierInvoiceStatusBadge status={i.status} />
               </li>
             ))}
           </ul>
@@ -1811,6 +1853,34 @@ purchaseOrderRoutes.post("/:id/returns/new", async (c) => {
       values={values}
       error={result.error}
       shortages={shortages}
+    />,
+  );
+});
+
+/** 仕入返品の取消（発注詳細の仕入返品の欄から）。失敗したら取消の欄だけを返す */
+purchaseOrderRoutes.post("/:id/returns/:returnId/cancel", async (c) => {
+  const id = c.req.param("id");
+  const returnId = c.req.param("returnId");
+  const form = await readForm(c);
+  const version = int(form, "version");
+  const result = await runCommand(
+    c,
+    "purchaseReturns.cancel",
+    { id: returnId, version, reason: str(form, "reason") },
+    formKey(form),
+  );
+  if (result.ok)
+    return redirectTo(
+      c,
+      paths.purchaseOrder(result.value.purchaseOrderId || id, { notice: "returnCancelled" }),
+    );
+  return c.html(
+    <PurchaseReturnCancelForm
+      orderId={id}
+      returnId={returnId}
+      number={str(form, "number")}
+      version={version}
+      error={result.error}
     />,
   );
 });

@@ -110,6 +110,18 @@ describe("商品の CSV 一括登録", () => {
     const page = await (await as(user).get("/items/import")).text();
     expect(page).toContain("商品の CSV 一括登録");
     expect(page).toContain('href="/items/import/template.csv"');
+    // 形式の決まり（商品コードが同じなら上書き、空なら自動で採番、仕入先とジャンルは名前、取扱終了と在庫の列はない）を、
+    // 折りたたまずに出す
+    const start = page.indexOf('<ul class="import-rules">');
+    expect(start).toBeGreaterThan(0);
+    const rules = page.slice(start, page.indexOf("</ul>", start));
+    expect(rules).toContain("商品コードが登録済みの商品と同じ行は、その商品を CSV");
+    expect(rules).toContain("の内容で上書きします");
+    expect(rules).toContain(
+      "商品コードが空の行は、新しい商品として登録し、商品コードを自動で採番します",
+    );
+    expect(rules).toContain("仕入先とジャンルは、ID ではなく名前で書きます");
+    expect(rules).toContain("取扱終了と在庫の列はありません");
     expect(await (await as(user).get("/items")).text()).toContain('href="/items/import"');
     const res = await as(user).get("/items/import/template.csv");
     expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");

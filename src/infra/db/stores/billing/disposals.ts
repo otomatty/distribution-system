@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, gte, lte, max, sql, sum, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 
 import type {
   DisposalFilter,
@@ -18,11 +19,14 @@ import {
 } from "../../schema";
 import { inList, insertBatches } from "../../sql-helpers";
 
+const cancelledBy = alias(employees, "cancelled_by_employee");
+
 function conditions(filter: DisposalFilter): SQL | undefined {
   const conds: SQL[] = [];
   if (filter.customerId) conds.push(eq(disposals.customerId, filter.customerId));
   if (filter.from) conds.push(gte(disposals.disposedOn, filter.from));
   if (filter.to) conds.push(lte(disposals.disposedOn, filter.to));
+  if (filter.cancelled) conds.push(eq(disposals.cancelled, filter.cancelled === "only"));
   return conds.length > 0 ? and(...conds) : undefined;
 }
 
@@ -34,10 +38,16 @@ export function disposalStore(db: Db): DisposalStore {
   return {
     get(id) {
       const head = db
-        .select({ d: disposals, customerName: partners.name, createdByName: employees.name })
+        .select({
+          d: disposals,
+          customerName: partners.name,
+          createdByName: employees.name,
+          cancelledByName: cancelledBy.name,
+        })
         .from(disposals)
         .innerJoin(partners, eq(partners.id, disposals.customerId))
         .leftJoin(employees, eq(employees.id, disposals.createdBy))
+        .leftJoin(cancelledBy, eq(cancelledBy.id, disposals.cancelledBy))
         .where(eq(disposals.id, id))
         .get();
       if (!head) return undefined;
@@ -64,6 +74,10 @@ export function disposalStore(db: Db): DisposalStore {
         disposedOn: head.d.disposedOn,
         contactName: head.d.contactName,
         memo: head.d.memo,
+        cancelled: head.d.cancelled,
+        cancelReason: head.d.cancelReason,
+        cancelledAt: head.d.cancelledAt,
+        cancelledByName: head.cancelledByName,
         version: head.d.version,
         createdAt: head.d.createdAt,
         createdByName: head.createdByName,
@@ -81,6 +95,8 @@ export function disposalStore(db: Db): DisposalStore {
           customerName: partners.name,
           disposedOn: disposals.disposedOn,
           contactName: disposals.contactName,
+          cancelled: disposals.cancelled,
+          cancelReason: disposals.cancelReason,
           createdAt: disposals.createdAt,
           lineCount: sql<number>`(SELECT COUNT(*) FROM ${disposalLines} l WHERE l.disposal_id = "disposals"."id")`,
           totalQuantity: sql<number>`(SELECT COALESCE(SUM(l.quantity), 0) FROM ${disposalLines} l WHERE l.disposal_id = "disposals"."id")`,
@@ -100,6 +116,29 @@ export function disposalStore(db: Db): DisposalStore {
         .run();
       const values = lines.map((l) => ({ disposalId: record.id, ...l }));
       for (const batch of insertBatches(values, 5)) db.insert(disposalLines).values(batch).run();
+    },
+    markCancelled(id, expectedVersion, reason, meta) {
+      const rows = db
+        .update(disposals)
+        .set({
+          cancelled: true,
+          cancelReason: reason,
+          cancelledAt: meta.at,
+          cancelledBy: meta.by,
+          version: sql`${disposals.version} + 1`,
+          updatedAt: meta.at,
+          updatedBy: meta.by,
+        })
+        .where(
+          and(
+            eq(disposals.id, id),
+            eq(disposals.version, expectedVersion),
+            eq(disposals.cancelled, false),
+          ),
+        )
+        .returning({ id: disposals.id })
+        .all();
+      return rows.length === 1;
     },
     shippedItems(customerId, limit) {
       const last = max(shipments.shippedOn);
@@ -122,7 +161,9 @@ export function disposalStore(db: Db): DisposalStore {
         .all();
     },
     rateSources(filter): DisposalRateSource[] {
+      // 取り消した廃棄伝票は集計に含めない
       const disposedConds: SQL[] = [
+        eq(disposals.cancelled, false),
         gte(disposals.disposedOn, filter.from),
         lte(disposals.disposedOn, filter.to),
       ];

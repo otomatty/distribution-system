@@ -2,8 +2,10 @@
  * 仕入先請求書と支払（要件定義書 3.7、4章）。
  * - 1枚の請求書に1件以上の入荷を結びつけ、仕入返品を差し引く
  * - システムの計算額と請求額の差額は、理由を入力すれば登録できる
- * - 状態は「未払い → 支払済み」と取消だけ。支払うと対象の発注が支払済みになる
- * - 一括支払いは1つのトランザクションで処理する（1件でも支払えなければ何もしない）
+ * - 状態は「未払い → 一部支払 → 支払済み」と取消。残りの額より少ない支払は一部支払で、残りが 0 になるまで支払える。
+ *   受入のある入荷がすべて支払済み（残りが 0）の請求書に入ると、対象の発注が支払済みになる
+ * - 支払は1回ごとに1件。支払の取消は1件ずつで、状態を決め直す（支払済み・一部支払 → 一部支払・未払い）
+ * - 一括支払いは、選んだ請求書の残りの額を1つのトランザクションで支払う（1件でも支払えなければ何もしない）
  */
 import { z } from "zod";
 
@@ -24,11 +26,13 @@ import {
   cancelSupplierPayment,
   invoiceDifference,
   isSettlementInvoice,
+  OPEN_SUPPLIER_INVOICE_STATUSES,
   orderStatusAfterPaymentChange,
   payableBalances,
   paySupplierInvoice,
   registerSupplierInvoice,
   supplierInvoiceAmount,
+  supplierInvoiceRemaining,
   type PayableMonth,
   type SupplierInvoiceStatus,
 } from "../../domain/purchasing";
@@ -54,6 +58,7 @@ import {
   type Page,
 } from "../schemas";
 import { closingTermsOf, fieldError, taxRatesOn, writeMeta } from "./common";
+import type { PurchaseReturnRecord } from "./purchase-returns.port";
 import type { ReceiptRecord } from "./receipts.port";
 import type {
   InvoiceReceiptRow,
@@ -61,11 +66,13 @@ import type {
   SupplierInvoiceAttachmentRecord,
   SupplierInvoiceFilter,
   SupplierInvoiceRecord,
+  SupplierInvoiceTotals,
   SupplierPaymentRecord,
 } from "./supplier-invoices.port";
 
 export const SUPPLIER_INVOICE_STATUSES = [
   "unpaid",
+  "partial",
   "paid",
   "cancelled",
 ] as const satisfies readonly SupplierInvoiceStatus[];
@@ -315,15 +322,17 @@ export const createSupplierInvoice = defineCommand({
 });
 
 /**
- * 請求書の支払・支払の取消・取消のあとに、発注の状態を決め直す（domain の orderStatusAfterPaymentChange）。
+ * 請求書の支払・支払の取消・取消、仕入返品の取消のあとに、発注の状態を決め直す
+ * （domain の orderStatusAfterPaymentChange = settledOrderStatus）。
  * 支払済みの請求書に入っていない、受入のある入荷の件数は、請求書の状態を変えた後の値で数える。
- * orderIds は請求書に結びついていた入荷の発注（取消では、入荷を外す前に読んでおく）。変えた発注の ID を返す。
+ * orderIds は請求書に結びついていた入荷の発注（取消では、入荷を外す前に読んでおく）。
+ * ref は操作履歴に残す、きっかけの伝票（{ supplierInvoiceId } など）。変えた発注の ID を返す。
  */
-function updateOrders(
+export function settleOrders(
   ctx: UsecaseContext,
-  invoiceId: string,
   orderIds: readonly string[],
   action: string,
+  ref: Readonly<Record<string, string>>,
 ): string[] {
   const changed: string[] = [];
   for (const orderId of orderIds) {
@@ -341,7 +350,7 @@ function updateOrders(
       entityId: po.id,
       action,
       before: { status: po.status },
-      after: { status, supplierInvoiceId: invoiceId },
+      after: { status, ...ref },
     });
     changed.push(po.id);
   }
@@ -357,33 +366,35 @@ function applyPayment(
   invoice: SupplierInvoiceRecord,
   expectedVersion: number,
   payment: { paidOn: string; amount: number; memo: string | null },
-): Result<{ paymentId: string }> {
-  const next = paySupplierInvoice(invoice.status, invoice.invoicedAmount, payment.amount);
+): Result<{ paymentId: string; status: SupplierInvoiceStatus }> {
+  const next = paySupplierInvoice(
+    invoice.status,
+    invoice.invoicedAmount,
+    invoice.paidAmount,
+    payment.amount,
+  );
   if (!next.ok) return next;
-  if (
-    !ctx.stores.supplierInvoices.update(
-      invoice.id,
-      expectedVersion,
-      { status: next.value },
-      writeMeta(ctx),
-    )
-  )
+  const patch = { status: next.value.status, paidAmount: next.value.paidAmount };
+  if (!ctx.stores.supplierInvoices.update(invoice.id, expectedVersion, patch, writeMeta(ctx)))
     return err("conflict", STALE_VERSION_MESSAGE);
   const paymentId = ctx.ids.next();
   ctx.stores.supplierInvoices.insertPayment(paymentId, invoice.id, payment, writeMeta(ctx));
-  const orders = updateOrders(ctx, invoice.id, orderIdsOf(ctx, invoice.id), "pay");
+  const orders = settleOrders(ctx, orderIdsOf(ctx, invoice.id), "pay", {
+    supplierInvoiceId: invoice.id,
+  });
   ctx.audit.record({
     entityType: "supplier_invoice",
     entityId: invoice.id,
     action: "pay",
-    before: { status: invoice.status },
-    after: { status: next.value, paymentId, ...payment, paidOrderIds: orders },
+    before: { status: invoice.status, paidAmount: invoice.paidAmount },
+    after: { ...patch, paymentId, ...payment, paidOrderIds: orders },
   });
-  return ok({ paymentId });
+  return ok({ paymentId, status: next.value.status });
 }
 
 /**
- * 支払（支払日と支払額を記録する）。請求額が 0 円以下の請求書は、請求額と同じ額（0 円・マイナス）で精算する
+ * 支払（支払日と支払額を記録する）。支払額は残りの額まで。残りより少なければ一部支払、残りと同じなら支払済み。
+ * 請求額が 0 円以下の請求書は、請求額と同じ額（0 円・マイナス）で精算する
  * （domain の paySupplierInvoice。マイナスの支払額は「相殺・返金を受ける額」）
  */
 export const paySupplierInvoiceCommand = defineCommand({
@@ -400,14 +411,15 @@ export const paySupplierInvoiceCommand = defineCommand({
     if (!invoice) return err("not_found", "仕入先請求書が見つかりません");
     const paid = applyPayment(ctx, invoice, v, { paidOn, amount, memo });
     if (!paid.ok) return paid;
-    return ok({ id, paymentId: paid.value.paymentId });
+    return ok({ id, paymentId: paid.value.paymentId, status: paid.value.status });
   },
 });
 
 /**
- * 一括支払い：選んだ請求書を、それぞれの請求額で支払済みにする。1つのトランザクションで処理し、
- * 1件でも支払えないもの（支払済み・取消・ほかの人の更新）があれば、どれも支払わずに理由を返す。
- * 請求額が 0 円以下の請求書も、請求額（0 円・マイナス）で精算する（個別の支払と同じ規則）。amount は差し引きの合計
+ * 一括支払い：選んだ請求書を、それぞれの残りの額（請求額 − 支払済みの額）で支払済みにする。一部支払の請求書は
+ * 残りの額を払う。1つのトランザクションで処理し、1件でも支払えないもの（支払済み・取消・ほかの人の更新）があれば、
+ * どれも支払わずに理由を返す。請求額が 0 円以下の請求書も、請求額（0 円・マイナス）で精算する（個別の支払と同じ規則）。
+ * amount は支払った額（差し引き）の合計
  */
 export const payBulkSupplierInvoices = defineCommand({
   permission: "supplierInvoices.manage",
@@ -435,7 +447,8 @@ export const payBulkSupplierInvoices = defineCommand({
       const check = paySupplierInvoice(
         invoice.status,
         invoice.invoicedAmount,
-        invoice.invoicedAmount,
+        invoice.paidAmount,
+        supplierInvoiceRemaining(invoice),
       );
       if (!check.ok) problems.push(`${label}：${check.error.message}`);
       else if (invoice.version !== t.version) problems.push(`${label}：${STALE_VERSION_MESSAGE}`);
@@ -447,43 +460,55 @@ export const payBulkSupplierInvoices = defineCommand({
       });
     let amount = 0;
     for (const t of targets) {
-      const paid = applyPayment(ctx, t.invoice, t.version, {
-        paidOn,
-        amount: t.invoice.invoicedAmount,
-        memo,
-      });
+      const remaining = supplierInvoiceRemaining(t.invoice);
+      const paid = applyPayment(ctx, t.invoice, t.version, { paidOn, amount: remaining, memo });
       if (!paid.ok) return paid;
-      amount += t.invoice.invoicedAmount;
+      amount += remaining;
     }
     return ok({ count: targets.length, amount, ids: targets.map((t) => t.invoice.id) });
   },
 });
 
-/** 支払の取消（支払済み → 未払い）。発注は入荷済みに戻る */
+/**
+ * 支払1件の取消。取り消していない支払が残れば一部支払、残らなければ未払いに戻る（domain の cancelSupplierPayment）。
+ * 支払済みだった発注は入荷済みに戻る。版番号は請求書の版（支払・支払の取消のたびに上がる）
+ */
 export const cancelSupplierPaymentCommand = defineCommand({
   permission: "supplierInvoices.manage",
-  input: z.object({ id: idSchema, version, reason: requiredText(500) }),
-  run(ctx, { id, version: v, reason }) {
+  input: z.object({ id: idSchema, version, paymentId: idSchema, reason: requiredText(500) }),
+  run(ctx, { id, version: v, paymentId, reason }) {
     const invoice = ctx.stores.supplierInvoices.get(id);
     if (!invoice) return err("not_found", "仕入先請求書が見つかりません");
-    const next = cancelSupplierPayment(invoice.status, reason);
+    const payments = ctx.stores.supplierInvoices.payments(id);
+    const payment = payments.find((p) => p.id === paymentId);
+    if (!payment) return err("not_found", "支払が見つかりません");
+    const others = payments.filter((p) => !p.cancelled && p.id !== paymentId).length;
+    const next = cancelSupplierPayment(invoice.status, invoice.paidAmount, payment, others, reason);
     if (!next.ok) return next;
-    if (!ctx.stores.supplierInvoices.update(id, v, { status: next.value }, writeMeta(ctx)))
+    const meta = writeMeta(ctx);
+    const patch = { status: next.value.status, paidAmount: next.value.paidAmount };
+    if (!ctx.stores.supplierInvoices.update(id, v, patch, meta))
       return err("conflict", STALE_VERSION_MESSAGE);
-    ctx.stores.supplierInvoices.cancelPayments(id, reason, writeMeta(ctx));
-    const orders = updateOrders(ctx, id, orderIdsOf(ctx, id), "cancel_payment");
+    // 同じトランザクションで読んで、取り消していないことを確かめた支払なので、ここで失敗することはない
+    ctx.stores.supplierInvoices.cancelPayment(id, paymentId, reason, meta);
+    const orders = settleOrders(ctx, orderIdsOf(ctx, id), "cancel_payment", {
+      supplierInvoiceId: id,
+    });
     ctx.audit.record({
       entityType: "supplier_invoice",
       entityId: id,
       action: "cancel_payment",
-      before: { status: invoice.status, payment: invoice.payment },
-      after: { status: next.value, reason, orderIds: orders },
+      before: { status: invoice.status, paidAmount: invoice.paidAmount, payment },
+      after: { ...patch, paymentId, reason, orderIds: orders },
     });
-    return ok({ id });
+    return ok({ id, status: next.value.status });
   },
 });
 
-/** 仕入先請求書の取消。結びつけた入荷・仕入返品は外れ、別の請求書に入れ直せる */
+/**
+ * 仕入先請求書の取消。取り消していない支払が残っていれば（一部支払・支払済み）取り消せない。
+ * 結びつけた入荷・仕入返品は外れ、別の請求書に入れ直せる
+ */
 export const cancelSupplierInvoiceCommand = defineCommand({
   permission: "supplierInvoices.manage",
   input: z.object({ id: idSchema, version, reason: requiredText(500) }),
@@ -507,7 +532,9 @@ export const cancelSupplierInvoiceCommand = defineCommand({
     ctx.stores.supplierInvoices.setReceiptInvoice(receiptIds, null);
     ctx.stores.supplierInvoices.setReturnInvoice(returnIds, null);
     // 未払いの請求書の入荷は未払いのままなので、通常は発注の状態は変わらない（遷移の規則を1か所にするため決め直す）
-    const orders = updateOrders(ctx, id, orderIds, "cancel_supplier_invoice");
+    const orders = settleOrders(ctx, orderIds, "cancel_supplier_invoice", {
+      supplierInvoiceId: id,
+    });
     ctx.audit.record({
       entityType: "supplier_invoice",
       entityId: id,
@@ -520,17 +547,19 @@ export const cancelSupplierInvoiceCommand = defineCommand({
 });
 
 /**
- * 入荷の取消で、未払いの請求書からその入荷を外し、計算額と差額を計算し直す。
+ * 入荷・仕入返品の取消で、未払いの請求書からその入荷・仕入返品を外し、計算額と差額を計算し直す。
  * 差額が出て理由がなければ、取消のためと記録する（経理が請求書の画面で確かめる）。
+ * 支払（一部を含む）を記録した請求書の入荷・仕入返品は、取消の前に domain で止めている。
  */
-export function detachReceiptFromInvoice(
+function detachFromInvoice(
   ctx: UsecaseContext,
   invoiceId: string,
-  receipt: Pick<ReceiptRecord, "id" | "number">,
+  source: { kind: "receipt" | "purchase_return"; id: string; number: string },
 ): Result<true> {
   const invoice = ctx.stores.supplierInvoices.get(invoiceId);
   if (!invoice || invoice.status !== "unpaid") return ok(true);
-  ctx.stores.supplierInvoices.setReceiptInvoice([receipt.id], null);
+  if (source.kind === "receipt") ctx.stores.supplierInvoices.setReceiptInvoice([source.id], null);
+  else ctx.stores.supplierInvoices.setReturnInvoice([source.id], null);
   const amounts = computeAmounts(
     ctx,
     invoice.invoiceDate,
@@ -540,25 +569,47 @@ export function detachReceiptFromInvoice(
   );
   if (!amounts.ok) return amounts;
   const difference = invoice.invoicedAmount - amounts.value.computedAmount;
+  const label = source.kind === "receipt" ? "入荷" : "仕入返品";
   const differenceReason =
     difference === 0
       ? invoice.differenceReason
-      : (invoice.differenceReason ?? `入荷 ${receipt.number} の取消で計算額が変わりました`);
+      : (invoice.differenceReason ?? `${label} ${source.number} の取消で計算額が変わりました`);
   const patch = { computedAmount: amounts.value.computedAmount, difference, differenceReason };
   if (!ctx.stores.supplierInvoices.update(invoiceId, invoice.version, patch, writeMeta(ctx)))
     return err("conflict", STALE_VERSION_MESSAGE);
   ctx.audit.record({
     entityType: "supplier_invoice",
     entityId: invoiceId,
-    action: "detach_receipt",
+    action: source.kind === "receipt" ? "detach_receipt" : "detach_return",
     before: {
       computedAmount: invoice.computedAmount,
       difference: invoice.difference,
       differenceReason: invoice.differenceReason,
     },
-    after: { ...patch, receiptId: receipt.id },
+    after: {
+      ...patch,
+      ...(source.kind === "receipt" ? { receiptId: source.id } : { purchaseReturnId: source.id }),
+    },
   });
   return ok(true);
+}
+
+/** 入荷の取消で、未払いの請求書からその入荷を外す（detachFromInvoice） */
+export function detachReceiptFromInvoice(
+  ctx: UsecaseContext,
+  invoiceId: string,
+  receipt: Pick<ReceiptRecord, "id" | "number">,
+): Result<true> {
+  return detachFromInvoice(ctx, invoiceId, { kind: "receipt", ...receipt });
+}
+
+/** 仕入返品の取消で、未払いの請求書からその仕入返品を外す（detachFromInvoice） */
+export function detachReturnFromInvoice(
+  ctx: UsecaseContext,
+  invoiceId: string,
+  ret: Pick<PurchaseReturnRecord, "id" | "number">,
+): Result<true> {
+  return detachFromInvoice(ctx, invoiceId, { kind: "purchase_return", ...ret });
 }
 
 // ---- 照会 -----------------------------------------------------------------------
@@ -574,14 +625,17 @@ export interface SupplierInvoiceView {
   readonly amounts: InvoiceAmounts | null;
   /** 請求額が 0 円以下で、支払ではなく請求額での精算（相殺・返金を受ける）になる */
   readonly settlement: boolean;
+  /** 残りの支払額（請求額 − 支払済みの額。支払の欄の初期値） */
+  readonly remaining: number;
   /** 操作者が今できる操作（状態と権限から決める） */
   readonly actions: {
     readonly pay: boolean;
-    readonly cancelPayment: boolean;
     readonly cancel: boolean;
     /** PDF を添付できるか（新しい版の追加を含む） */
     readonly attach: boolean;
   };
+  /** 操作者が取り消せる支払の ID（取り消していない支払） */
+  readonly cancellablePaymentIds: readonly string[];
 }
 
 export const getSupplierInvoice = defineQuery({
@@ -601,24 +655,36 @@ export const getSupplierInvoice = defineQuery({
       returns,
       invoice.shippingFee,
     );
+    const payments = ctx.stores.supplierInvoices.payments(id);
+    const live = payments.filter((p) => !p.cancelled).length;
+    const remaining = supplierInvoiceRemaining(invoice);
     return {
       invoice,
       receipts: receipts.map((r) => Object.assign(r, { subtotal: sumAmounts(r.amounts) })),
       returns: returns.map((r) => Object.assign(r, { subtotal: sumAmounts(r.amounts) })),
-      payments: ctx.stores.supplierInvoices.payments(id),
+      payments,
       attachments: attachments.map((a, i) =>
         Object.assign(a, { versionNo: attachments.length - i }),
       ),
       amounts: amounts.ok ? amounts.value : null,
       settlement: isSettlementInvoice(invoice.invoicedAmount),
+      remaining,
       actions: {
         pay:
           manage &&
-          paySupplierInvoice(invoice.status, invoice.invoicedAmount, invoice.invoicedAmount).ok,
-        cancelPayment: manage && cancelSupplierPayment(invoice.status, "取消").ok,
+          paySupplierInvoice(invoice.status, invoice.invoicedAmount, invoice.paidAmount, remaining)
+            .ok,
         cancel: manage && cancelSupplierInvoice(invoice.status, "取消").ok,
         attach: manage && canAttachToSupplierInvoice(invoice.status).ok,
       },
+      cancellablePaymentIds: manage
+        ? payments
+            .filter(
+              (p) =>
+                cancelSupplierPayment(invoice.status, invoice.paidAmount, p, live - 1, "取消").ok,
+            )
+            .map((p) => p.id)
+        : [],
     };
   },
 });
@@ -667,12 +733,18 @@ const supplierInvoiceSearchInput = pageInput
 export interface SupplierInvoiceListItem extends SupplierInvoiceRecord {
   /** 請求額が 0 円以下で、支払ではなく請求額での精算（相殺・返金を受ける）になる */
   readonly settlement: boolean;
+  /** 残りの支払額（請求額 − 支払済みの額。取消は 0） */
+  readonly remaining: number;
 }
 
 function listItems(page: Page<SupplierInvoiceRecord>): Page<SupplierInvoiceListItem> {
   return {
     ...page,
-    rows: page.rows.map((r) => ({ ...r, settlement: isSettlementInvoice(r.invoicedAmount) })),
+    rows: page.rows.map((r) => ({
+      ...r,
+      settlement: isSettlementInvoice(r.invoicedAmount),
+      remaining: supplierInvoiceRemaining(r),
+    })),
   };
 }
 
@@ -684,7 +756,7 @@ export const listSupplierInvoices = defineQuery({
     return listItems(
       ctx.stores.supplierInvoices.list(
         {
-          status: f.status,
+          statuses: f.status ? [f.status] : undefined,
           supplierId: f.supplierId || undefined,
           from: f.from ?? undefined,
           to: f.to ?? undefined,
@@ -700,6 +772,8 @@ export const listSupplierInvoices = defineQuery({
 });
 
 export const payablesFilterInput = {
+  /** 未払い・一部支払のどちらか（省くと両方） */
+  status: z.enum(OPEN_SUPPLIER_INVOICE_STATUSES).optional(),
   supplierId: z.string().max(64).optional(),
   dueFrom: optionalBusinessDate,
   dueTo: optionalBusinessDate,
@@ -714,14 +788,17 @@ function payablesFilter(
   const yesterday = f.overdue ? addDays(ctx.clock.today(), -1) : undefined;
   const dueTo = f.dueTo ?? undefined;
   return {
-    status: "unpaid",
+    statuses: f.status ? [f.status] : OPEN_SUPPLIER_INVOICE_STATUSES,
     supplierId: f.supplierId || undefined,
     dueFrom: f.dueFrom ?? undefined,
     dueTo: yesterday && (!dueTo || yesterday < dueTo) ? yesterday : dueTo,
   };
 }
 
-/** 支払予定一覧：未払いの仕入先請求書（支払予定日の順）と、条件に合うものの合計 */
+/**
+ * 支払予定一覧：支払の残っている（未払い・一部支払の）仕入先請求書（支払予定日の順）と、条件に合うものの
+ * 件数・請求額・支払済みの額・残りの額の合計
+ */
 export const listPayables = defineQuery({
   permission: "view",
   input: pageInput.extend(payablesFilterInput),
@@ -729,7 +806,7 @@ export const listPayables = defineQuery({
     ctx,
     { page, pageSize, ...f },
   ): Page<SupplierInvoiceListItem> & {
-    totals: { count: number; amount: number };
+    totals: SupplierInvoiceTotals;
   } {
     const filter = payablesFilter(ctx, f);
     return {

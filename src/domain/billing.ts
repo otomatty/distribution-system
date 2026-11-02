@@ -782,6 +782,22 @@ export function validateDisposalLines(
   return first ? err("validation", first.message, { fields }) : ok(undefined);
 }
 
+/**
+ * 廃棄伝票の取消。取り消していない伝票だけで、理由が必須。販売先廃棄は在庫・請求・入金に影響しないので、
+ * 取り消しても在庫などは動かさない。取り消した伝票は一覧に残し（取消の印と理由）、廃棄率の集計から除く
+ */
+export function cancelDisposal(
+  disposal: { readonly cancelled: boolean },
+  reason: string,
+): Result<"cancelled"> {
+  if (disposal.cancelled) return err("invalid_state", "この廃棄伝票はすでに取り消されています");
+  if (reason.trim() === "")
+    return err("validation", "取消の理由を入力してください", {
+      fields: [{ field: "reason", message: "取消の理由を入力してください" }],
+    });
+  return ok("cancelled");
+}
+
 /** 廃棄率（ベーシスポイント、1% = 100）= 廃棄数 ÷ 出荷数。出荷がなければ null */
 export function disposalRateBps(disposed: number, shipped: number): number | null {
   if (shipped <= 0) return null;

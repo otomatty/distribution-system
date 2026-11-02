@@ -63,6 +63,8 @@ export interface InvoiceAllocationRow {
   readonly adjustment: number;
   readonly adjustmentKind: "bank_fee" | "discount" | "other" | null;
   readonly cancelled: boolean;
+  /** 消込の取消の理由（取り消していなければ null） */
+  readonly cancelReason: string | null;
   readonly version: number;
   readonly createdAt: string;
 }

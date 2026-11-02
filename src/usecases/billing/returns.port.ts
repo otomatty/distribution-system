@@ -43,6 +43,10 @@ export interface SalesReturnRecord {
    */
   readonly creditPaymentId: string | null;
   readonly cancelled: boolean;
+  /** 取消の理由・日時（UTC）・操作者（取り消していなければ null） */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledByName: string | null;
   readonly memo: string | null;
   readonly version: number;
   readonly createdAt: string;
@@ -88,8 +92,8 @@ export interface SalesReturnStore {
   /** 受注に取り消していない返品伝票があるか */
   hasActive(salesOrderId: string): boolean;
   insert(record: SalesReturnInsert, lines: readonly SalesReturnLineInsert[], meta: WriteMeta): void;
-  /** 版番号が一致したときだけ取消済みにする。更新できたら true */
-  cancel(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ取消済みにする（理由・日時・操作者を記録する）。更新できたら true */
+  cancel(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 版番号が一致したときだけ返還請求書の番号を記録する。更新できたら true */
   setCreditNote(id: string, expectedVersion: number, number: string, meta: WriteMeta): boolean;
   /** 版番号が一致したときだけ返還請求書の番号を消す（返還請求書の取消）。更新できたら true */

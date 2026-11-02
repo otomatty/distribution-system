@@ -3,8 +3,9 @@
  * - 入金は独立したデータ（入金日・入金額・方法・メモ）として記録し、その販売先の未入金・一部入金の請求書に消し込む。
  *   1件の入金を複数の請求書に、1枚の請求書に複数の入金を当てられる。差額は振込手数料・値引き・その他として処理する
  * - 請求残高を超えては消し込めない。入金が請求より多い場合、残りは入金の未消込残高として残り、後で消し込める
- * - 消込の取消で、請求書は入金済み → 一部入金・未入金に戻る
- * - 入金の取消は、その入金の有効な消込もまとめて取り消す（理由は操作履歴に残す）
+ * - 消込の取消で、請求書は入金済み → 一部入金・未入金に戻る。理由が必須で、消込に記録する（入金・請求書の画面に出す）
+ * - 入金の取消は、その入金の有効な消込もまとめて取り消す。理由が必須で、入金に記録する（入金の画面・一覧に出す）。
+ *   まとめて取り消した消込の理由は「入金の取消：（入金の取消の理由）」
  * - 返還請求書の返還額（請求書で差し引けない返品を返還請求書で精算したもの。returns.ts）も入金（方法「相殺」）として持ち、
  *   普通の入金と同じように請求書に消し込める。残りは返金済みにでき（返金日・メモ）、返金は取り消せる。
  *   返金した分は未消込残高から除くので、売掛残高を減らさない。返還額は入金の取消では取り消さない（返還請求書の取消で取り消す）
@@ -248,9 +249,13 @@ export const allocateCustomerPayment = defineCommand({
  * 消込を1件取り消し、請求書の残高と状態を戻す。allocation は同じトランザクションで読んだ有効な消込
  * （画面の版番号は呼び出し側で確かめてある）なので、取消済みにするところで競合することはない
  */
-function releaseOne(ctx: UsecaseContext, allocation: AllocationRecord): Result<void> {
+function releaseOne(
+  ctx: UsecaseContext,
+  allocation: AllocationRecord,
+  reason: string,
+): Result<void> {
   const m = meta(ctx);
-  ctx.stores.customerPayments.cancelAllocation(allocation.id, allocation.version, m);
+  ctx.stores.customerPayments.cancelAllocation(allocation.id, allocation.version, reason, m);
   const invoice = ctx.stores.invoices.get(allocation.invoiceId);
   if (!invoice) return err("not_found", "請求書が見つかりません");
   const next = releaseAllocation(invoice, allocationTotal(allocation));
@@ -262,16 +267,21 @@ function releaseOne(ctx: UsecaseContext, allocation: AllocationRecord): Result<v
     entityId: invoice.id,
     action: "cancel_allocation",
     before: { status: invoice.status, allocated: invoice.allocated },
-    after: { ...next.value, allocationId: allocation.id, paymentId: allocation.paymentId },
+    after: {
+      ...next.value,
+      allocationId: allocation.id,
+      paymentId: allocation.paymentId,
+      reason,
+    },
   });
   return ok(undefined);
 }
 
-/** 消込の取消（入金済み → 一部入金・未入金） */
+/** 消込の取消（入金済み → 一部入金・未入金）。理由が必須 */
 export const cancelAllocationCommand = defineCommand({
   permission: "payments.manage",
-  input: z.object({ allocationId: idSchema, version }),
-  run(ctx, { allocationId, version: v }) {
+  input: z.object({ allocationId: idSchema, version, reason: requiredText(500) }),
+  run(ctx, { allocationId, version: v, reason }) {
     const allocation = ctx.stores.customerPayments.getAllocation(allocationId);
     if (!allocation) return err("not_found", "消込が見つかりません");
     if (allocation.cancelled) return err("invalid_state", "この消込はすでに取り消されています");
@@ -280,7 +290,7 @@ export const cancelAllocationCommand = defineCommand({
     if (!payment) return err("not_found", "入金が見つかりません");
     // 入金の版番号を上げる（同じトランザクションで読んだ版番号なので、競合することはない）
     ctx.stores.customerPayments.touch(payment.id, payment.version, meta(ctx));
-    const r = releaseOne(ctx, allocation);
+    const r = releaseOne(ctx, allocation, reason);
     if (!r.ok) return r;
     return ok({ paymentId: payment.id, invoiceId: allocation.invoiceId });
   },
@@ -298,10 +308,10 @@ export const cancelCustomerPayment = defineCommand({
     if (!payment) return err("not_found", "入金が見つかりません");
     const next = cancelPayment(payment);
     if (!next.ok) return next;
-    if (!ctx.stores.customerPayments.cancel(paymentId, v, meta(ctx))) return conflict();
+    if (!ctx.stores.customerPayments.cancel(paymentId, v, reason, meta(ctx))) return conflict();
     const released = activeAllocations(ctx, paymentId);
     for (const a of released) {
-      const r = releaseOne(ctx, a);
+      const r = releaseOne(ctx, a, `入金の取消：${reason}`);
       if (!r.ok) return r;
     }
     ctx.audit.record({

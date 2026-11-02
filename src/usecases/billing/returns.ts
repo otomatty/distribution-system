@@ -187,7 +187,7 @@ export const cancelSalesReturnCommand = defineCommand({
     if (!ret) return err("not_found", "返品伝票が見つかりません");
     const next = cancelSalesReturn(ret);
     if (!next.ok) return next;
-    if (!ctx.stores.salesReturns.cancel(id, v, meta(ctx)))
+    if (!ctx.stores.salesReturns.cancel(id, v, reason, meta(ctx)))
       return err("conflict", STALE_VERSION_MESSAGE);
     const back = reverseStock(ctx, {
       sourceType: "sales_return",
@@ -439,7 +439,12 @@ export const cancelUnbilledCreditNoteCommand = defineCommand({
     if (!credit || !ctx.stores.salesReturns.clearCreditNote(ret.id, v, m))
       return err("conflict", STALE_VERSION_MESSAGE);
     // 同じトランザクションで読んだ版番号なので、ここで競合することはない
-    ctx.stores.customerPayments.cancel(credit.paymentId, credit.version, m);
+    ctx.stores.customerPayments.cancel(
+      credit.paymentId,
+      credit.version,
+      `返還請求書の取消：${reason}`,
+      m,
+    );
     for (const documentId of ctx.stores.documents.latestForEntities("credit_note", [ret.id]))
       ctx.documents.cancel(documentId);
     ctx.audit.record({

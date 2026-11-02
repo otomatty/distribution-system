@@ -23,7 +23,6 @@ import type {
   SupplierInvoiceRecord,
   SupplierInvoiceAttachmentRecord,
   SupplierInvoiceStore,
-  SupplierPaymentRecord,
 } from "../../../../usecases/purchasing/supplier-invoices.port";
 import { auditInsert, likePattern, type Db } from "../../client";
 import {
@@ -40,12 +39,16 @@ import {
 } from "../../schema";
 import { inList } from "../../sql-helpers";
 
+/** 残りの額（請求額 − 支払済みの額。取消の請求書は 0。domain の supplierInvoiceRemaining と同じ） */
+const remainingAmount = sql<number>`CASE WHEN ${supplierInvoices.status} = 'cancelled' THEN 0 ELSE ${supplierInvoices.invoicedAmount} - ${supplierInvoices.paidAmount} END`;
+
 /** 受入のある（受入数 × 単価の請求がある）入荷 */
 const hasAccepted = sql`EXISTS (SELECT 1 FROM ${receiptLines} rl WHERE rl.receipt_id = ${receipts.id} AND rl.accepted > 0)`;
 
 function conditions(filter: SupplierInvoiceFilter): SQL | undefined {
   const conds: SQL[] = [];
-  if (filter.status) conds.push(eq(supplierInvoices.status, filter.status));
+  if (filter.statuses && filter.statuses.length > 0)
+    conds.push(inList(supplierInvoices.status, filter.statuses));
   if (filter.supplierId) conds.push(eq(supplierInvoices.supplierId, filter.supplierId));
   if (filter.from) conds.push(gte(supplierInvoices.invoiceDate, filter.from));
   if (filter.to) conds.push(lte(supplierInvoices.invoiceDate, filter.to));
@@ -89,23 +92,24 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
     createdByName: employees.name,
   };
 
-  function activePayments(invoiceIds: readonly string[]): Map<string, SupplierPaymentRecord> {
-    const out = new Map<string, SupplierPaymentRecord>();
-    if (invoiceIds.length === 0) return out;
+  /** 請求書ごとの、取り消していない支払の最も新しい支払日 */
+  function lastPaidOn(invoiceIds: readonly string[]): Map<string, string> {
+    if (invoiceIds.length === 0) return new Map();
     const rows = db
-      .select({ invoiceId: supplierPayments.supplierInvoiceId, ...paymentColumns })
+      .select({
+        invoiceId: supplierPayments.supplierInvoiceId,
+        paidOn: sql<string>`max(${supplierPayments.paidOn})`,
+      })
       .from(supplierPayments)
-      .leftJoin(employees, eq(employees.id, supplierPayments.createdBy))
       .where(
         and(
           inList(supplierPayments.supplierInvoiceId, invoiceIds),
           eq(supplierPayments.cancelled, false),
         ),
       )
-      .orderBy(asc(supplierPayments.id))
+      .groupBy(supplierPayments.supplierInvoiceId)
       .all();
-    for (const { invoiceId, ...p } of rows) out.set(invoiceId, p);
-    return out;
+    return new Map(rows.map((r) => [r.invoiceId, r.paidOn]));
   }
 
   const recordColumns = {
@@ -121,6 +125,7 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
     paymentDueOn: supplierInvoices.paymentDueOn,
     memo: supplierInvoices.memo,
     status: supplierInvoices.status,
+    paidAmount: supplierInvoices.paidAmount,
     cancelReason: supplierInvoices.cancelReason,
     version: supplierInvoices.version,
     createdAt: supplierInvoices.createdAt,
@@ -136,10 +141,10 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
       .leftJoin(employees, eq(employees.id, supplierInvoices.createdBy));
 
   function withPayments(
-    rows: readonly Omit<SupplierInvoiceRecord, "payment">[],
+    rows: readonly Omit<SupplierInvoiceRecord, "lastPaidOn">[],
   ): SupplierInvoiceRecord[] {
-    const payments = activePayments(rows.map((r) => r.id));
-    return rows.map((r) => ({ ...r, payment: payments.get(r.id) ?? null }));
+    const last = lastPaidOn(rows.map((r) => r.id));
+    return rows.map((r) => ({ ...r, lastPaidOn: last.get(r.id) ?? null }));
   }
 
   function receiptRows(where: SQL | undefined): InvoiceReceiptRow[] {
@@ -262,13 +267,20 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
       const r = db
         .select({
           count: count(),
-          amount: sql<number>`coalesce(sum(${supplierInvoices.invoicedAmount}), 0)`,
+          invoiced: sql<number>`coalesce(sum(${supplierInvoices.invoicedAmount}), 0)`,
+          paid: sql<number>`coalesce(sum(${supplierInvoices.paidAmount}), 0)`,
+          remaining: sql<number>`coalesce(sum(${remainingAmount}), 0)`,
         })
         .from(supplierInvoices)
         .leftJoin(partners, eq(partners.id, supplierInvoices.supplierId))
         .where(conditions(filter))
         .get();
-      return { count: r?.count ?? 0, amount: r?.amount ?? 0 };
+      return {
+        count: r?.count ?? 0,
+        invoiced: r?.invoiced ?? 0,
+        paid: r?.paid ?? 0,
+        remaining: r?.remaining ?? 0,
+      };
     },
     candidates(supplierId) {
       return {
@@ -354,8 +366,9 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
         })
         .run();
     },
-    cancelPayments(invoiceId, reason, meta) {
-      db.update(supplierPayments)
+    cancelPayment(invoiceId, paymentId, reason, meta) {
+      const rows = db
+        .update(supplierPayments)
         .set({
           cancelled: true,
           cancelReason: reason,
@@ -365,11 +378,14 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
         })
         .where(
           and(
+            eq(supplierPayments.id, paymentId),
             eq(supplierPayments.supplierInvoiceId, invoiceId),
             eq(supplierPayments.cancelled, false),
           ),
         )
-        .run();
+        .returning({ id: supplierPayments.id })
+        .all();
+      return rows.length === 1;
     },
     ordersOf(invoiceId) {
       return db

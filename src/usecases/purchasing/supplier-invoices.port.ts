@@ -49,13 +49,15 @@ export interface SupplierInvoiceAttachmentRecord {
 export interface SupplierInvoiceRecord extends SupplierInvoiceFields {
   readonly id: string;
   readonly status: SupplierInvoiceStatus;
+  /** 支払済みの額（取り消していない支払の合計） */
+  readonly paidAmount: number;
   readonly cancelReason: string | null;
   readonly version: number;
   readonly createdAt: string;
   readonly createdByName: string | null;
   readonly supplierName: string;
-  /** 取り消していない支払（支払済みのとき） */
-  readonly payment: SupplierPaymentRecord | null;
+  /** 取り消していない支払のうち、最も新しい支払日（支払がなければ null） */
+  readonly lastPaidOn: string | null;
 }
 
 /** 請求の対象にする入荷（明細の金額を税区分ごとにまとめたもの） */
@@ -81,7 +83,8 @@ export interface InvoiceReturnRow {
 }
 
 export interface SupplierInvoiceFilter {
-  readonly status?: SupplierInvoiceStatus | undefined;
+  /** 状態（どれか。空・未指定ならすべて） */
+  readonly statuses?: readonly SupplierInvoiceStatus[] | undefined;
   readonly supplierId?: string | undefined;
   /** 請求日（取引年月日）の範囲 */
   readonly from?: string | undefined;
@@ -94,6 +97,16 @@ export interface SupplierInvoiceFilter {
   readonly dueTo?: string | undefined;
   /** 請求書番号・仕入先名の部分一致 */
   readonly q?: string | undefined;
+}
+
+export interface SupplierInvoiceTotals {
+  readonly count: number;
+  /** 請求額の合計 */
+  readonly invoiced: number;
+  /** 支払済みの額の合計 */
+  readonly paid: number;
+  /** 残りの額（請求額 − 支払済みの額）の合計 */
+  readonly remaining: number;
 }
 
 export interface MonthlyPayable {
@@ -111,14 +124,18 @@ export interface SupplierInvoiceStore {
     id: string,
     expectedVersion: number,
     patch: Partial<
-      SupplierInvoiceFields & { status: SupplierInvoiceStatus; cancelReason: string | null }
+      SupplierInvoiceFields & {
+        status: SupplierInvoiceStatus;
+        paidAmount: number;
+        cancelReason: string | null;
+      }
     >,
     meta: WriteMeta,
   ): boolean;
   /** 支払予定日の順（未定は後ろ）、同じなら請求日の順 */
   list(filter: SupplierInvoiceFilter, page: number, pageSize: number): Page<SupplierInvoiceRecord>;
-  /** 条件に合う請求書の件数と請求額の合計 */
-  totals(filter: SupplierInvoiceFilter): { count: number; amount: number };
+  /** 条件に合う請求書の件数と、請求額・支払済みの額・残りの額（請求額 − 支払済みの額）の合計 */
+  totals(filter: SupplierInvoiceFilter): SupplierInvoiceTotals;
   /** まだ請求書に結びついていない、取り消していない入荷（受入のあるもの）と仕入返品 */
   candidates(supplierId: string): { receipts: InvoiceReceiptRow[]; returns: InvoiceReturnRow[] };
   linkedReceipts(invoiceId: string): InvoiceReceiptRow[];
@@ -141,8 +158,8 @@ export interface SupplierInvoiceStore {
     payment: { paidOn: string; amount: number; memo: string | null },
     meta: WriteMeta,
   ): void;
-  /** 請求書の取り消していない支払を取り消す */
-  cancelPayments(invoiceId: string, reason: string, meta: WriteMeta): void;
+  /** 請求書の取り消していない支払を1件取り消す。取り消せたら true */
+  cancelPayment(invoiceId: string, paymentId: string, reason: string, meta: WriteMeta): boolean;
   /** 請求書に結びついた入荷の発注（今の状態） */
   ordersOf(invoiceId: string): { id: string; status: PurchaseOrderStatus }[];
   /** 発注の入荷（取り消していない、受入のあるもの）のうち、支払済みの請求書に入っていないものの件数 */
