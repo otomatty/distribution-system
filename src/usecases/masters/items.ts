@@ -73,7 +73,7 @@ const fieldsShape = {
   code: codeInput,
   jan: janInput,
   name: requiredText(100),
-  supplierId: idSchema,
+  supplierId: z.string().min(1, "仕入先を選んでください").max(64),
   genreId: optionalId,
   temperatureZone: z
     .enum(TEMPERATURE_ZONES, { error: "温度帯を選んでください" })
