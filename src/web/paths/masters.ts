@@ -18,6 +18,10 @@ export const mastersPaths = {
   itemDelete: (id: string) => `/items/${enc(id)}/delete`,
   /** 商品選択ダイアログの検索結果（部分 HTML） */
   itemPicker: (query?: Query) => withQuery("/items/picker", query),
+  /** 商品の CSV 一括登録（画面・確認・取込・ひな形） */
+  itemImport: () => "/items/import",
+  itemImportCheck: () => "/items/import/check",
+  itemImportTemplate: () => "/items/import/template.csv",
 
   locations: (query?: Query) => withQuery("/masters/locations", query),
   locationNew: () => "/masters/locations/new",

@@ -1067,3 +1067,12 @@ details.card > summary {
   align-items: center;
   gap: 0.5rem 1rem;
 }
+
+/* ---- 商品の CSV 一括登録（確かめた結果） ---- */
+.import-summary {
+  margin: 0.75rem 0;
+}
+.import-errors {
+  margin: 0;
+  padding-left: 1.2rem;
+}
