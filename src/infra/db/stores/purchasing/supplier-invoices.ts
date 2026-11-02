@@ -49,6 +49,10 @@ function conditions(filter: SupplierInvoiceFilter): SQL | undefined {
   if (filter.supplierId) conds.push(eq(supplierInvoices.supplierId, filter.supplierId));
   if (filter.from) conds.push(gte(supplierInvoices.invoiceDate, filter.from));
   if (filter.to) conds.push(lte(supplierInvoices.invoiceDate, filter.to));
+  if (filter.amountMin !== undefined)
+    conds.push(gte(supplierInvoices.invoicedAmount, filter.amountMin));
+  if (filter.amountMax !== undefined)
+    conds.push(lte(supplierInvoices.invoicedAmount, filter.amountMax));
   if (filter.dueFrom) conds.push(gte(supplierInvoices.paymentDueOn, filter.dueFrom));
   if (filter.dueTo) conds.push(lte(supplierInvoices.paymentDueOn, filter.dueTo));
   if (filter.q) {

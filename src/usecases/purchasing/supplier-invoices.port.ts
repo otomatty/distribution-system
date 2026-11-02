@@ -83,9 +83,12 @@ export interface InvoiceReturnRow {
 export interface SupplierInvoiceFilter {
   readonly status?: SupplierInvoiceStatus | undefined;
   readonly supplierId?: string | undefined;
-  /** 請求日の範囲 */
+  /** 請求日（取引年月日）の範囲 */
   readonly from?: string | undefined;
   readonly to?: string | undefined;
+  /** 請求額（取引金額）の範囲（両端を含む） */
+  readonly amountMin?: number | undefined;
+  readonly amountMax?: number | undefined;
   /** 支払予定日の範囲 */
   readonly dueFrom?: string | undefined;
   readonly dueTo?: string | undefined;

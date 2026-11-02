@@ -623,13 +623,46 @@ export const getSupplierInvoice = defineQuery({
   },
 });
 
-export const supplierInvoiceFilterInput = {
-  status: z.enum(SUPPLIER_INVOICE_STATUSES).optional(),
-  supplierId: z.string().max(64).optional(),
-  from: optionalBusinessDate,
-  to: optionalBusinessDate,
-  q: z.string().trim().max(100).optional(),
-};
+/** 検索の金額（請求額はマイナスもありうる）。未入力は undefined */
+const searchAmount = z
+  .number({ error: "金額は数字で入力してください" })
+  .int("円単位の整数で入力してください")
+  .min(-9_999_999_999, "金額が大きすぎます")
+  .max(9_999_999_999, "金額が大きすぎます")
+  .nullable()
+  .optional()
+  .transform((v) => v ?? undefined);
+
+/**
+ * 仕入先請求書の一覧の絞り込み。電子帳簿保存法（要件定義書 7章）の検索の要件に合わせ、取引年月日（請求日）・
+ * 取引金額（請求額）・取引先（仕入先）を、範囲の指定と組み合わせで指定できる
+ */
+const supplierInvoiceSearchInput = pageInput
+  .extend({
+    status: z.enum(SUPPLIER_INVOICE_STATUSES).optional(),
+    supplierId: z.string().max(64).optional(),
+    from: optionalBusinessDate,
+    to: optionalBusinessDate,
+    amountMin: searchAmount,
+    amountMax: searchAmount,
+    q: z.string().trim().max(100).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.from && v.to && v.from > v.to) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: "終わりの日付は始まりの日付以降にしてください",
+      });
+    }
+    if (v.amountMin !== undefined && v.amountMax !== undefined && v.amountMin > v.amountMax) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["amountMax"],
+        message: "上限の金額は下限の金額以上にしてください",
+      });
+    }
+  });
 
 export interface SupplierInvoiceListItem extends SupplierInvoiceRecord {
   /** 請求額が 0 円以下で、支払ではなく請求額での精算（相殺・返金を受ける）になる */
@@ -643,10 +676,10 @@ function listItems(page: Page<SupplierInvoiceRecord>): Page<SupplierInvoiceListI
   };
 }
 
-/** 仕入先請求書の一覧（状態・仕入先・請求日・キーワード） */
+/** 仕入先請求書の一覧（状態・仕入先・請求日の範囲・請求額の範囲・キーワード） */
 export const listSupplierInvoices = defineQuery({
   permission: "view",
-  input: pageInput.extend(supplierInvoiceFilterInput),
+  input: supplierInvoiceSearchInput,
   run(ctx, { page, pageSize, ...f }): Page<SupplierInvoiceListItem> {
     return listItems(
       ctx.stores.supplierInvoices.list(
@@ -655,6 +688,8 @@ export const listSupplierInvoices = defineQuery({
           supplierId: f.supplierId || undefined,
           from: f.from ?? undefined,
           to: f.to ?? undefined,
+          amountMin: f.amountMin,
+          amountMax: f.amountMax,
           q: f.q || undefined,
         },
         page,
