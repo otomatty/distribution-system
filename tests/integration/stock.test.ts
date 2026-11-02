@@ -538,7 +538,7 @@ describe("在庫一覧・在庫明細", () => {
   it("在庫不足の内容を商品名・保管場所名つきで返す（ほかの区分の画面用）", async () => {
     const { a, main } = await setup();
     await addInitialStock(main, [{ itemId: a.id, quantity: 2 }]);
-    const r = await businessDb(env).command(
+    const r = await businessDb(env).internalCommand(
       "stockOperations.create",
       {
         kind: "adjustment",
@@ -548,7 +548,6 @@ describe("在庫一覧・在庫明細", () => {
         lines: [{ itemId: a.id, quantity: -5 }],
       },
       { kind: "system" },
-      null,
     );
     expect(r.ok).toBe(false);
     const details = r.ok ? [] : [...(r.error.details ?? [])];

@@ -29,6 +29,13 @@
       "when": 1793611358835,
       "tag": "0003_purchase_orders_sales_order_index",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793617817043,
+      "tag": "0004_audit_logs_search_indexes",
+      "breakpoints": true
     }
   ]
 }

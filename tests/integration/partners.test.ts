@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { createItem, createSupplier, uniqueName } from "./fixtures";
 import {
   as,
   anonymous,
@@ -144,6 +145,53 @@ describe("取引先の画面", () => {
       _key: newKey(),
     });
     expect(await stale.text()).toContain("ほかの人が先に更新");
+  });
+
+  it("使われていない取引先は版番号が一致すれば削除でき、使われている取引先は削除できない", async () => {
+    const user = await createEmployee(["purchasing"]);
+    const unused = await systemCommand("partners.create", {
+      name: uniqueName("削除テスト"),
+      kana: "サクジョ",
+      isSupplier: true,
+    });
+    const detail = await (await as(user).get(`/partners/${unused.id}`)).text();
+    expect(detail).toMatch(
+      /action="\/partners\/[0-9A-Z]{26}\/delete"[\s\S]*?name="version" value="1"/,
+    );
+    // 開いた後にほかの人が更新していたら、古い版番号での削除は競合にする
+    await systemCommand("partners.archive", { id: unused.id, version: 1, archived: false });
+    const stale = await as(user).post(`/partners/${unused.id}/delete`, {
+      version: "1",
+      _key: newKey(),
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.text()).toContain("ほかの人が先に更新しました");
+    expect(await systemQuery("partners.get", { id: unused.id })).not.toBeNull();
+
+    const deleted = await as(user).post(`/partners/${unused.id}/delete`, {
+      version: "2",
+      _key: newKey(),
+    });
+    expect(deleted.status).toBe(303);
+    expect(deleted.headers.get("Location")).toBe("/partners?notice=deleted");
+    expect(await systemQuery("partners.get", { id: unused.id })).toBeNull();
+
+    const used = await createSupplier();
+    await createItem(used);
+    const refused = await as(user).post(`/partners/${used}/delete`, {
+      version: "1",
+      _key: newKey(),
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain("取引終了");
+    expect(await systemQuery("partners.get", { id: used })).not.toBeNull();
+
+    const accounting = await createEmployee(["accounting"]);
+    const forbidden = await as(accounting).post(`/partners/${used}/delete`, {
+      version: "1",
+      _key: newKey(),
+    });
+    expect(await forbidden.text()).toContain("権限がありません");
   });
 
   it("別のサイトからの POST は拒否する（CSRF）", async () => {

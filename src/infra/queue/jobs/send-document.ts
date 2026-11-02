@@ -39,6 +39,8 @@ export function documentMail(
     subject: `${label}（${delivery.document.number}）のご送付　${company.name}`,
     text: lines.join("\n"),
     attachments: [{ fileName: file.fileName, contentType: file.contentType, content }],
+    // Queues の再試行で同じ送付を二重に送らない（Resend のとき）
+    idempotencyKey: `document-send/${delivery.sendId}`,
   };
 }
 

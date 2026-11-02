@@ -348,7 +348,7 @@ export async function exportCsv(
   c: Context<AppEnv>,
   name: CsvExportName,
   filter: CsvFilter,
-  idempotencyKey: string | null,
+  idempotencyKey: string,
 ): Promise<Response> {
   const def = csvExports[name];
   const actorRef = c.get("actorRef");

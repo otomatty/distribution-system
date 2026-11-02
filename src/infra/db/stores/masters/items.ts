@@ -201,8 +201,13 @@ export function itemStore(db: Db): ItemStore {
       ];
       return checks.some((c) => c !== undefined);
     },
-    delete(id) {
-      db.delete(items).where(eq(items.id, id)).run();
+    delete(id, expectedVersion) {
+      const rows = db
+        .delete(items)
+        .where(and(eq(items.id, id), eq(items.version, expectedVersion)))
+        .returning({ id: items.id })
+        .all();
+      return rows.length === 1;
     },
   };
 }

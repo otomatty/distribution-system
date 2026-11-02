@@ -72,5 +72,6 @@ export interface ItemStore {
   ): boolean;
   /** 取引（在庫台帳・発注・受注・入荷・返品・廃棄・在庫操作）で使われているか */
   isUsed(id: string): boolean;
-  delete(id: string): void;
+  /** 版番号が一致したときだけ削除する。削除したら true */
+  delete(id: string, expectedVersion: number): boolean;
 }

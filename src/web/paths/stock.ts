@@ -11,7 +11,7 @@ export const stockPaths = {
   stockOperationNew: (query?: Query) => withQuery("/stock/operations/new", query),
   /** 在庫操作の明細の行（商品選択ダイアログから追加する。部分 HTML） */
   stockOperationLines: () => "/stock/operations/lines",
-  stockOperation: (id: string) => `/stock/operations/${enc(id)}`,
+  stockOperation: (id: string, query?: Query) => withQuery(`/stock/operations/${enc(id)}`, query),
   stocktaking: (query?: Query) => withQuery("/stock/stocktaking", query),
   /** 棚卸の入力表の行（商品選択ダイアログから追加する。部分 HTML） */
   stocktakingLines: () => "/stock/stocktaking/lines",

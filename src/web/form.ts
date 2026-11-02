@@ -60,10 +60,12 @@ export function centi(form: FormData_, name: string): number {
   return parseYenToCenti(t) ?? Number.NaN;
 }
 
-/** 受付番号（冪等キー）。フォームの描画時に埋め込み、再送信でも同じ値を送る */
-export function formKey(form: FormData_): string | null {
-  const k = str(form, "_key");
-  return k === "" ? null : k;
+/**
+ * 受付番号（冪等キー）。フォームの描画時に埋め込み、再送信でも同じ値を送る。
+ * 送られていなければ空の文字列を返し、業務 DB が操作を受け付けない（画面からの操作には必須）
+ */
+export function formKey(form: FormData_): string {
+  return str(form, "_key");
 }
 
 export function newFormKey(): string {

@@ -138,7 +138,7 @@ export async function systemCommandResult<N extends CommandName>(
   name: N,
   input: CommandInput<N>,
 ): Promise<Result<unknown>> {
-  return businessDb(env).command(name, input, { kind: "system" }, null);
+  return businessDb(env).internalCommand(name, input, { kind: "system" });
 }
 
 /** 指定した処理（job）を Queues から届いたものとして処理する */

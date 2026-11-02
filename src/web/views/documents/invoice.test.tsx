@@ -40,7 +40,7 @@ const invoice: InvoiceSnapshot = {
       lines: [
         {
           itemCode: "IT000001",
-          name: "かもめ型サブレ 10枚入",
+          name: "テスト銘菓 うみねこサブレ 10枚入",
           quantity: 3,
           unitName: "箱",
           unitPriceCenti: 15_050,
@@ -79,7 +79,7 @@ const invoice: InvoiceSnapshot = {
       lines: [
         {
           itemCode: "IT000001",
-          name: "返品 かもめ型サブレ 10枚入",
+          name: "返品 テスト銘菓 うみねこサブレ 10枚入",
           quantity: -1,
           unitName: "箱",
           unitPriceCenti: 15_050,
@@ -123,7 +123,7 @@ const creditNote: CreditNoteSnapshot = {
   lines: [
     {
       itemCode: "IT000001",
-      name: "かもめ型サブレ 10枚入",
+      name: "テスト銘菓 うみねこサブレ 10枚入",
       quantity: 1,
       unitName: "箱",
       unitPriceCenti: 15_050,
@@ -163,7 +163,7 @@ describe("請求書のテンプレート", () => {
     expect(html).toContain("DN-2026-000010");
     expect(html).toContain("返品 RT-2026-000001");
     // 取引内容と、軽減税率の対象である旨
-    expect(html).toContain("かもめ型サブレ 10枚入 ※");
+    expect(html).toContain("テスト銘菓 うみねこサブレ 10枚入 ※");
     expect(html).toContain("※は軽減税率（8%）の対象です");
     // 税率ごとの合計額と適用税率、税率ごとの消費税額
     expect(html).toContain("標準税率（10%）対象");
@@ -226,7 +226,7 @@ describe("返還請求書のテンプレート", () => {
     expect(html).toContain("2026年10月10日");
     expect(html).toContain("元の取引年月日");
     expect(html).toContain("2026年10月5日");
-    expect(html).toContain("かもめ型サブレ 10枚入 ※");
+    expect(html).toContain("テスト銘菓 うみねこサブレ 10枚入 ※");
     expect(html).toContain("※は軽減税率（8%）の対象です");
     expect(html).toContain("軽減税率（8%）対象");
     expect(html).toContain("消費税 ¥12");

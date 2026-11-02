@@ -14,11 +14,15 @@ import type {
 } from "../usecases/registry";
 import type { AppEnv } from "./types";
 
+/**
+ * 画面から状態を変える操作を呼ぶ。受付番号（フォームの _key）は必須で、
+ * 空なら業務 DB が受け付けない（validation のエラーになる。AGENTS.md 4章 データの変更）
+ */
 export async function runCommand<N extends CommandName>(
   c: Context<AppEnv>,
   name: N,
   input: CommandInput<N>,
-  idempotencyKey: string | null,
+  idempotencyKey: string,
 ): Promise<Result<CommandOutput<N>>> {
   const result = (await businessDb(c.env).command(
     name,

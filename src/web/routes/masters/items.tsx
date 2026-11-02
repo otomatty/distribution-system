@@ -538,7 +538,7 @@ itemRoutes.get("/new", async (c) => {
 itemRoutes.post("/new", async (c) => {
   const form = await readForm(c);
   const result = await runCommand(c, "items.create", itemInputFromForm(form), formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.item(result.value.id)}?notice=created`);
+  if (result.ok) return redirectTo(c, paths.item(result.value.id, { notice: "created" }));
   return c.html(
     <ItemForm
       action={paths.itemNew()}
@@ -640,6 +640,7 @@ itemRoutes.get("/:id", async (c) => {
               hx-confirm={`「${item.name}」を削除します。よろしいですか？`}
             >
               <FormKey />
+              <Version value={item.version} />
               <button type="submit" class="btn btn-danger">
                 削除
               </button>
@@ -683,7 +684,7 @@ itemRoutes.post("/:id/edit", async (c) => {
     { id, version, fields: itemInputFromForm(form) },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, `${paths.item(id)}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.item(id, { notice: "updated" }));
   return c.html(
     <ItemForm
       action={paths.itemEdit(id)}
@@ -711,7 +712,7 @@ itemRoutes.post("/:id/discontinue", async (c) => {
     formKey(form),
   );
   if (result.ok)
-    return redirectTo(c, `${paths.item(id)}?notice=${discontinued ? "discontinued" : "resumed"}`);
+    return redirectTo(c, paths.item(id, { notice: discontinued ? "discontinued" : "resumed" }));
   return c.html(
     <Layout title="変更できません" actor={c.get("actor")} current={paths.items()}>
       <Alert kind="error">{result.error.message}</Alert>
@@ -724,8 +725,13 @@ itemRoutes.post("/:id/discontinue", async (c) => {
 itemRoutes.post("/:id/delete", async (c) => {
   const id = c.req.param("id");
   const form = await readForm(c);
-  const result = await runCommand(c, "items.delete", { id }, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.items()}?notice=deleted`);
+  const result = await runCommand(
+    c,
+    "items.delete",
+    { id, version: int(form, "version") },
+    formKey(form),
+  );
+  if (result.ok) return redirectTo(c, paths.items({ notice: "deleted" }));
   if (isHtmx(c)) return c.html(<Alert kind="error">{result.error.message}</Alert>, 409);
   return c.html(
     <Layout title="削除できません" actor={c.get("actor")} current={paths.items()}>

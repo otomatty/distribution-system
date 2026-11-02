@@ -267,7 +267,7 @@ stocktakingRoutes.post("/", async (c) => {
     { locationId, operationDate, memo, lines: submitted },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, `${paths.stockOperation(result.value.id)}?notice=created`);
+  if (result.ok) return redirectTo(c, paths.stockOperation(result.value.id, { notice: "created" }));
 
   const errors = toFormErrors(result.error);
   const rowErrors = new Map(

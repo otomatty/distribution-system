@@ -15,7 +15,7 @@ function commandAs<N extends CommandName>(
   email: string,
   name: N,
   input: CommandInput<N>,
-  key: string | null = null,
+  key: string = crypto.randomUUID(),
 ): Promise<Result<unknown>> {
   return businessDb(env).command(name, input, { kind: "dev", email }, key);
 }

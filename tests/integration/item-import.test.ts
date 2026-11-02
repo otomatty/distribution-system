@@ -66,7 +66,11 @@ function planTokenOf(html: string): string {
   return /name="planToken" value="([^"]*)"/.exec(html)?.[1] ?? "";
 }
 
-function commandAs(email: string, input: { csv: string; planToken: string }, key: string | null) {
+function commandAs(
+  email: string,
+  input: { csv: string; planToken: string },
+  key: string = crypto.randomUUID(),
+) {
   return businessDb(env).command("items.import", input, { kind: "dev", email }, key) as Promise<
     Result<{ importId: string; created: number; updated: number }>
   >;
@@ -241,7 +245,7 @@ describe("商品の CSV 一括登録", () => {
     expect(html).toContain("ジャンル：「ないジャンル」というジャンルが見つかりません");
     expect(html).not.toContain('name="planToken"');
 
-    const result = unwrapErr(await commandAs(user, { csv, planToken: "" }, null));
+    const result = unwrapErr(await commandAs(user, { csv, planToken: "" }));
     expect(result.code).toBe("validation");
     expect(result.message).toBe("4行に問題があるため、どの商品も登録していません");
     expect(result.details).toContain("3行目：商品コード：2行目と同じ商品コードです");
@@ -295,7 +299,7 @@ describe("商品の CSV 一括登録", () => {
     expect(html).toContain("文字コード：Shift_JIS");
     expect(html).toMatch(/新規 <strong>1<\/strong> 件/);
     expect(html).toContain(name);
-    unwrap(await commandAs(user, { csv: text, planToken: planTokenOf(html) }, null));
+    unwrap(await commandAs(user, { csv: text, planToken: planTokenOf(html) }));
     expect((await itemsByName(name))[0]).toMatchObject({
       unitsPerPurchaseUnit: 12,
       purchasePriceCenti: 120_000,
@@ -377,7 +381,7 @@ describe("商品の CSV 一括登録", () => {
     const name = uniqueName("採番の菓子");
     const csv = csvOf([row(supplier, { 商品名: name }), row(supplier, { 商品コード: next })]);
     const checked = await systemQuery("items.importCheck", { csv });
-    unwrap(await commandAs(user, { csv, planToken: checked.planToken }, null));
+    unwrap(await commandAs(user, { csv, planToken: checked.planToken }));
     const [auto] = await itemsByName(name);
     expect(auto?.code).toMatch(/^IT\d{6}$/);
     expect(auto?.code).not.toBe(next);
@@ -387,9 +391,7 @@ describe("商品の CSV 一括登録", () => {
     const sales = await createEmployee(["sales"]);
     expect((await as(sales).get("/items/import")).status).toBe(403);
     expect((await check(sales, csvOf([{ 商品名: "x" }]))).status).toBe(403);
-    expect(unwrapErr(await commandAs(sales, { csv: "a", planToken: "" }, null)).code).toBe(
-      "forbidden",
-    );
+    expect(unwrapErr(await commandAs(sales, { csv: "a", planToken: "" })).code).toBe("forbidden");
     const list = await (await as(sales).get("/items")).text();
     expect(list).not.toContain('href="/items/import"');
   });

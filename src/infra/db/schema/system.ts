@@ -38,6 +38,9 @@ export const auditLogs = sqliteTable(
   (t) => [
     index("audit_logs_entity").on(t.entityType, t.entityId),
     index("audit_logs_occurred").on(t.occurredAt),
+    // 操作履歴の検索（/audit-logs）で、操作した人・操作で絞り込んで新しい順に並べる
+    index("audit_logs_employee").on(t.employeeId, t.occurredAt),
+    index("audit_logs_action").on(t.action, t.occurredAt),
   ],
 );
 

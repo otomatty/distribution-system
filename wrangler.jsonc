@@ -32,11 +32,15 @@
     "crons": ["0 18 * * *", "30 * * * *"],
   },
   "vars": {
-    "ENVIRONMENT": "development",
+    // 既定の値は、開発用ログイン（/dev/login）が有効にならない値にする（--env を付けずに wrangler deploy しても安全なように）。
+    // 手元の開発（bun run dev と .dev.vars）・テスト（vitest.config.ts）・E2E（playwright.config.ts）は development / test を明示的に渡す
+    "ENVIRONMENT": "unconfigured",
     "APP_ORIGIN": "http://localhost:8787",
     "WORKSPACE_DOMAIN": "example.co.jp",
     "INITIAL_ADMIN_EMAIL": "admin@example.co.jp",
     "MAIL_FROM": "no-reply@example.co.jp",
+    // 帳票のメール送付の送信の部分（email_service または resend。切り替えの手順は docs/operations.md 1章）
+    "MAIL_PROVIDER": "email_service",
   },
   "observability": { "enabled": true },
   "env": {
@@ -47,6 +51,7 @@
         "WORKSPACE_DOMAIN": "example.co.jp",
         "INITIAL_ADMIN_EMAIL": "admin@example.co.jp",
         "MAIL_FROM": "no-reply@example.co.jp",
+        "MAIL_PROVIDER": "email_service",
       },
       "durable_objects": {
         "bindings": [{ "name": "BUSINESS_DB", "class_name": "BusinessDb" }],
@@ -55,6 +60,7 @@
         {
           "binding": "AUTH_DB",
           "database_name": "distribution-auth-staging",
+          // 仮の値。最初に CI からデプロイする前に、`wrangler d1 create … --location apac` が表示した ID に書き換える（docs/operations.md 1章）
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle/auth",
         },
@@ -79,6 +85,7 @@
         "WORKSPACE_DOMAIN": "example.co.jp",
         "INITIAL_ADMIN_EMAIL": "admin@example.co.jp",
         "MAIL_FROM": "no-reply@example.co.jp",
+        "MAIL_PROVIDER": "email_service",
       },
       "durable_objects": {
         "bindings": [{ "name": "BUSINESS_DB", "class_name": "BusinessDb" }],
@@ -87,6 +94,7 @@
         {
           "binding": "AUTH_DB",
           "database_name": "distribution-auth-production",
+          // 仮の値。最初に CI からデプロイする前に、`wrangler d1 create … --location apac` が表示した ID に書き換える（docs/operations.md 1章）
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle/auth",
         },
