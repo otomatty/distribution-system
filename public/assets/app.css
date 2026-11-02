@@ -833,6 +833,91 @@ body.touch .picker-table td {
   color: var(--text);
 }
 
+/* ---- 仕入（発注の明細、合計、入荷予定、入荷確認） ---- */
+.field .label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+.field .label + p {
+  margin: 0;
+}
+.po-lines input.input-qty {
+  width: 6rem;
+  text-align: right;
+}
+.po-lines input.input-price {
+  width: 8rem;
+  text-align: right;
+}
+.po-lines td {
+  vertical-align: top;
+}
+.totals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-top: 0.5rem;
+}
+.totals-table {
+  width: auto;
+  min-width: 24rem;
+  margin-left: auto;
+}
+.totals-table th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+}
+.receiving-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+.receiving-order {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-height: calc(var(--tap) * 1.6);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.receiving-order:focus-visible {
+  outline: 3px solid var(--focus);
+}
+.receiving-head {
+  font-size: 1.05em;
+}
+.checkbox-lg {
+  flex-direction: column;
+  margin-right: 0;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+.checkbox-lg input {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+/* 明細の表（横に長い）を含む fieldset が、狭い画面で画面の幅を超えないようにする */
+.form fieldset {
+  min-width: 0;
+}
+.receive-lines td {
+  vertical-align: middle;
+}
+details > summary {
+  cursor: pointer;
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+}
+
 @media print {
   .app-header,
   .app-nav,

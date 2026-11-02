@@ -980,6 +980,7 @@ function ConfirmForm(props: {
       hx-post={paths.purchaseOrderConfirm(order.id)}
       hx-target="this"
       hx-swap="outerHTML"
+      hx-confirm={`${order.number} を確定します。確定後は明細を変更できません。よろしいですか？`}
       class="form card"
     >
       <h2>確定と送付</h2>
@@ -1010,11 +1011,7 @@ function ConfirmForm(props: {
         </Field>
       </div>
       <div class="form-actions">
-        <button
-          type="submit"
-          class="btn btn-primary"
-          hx-confirm={`${order.number} を確定します。確定後は明細を変更できません。よろしいですか？`}
-        >
+        <button type="submit" class="btn btn-primary">
           確定して送付する
         </button>
       </div>
@@ -1225,61 +1222,63 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
         {view.receipts.length === 0 ? (
           <p class="muted">まだ入荷はありません</p>
         ) : (
-          <table class="table">
-            <thead>
-              <tr>
-                <th>入荷番号</th>
-                <th>入荷日</th>
-                <th>保管場所</th>
-                <th>内容</th>
-                <th class="num">金額（税抜）</th>
-                <th>仕入先請求書</th>
-                <th>
-                  <span class="sr-only">操作</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.receipts.map((r) => (
-                <tr class={r.cancelled ? "muted" : undefined}>
-                  <td class="nowrap">
-                    {r.number} {r.cancelled ? <Badge>取消</Badge> : null}
-                  </td>
-                  <td class="nowrap">{r.receivedOn}</td>
-                  <td>{r.locationName ?? "在庫に入れない（納品済みの確認）"}</td>
-                  <td class="small">
-                    {r.lines.map((l) => (
-                      <div>
-                        {l.itemName}：受入 {qty(l.accepted)}
-                        {l.returned > 0 ? `・返品 ${qty(l.returned)}` : ""}
-                        {l.closedRemaining ? "・残りを打ち切り" : ""}
-                      </div>
-                    ))}
-                    {r.cancelReason ? <div>取消の理由：{r.cancelReason}</div> : null}
-                  </td>
-                  <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
-                  <td>
-                    {r.supplierInvoiceId ? (
-                      <a href={paths.supplierInvoice(r.supplierInvoiceId)}>
-                        {r.supplierInvoiceStatus ? (
-                          <SupplierInvoiceStatusBadge status={r.supplierInvoiceStatus} />
-                        ) : (
-                          "請求書"
-                        )}
-                      </a>
-                    ) : (
-                      ""
-                    )}
-                  </td>
-                  <td>
-                    {cancellable.has(r.id) ? (
-                      <ReceiptCancelForm receiptId={r.id} number={r.number} version={r.version} />
-                    ) : null}
-                  </td>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>入荷番号</th>
+                  <th>入荷日</th>
+                  <th>保管場所</th>
+                  <th>内容</th>
+                  <th class="num">金額（税抜）</th>
+                  <th>仕入先請求書</th>
+                  <th>
+                    <span class="sr-only">操作</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {view.receipts.map((r) => (
+                  <tr class={r.cancelled ? "muted" : undefined}>
+                    <td class="nowrap">
+                      {r.number} {r.cancelled ? <Badge>取消</Badge> : null}
+                    </td>
+                    <td class="nowrap">{r.receivedOn}</td>
+                    <td>{r.locationName ?? "在庫に入れない（納品済みの確認）"}</td>
+                    <td class="small">
+                      {r.lines.map((l) => (
+                        <div>
+                          {l.itemName}：受入 {qty(l.accepted)}
+                          {l.returned > 0 ? `・返品 ${qty(l.returned)}` : ""}
+                          {l.closedRemaining ? "・残りを打ち切り" : ""}
+                        </div>
+                      ))}
+                      {r.cancelReason ? <div>取消の理由：{r.cancelReason}</div> : null}
+                    </td>
+                    <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
+                    <td>
+                      {r.supplierInvoiceId ? (
+                        <a href={paths.supplierInvoice(r.supplierInvoiceId)}>
+                          {r.supplierInvoiceStatus ? (
+                            <SupplierInvoiceStatusBadge status={r.supplierInvoiceStatus} />
+                          ) : (
+                            "請求書"
+                          )}
+                        </a>
+                      ) : (
+                        ""
+                      )}
+                    </td>
+                    <td>
+                      {cancellable.has(r.id) ? (
+                        <ReceiptCancelForm receiptId={r.id} number={r.number} version={r.version} />
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
       <section class="card">
@@ -1287,36 +1286,38 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
         {view.returns.length === 0 ? (
           <p class="muted">仕入返品はありません</p>
         ) : (
-          <table class="table">
-            <thead>
-              <tr>
-                <th>返品番号</th>
-                <th>返品日</th>
-                <th>保管場所</th>
-                <th>内容</th>
-                <th class="num">返品額（税抜）</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.returns.map((r) => (
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
                 <tr>
-                  <td class="nowrap">{r.number}</td>
-                  <td class="nowrap">{r.returnedOn}</td>
-                  <td>{r.locationName}</td>
-                  <td class="small">
-                    {r.lines.map((l) => (
-                      <div>
-                        {l.itemName}：{qty(l.quantity)}
-                        {l.salesUnitName}
-                      </div>
-                    ))}
-                    {r.memo ? <div>{r.memo}</div> : null}
-                  </td>
-                  <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
+                  <th>返品番号</th>
+                  <th>返品日</th>
+                  <th>保管場所</th>
+                  <th>内容</th>
+                  <th class="num">返品額（税抜）</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {view.returns.map((r) => (
+                  <tr>
+                    <td class="nowrap">{r.number}</td>
+                    <td class="nowrap">{r.returnedOn}</td>
+                    <td>{r.locationName}</td>
+                    <td class="small">
+                      {r.lines.map((l) => (
+                        <div>
+                          {l.itemName}：{qty(l.quantity)}
+                          {l.salesUnitName}
+                        </div>
+                      ))}
+                      {r.memo ? <div>{r.memo}</div> : null}
+                    </td>
+                    <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {actions.returnGoods ? (
           <a class="btn btn-secondary" href={paths.purchaseReturnNew(order.id)}>

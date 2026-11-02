@@ -57,8 +57,8 @@ export interface ScheduledLine {
   readonly deliveryRequestedOn: string | null;
   readonly destinationKind: DestinationKind;
   readonly destinationLocationId: string | null;
-  /** 保管場所名・販売先名（その他の届け先は住所の1行目） */
-  readonly destinationName: string | null;
+  /** 保管場所名・販売先名（その他の届け先は住所の先頭） */
+  readonly destinationName: string;
   readonly lineId: string;
   readonly itemCode: string;
   readonly itemName: string;

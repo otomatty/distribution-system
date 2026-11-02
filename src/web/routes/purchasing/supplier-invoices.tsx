@@ -284,6 +284,7 @@ function Summary(props: { preview: Preview }) {
       hx-post={paths.supplierInvoicePreview()}
       hx-trigger="change from:#si-form, input changed delay:400ms from:#si-form"
       hx-include="#si-form"
+      hx-target="this"
       hx-swap="outerHTML"
       aria-live="polite"
     >

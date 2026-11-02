@@ -10,7 +10,7 @@ import { defineCommand } from "../core";
 import { businessDate, idSchema, nonNegativeInt, optionalText } from "../schemas";
 import { postStock } from "../stock/ledger";
 import { checkLocation, checkNotFuture } from "../stock/operations";
-import { writeMeta } from "./common";
+import { countBy, writeMeta } from "./common";
 
 export const createPurchaseReturn = defineCommand({
   permission: "purchaseReturns.manage",
@@ -36,36 +36,28 @@ export const createPurchaseReturn = defineCommand({
       checkNotFuture(ctx, input.returnedOn, "returnedOn") ??
       checkLocation(ctx, input.locationId, "locationId");
     if (problem) return problem;
-    const accepted = new Map(
-      ctx.stores.receipts.acceptedByLine(po.id).map((a) => [a.lineId, a.accepted]),
-    );
-    const returned = new Map(
-      ctx.stores.purchaseReturns.returnedByLine(po.id).map((r) => [r.lineId, r.units]),
-    );
+    const accepted = countBy(ctx.stores.receipts.acceptedByLine(po.id), (a) => a.accepted);
+    const returned = countBy(ctx.stores.purchaseReturns.returnedByLine(po.id), (r) => r.units);
     const mode = ctx.stores.settings.getCompany().roundingMode;
     const result = recordPurchaseReturn(
       po.status,
       po.lines.map((l) => ({
-        id: l.id,
-        unitPriceCenti: l.unitPriceCenti,
-        unitsPerPurchaseUnit: l.unitsPerPurchaseUnit,
-        taxCategory: l.taxCategory,
-        acceptedQuantity: accepted.get(l.id) ?? 0,
-        returnedUnits: returned.get(l.id) ?? 0,
+        ...l,
+        acceptedQuantity: accepted(l.id),
+        returnedUnits: returned(l.id),
       })),
       input.lines,
       mode,
     );
     if (!result.ok) return result;
-    const itemOf = new Map(po.lines.map((l) => [l.id, l.itemId]));
     const lines = result.value.map((r) => ({
       id: ctx.ids.next(),
-      purchaseOrderLineId: r.lineId,
-      itemId: itemOf.get(r.lineId) ?? "",
+      purchaseOrderLineId: r.line.id,
+      itemId: r.line.itemId,
       quantity: r.units,
-      unitPriceCenti: r.unitPriceCenti,
+      unitPriceCenti: r.line.unitPriceCenti,
       amount: r.amount,
-      taxCategory: r.taxCategory,
+      taxCategory: r.line.taxCategory,
     }));
     const id = ctx.ids.next();
     const number = ctx.sequences.next("purchaseReturn", input.returnedOn);

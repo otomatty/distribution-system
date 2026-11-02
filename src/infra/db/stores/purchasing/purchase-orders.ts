@@ -50,6 +50,16 @@ const recordColumns = {
   createdAt: purchaseOrders.createdAt,
   updatedAt: purchaseOrders.updatedAt,
   supplierName: sql<string>`coalesce(${partners.name}, '')`,
+  supplierHonorific: sql<string>`coalesce(${partners.honorific}, '御中')`,
+  supplierPostalCode: partners.postalCode,
+  supplierAddress: partners.address,
+  supplierPhone: partners.phone,
+  supplierFax: partners.fax,
+  destinationPostalCode: sql<
+    string | null
+  >`coalesce(${locations.postalCode}, ${customers.postalCode})`,
+  destinationPlace: sql<string | null>`coalesce(${locations.address}, ${customers.address})`,
+  destinationPhone: sql<string | null>`coalesce(${locations.phone}, ${customers.phone})`,
   destinationName: sql<string | null>`coalesce(${locations.name}, ${customers.name})`,
   employeeName: employees.name,
 };
@@ -76,6 +86,46 @@ function conditions(filter: PurchaseOrderFilter): SQL | undefined {
     if (c) conds.push(c);
   }
   return conds.length > 0 ? and(...conds) : undefined;
+}
+
+function toRecord(
+  r: {
+    readonly supplierHonorific: string;
+    readonly supplierPostalCode: string | null;
+    readonly supplierAddress: string | null;
+    readonly supplierPhone: string | null;
+    readonly supplierFax: string | null;
+    readonly destinationPostalCode: string | null;
+    readonly destinationPlace: string | null;
+    readonly destinationPhone: string | null;
+  } & Omit<PurchaseOrderRecord, "supplier" | "destination">,
+): PurchaseOrderRecord {
+  const {
+    supplierHonorific,
+    supplierPostalCode,
+    supplierAddress,
+    supplierPhone,
+    supplierFax,
+    destinationPostalCode,
+    destinationPlace,
+    destinationPhone,
+    ...rest
+  } = r;
+  return {
+    ...rest,
+    supplier: {
+      honorific: supplierHonorific,
+      postalCode: supplierPostalCode,
+      address: supplierAddress,
+      phone: supplierPhone,
+      fax: supplierFax,
+    },
+    destination: {
+      postalCode: destinationPostalCode,
+      address: destinationPlace,
+      phone: destinationPhone,
+    },
+  };
 }
 
 export function purchaseOrderStore(db: Db): PurchaseOrderStore {
@@ -138,8 +188,8 @@ export function purchaseOrderStore(db: Db): PurchaseOrderStore {
 
   return {
     get(id): PurchaseOrderDetail | undefined {
-      const r: PurchaseOrderRecord | undefined = base().where(eq(purchaseOrders.id, id)).get();
-      return r ? { ...r, lines: lines(id) } : undefined;
+      const r = base().where(eq(purchaseOrders.id, id)).get();
+      return r ? { ...toRecord(r), lines: lines(id) } : undefined;
     },
     insert(id, number, fields, rows, meta) {
       db.insert(purchaseOrders)
@@ -160,6 +210,17 @@ export function purchaseOrderStore(db: Db): PurchaseOrderStore {
         .returning({ id: purchaseOrders.id })
         .all();
       return rows.length === 1;
+    },
+    setStatus(id, status, meta) {
+      db.update(purchaseOrders)
+        .set({
+          status,
+          version: sql`${purchaseOrders.version} + 1`,
+          updatedAt: meta.at,
+          updatedBy: meta.by,
+        })
+        .where(eq(purchaseOrders.id, id))
+        .run();
     },
     replaceLines(orderId, rows) {
       db.delete(purchaseOrderLines).where(eq(purchaseOrderLines.purchaseOrderId, orderId)).run();
@@ -190,7 +251,8 @@ export function purchaseOrderStore(db: Db): PurchaseOrderStore {
         .orderBy(desc(purchaseOrders.orderedOn), desc(purchaseOrders.number))
         .limit(pageSize)
         .offset((page - 1) * pageSize)
-        .all();
+        .all()
+        .map((r) => Object.assign(toRecord(r), { lineCount: r.lineCount }));
       return { rows, total, page, pageSize };
     },
     count(filter) {

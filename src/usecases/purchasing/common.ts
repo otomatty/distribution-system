@@ -43,3 +43,12 @@ export function closingTermsOf(partner: PartnerTerms): ClosingTerms | null {
     paymentDay: partner.paymentDay,
   };
 }
+
+/** 明細ごとの数（入荷の受入数・仕入返品の数など）を引く。記録のない明細は 0 */
+export function countBy<T extends { readonly lineId: string }>(
+  rows: readonly T[],
+  value: (row: T) => number,
+): (lineId: string) => number {
+  const map = new Map(rows.map((r) => [r.lineId, value(r)]));
+  return (lineId) => map.get(lineId) ?? 0;
+}

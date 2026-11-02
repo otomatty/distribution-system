@@ -153,9 +153,7 @@ export function receiptStore(db: Db): ReceiptStore {
           deliveryRequestedOn: purchaseOrders.deliveryRequestedOn,
           destinationKind: purchaseOrders.destinationKind,
           destinationLocationId: purchaseOrders.destinationLocationId,
-          destinationName: sql<
-            string | null
-          >`coalesce(${locations.name}, ${customers.name}, substr(${purchaseOrders.destinationAddress}, 1, 40))`,
+          destinationName: sql<string>`coalesce(${locations.name}, ${customers.name}, substr(${purchaseOrders.destinationAddress}, 1, 40), '')`,
           lineId: purchaseOrderLines.id,
           itemCode: sql<string>`coalesce(${items.code}, '')`,
           itemName: sql<string>`coalesce(${items.name}, '（不明な商品）')`,

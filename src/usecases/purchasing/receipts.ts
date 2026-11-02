@@ -28,7 +28,7 @@ import {
 } from "../schemas";
 import { postStock, reverseStock } from "../stock/ledger";
 import { checkNotFuture } from "../stock/operations";
-import { writeMeta } from "./common";
+import { countBy, writeMeta } from "./common";
 import type { ReceiptLineFields, ScheduledLine } from "./receipts.port";
 import { detachReceiptFromInvoice } from "./supplier-invoices";
 
@@ -59,27 +59,20 @@ export const recordPurchaseReceipt = defineCommand({
     const recorded = recordReceipt(po.status, po.lines, input.lines);
     if (!recorded.ok) return recorded;
     const mode = ctx.stores.settings.getCompany().roundingMode;
-    const after = new Map(recorded.value.lines.map((l) => [l.id, l]));
-    const byLine = new Map(input.lines.map((l) => [l.lineId, l]));
-    const receiptLines: (ReceiptLineFields & { id: string })[] = po.lines.flatMap((line) => {
-      const i = byLine.get(line.id);
-      const closedNow = !line.closed && (after.get(line.id)?.closed ?? false);
-      if (!i || (i.accepted + i.returned === 0 && !closedNow)) return [];
-      return [
-        {
-          id: ctx.ids.next(),
-          purchaseOrderLineId: line.id,
-          itemId: line.itemId,
-          accepted: i.accepted,
-          returned: i.returned,
-          closedRemaining: closedNow,
-          unitPriceCenti: line.unitPriceCenti,
-          unitsPerPurchaseUnit: line.unitsPerPurchaseUnit,
-          taxCategory: line.taxCategory,
-          amount: lineAmount(line.unitPriceCenti, i.accepted, mode),
-        },
-      ];
-    });
+    const receiptLines: (ReceiptLineFields & { id: string })[] = recorded.value.changes.map(
+      ({ line, accepted, returned, closedNow }) => ({
+        id: ctx.ids.next(),
+        purchaseOrderLineId: line.id,
+        itemId: line.itemId,
+        accepted,
+        returned,
+        closedRemaining: closedNow,
+        unitPriceCenti: line.unitPriceCenti,
+        unitsPerPurchaseUnit: line.unitsPerPurchaseUnit,
+        taxCategory: line.taxCategory,
+        amount: lineAmount(line.unitPriceCenti, accepted, mode),
+      }),
+    );
     const meta = writeMeta(ctx);
     if (
       !ctx.stores.purchaseOrders.update(
@@ -157,17 +150,13 @@ export const cancelPurchaseReceipt = defineCommand({
     if (!next.ok) return next;
     const reverted = revertReceipt(po.lines, receipt.lines);
     if (!reverted.ok) return reverted;
-    const accepted = new Map(
-      ctx.stores.receipts.acceptedByLine(po.id).map((a) => [a.lineId, a.accepted]),
-    );
-    const returned = new Map(
-      ctx.stores.purchaseReturns.returnedByLine(po.id).map((r) => [r.lineId, r.units]),
-    );
+    const accepted = countBy(ctx.stores.receipts.acceptedByLine(po.id), (a) => a.accepted);
+    const returned = countBy(ctx.stores.purchaseReturns.returnedByLine(po.id), (r) => r.units);
     const blocked = receiptCancelBlockedByReturns(
       receipt.lines.map((l) => ({
-        acceptedAfter: (accepted.get(l.purchaseOrderLineId) ?? 0) - l.accepted,
+        acceptedAfter: accepted(l.purchaseOrderLineId) - l.accepted,
         unitsPerPurchaseUnit: l.unitsPerPurchaseUnit,
-        returnedUnits: returned.get(l.purchaseOrderLineId) ?? 0,
+        returnedUnits: returned(l.purchaseOrderLineId),
       })),
     );
     if (!blocked.ok) return blocked;
@@ -182,8 +171,7 @@ export const cancelPurchaseReceipt = defineCommand({
       memo: `${receipt.number} の取消：${reason}`,
     });
     if (!back.ok) return back;
-    if (!ctx.stores.purchaseOrders.update(po.id, po.version, { status: next.value }, meta))
-      return err("conflict", STALE_VERSION_MESSAGE);
+    ctx.stores.purchaseOrders.setStatus(po.id, next.value, meta);
     ctx.stores.purchaseOrders.saveLineProgress(reverted.value);
     if (receipt.supplierInvoiceId) {
       const detached = detachReceiptFromInvoice(ctx, receipt.supplierInvoiceId, receipt);
@@ -256,7 +244,6 @@ export const receivingSchedule = defineQuery({
         receivedQuantity: r.receivedQuantity,
         closed: r.closed,
       });
-      if (remaining === 0) continue;
       const entry = orders.get(r.purchaseOrderId) ?? { first: r, lines: [] };
       entry.lines.push({
         lineId: r.lineId,
@@ -289,7 +276,7 @@ export const receivingSchedule = defineQuery({
       const key = first.destinationLocationId;
       const group = groups.get(key) ?? {
         locationId: key,
-        title: first.destinationName ?? "",
+        title: first.destinationName,
         orders: [],
       };
       group.orders.push(order);

@@ -325,7 +325,7 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
         })
         .run();
     },
-    cancelPayment(paymentId, reason, meta) {
+    cancelPayments(invoiceId, reason, meta) {
       db.update(supplierPayments)
         .set({
           cancelled: true,
@@ -334,16 +334,22 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
           updatedAt: meta.at,
           updatedBy: meta.by,
         })
-        .where(eq(supplierPayments.id, paymentId))
+        .where(
+          and(
+            eq(supplierPayments.supplierInvoiceId, invoiceId),
+            eq(supplierPayments.cancelled, false),
+          ),
+        )
         .run();
     },
-    orderIds(invoiceId) {
+    ordersOf(invoiceId) {
       return db
-        .selectDistinct({ id: receipts.purchaseOrderId })
+        .selectDistinct({ id: purchaseOrders.id, status: purchaseOrders.status })
         .from(receipts)
+        .innerJoin(purchaseOrders, eq(purchaseOrders.id, receipts.purchaseOrderId))
         .where(eq(receipts.supplierInvoiceId, invoiceId))
-        .all()
-        .map((r) => r.id);
+        .orderBy(asc(purchaseOrders.id))
+        .all();
     },
     unpaidReceiptCount(orderId) {
       return (

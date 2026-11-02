@@ -14,7 +14,7 @@ import {
   canEditOrder,
   confirmOrder,
   orderAmounts,
-  orderLinePriceError,
+  orderLinePrice,
   remainingQuantity,
   returnableUnits,
   type PricedLine,
@@ -37,7 +37,7 @@ import {
   version,
   type Page,
 } from "../schemas";
-import { closingTermsOf, fieldError, taxRatesOn, writeMeta } from "./common";
+import { closingTermsOf, countBy, fieldError, taxRatesOn, writeMeta } from "./common";
 import type {
   PurchaseOrderDetail,
   PurchaseOrderFields,
@@ -153,32 +153,48 @@ function checkDestination(
   return fieldError("destinationKind", "納入先を選んでください");
 }
 
-/** 明細の商品を確かめる（仕入先の取扱商品か、取扱終了でないか、単価） */
-function checkLines(
+/**
+ * 明細を確かめて、保存する明細を作る（仕入先の取扱商品か、取扱終了でないか、単価）。
+ * 入数と税区分は商品マスタの値を写す。
+ */
+function prepareLines(
   input: FieldsInput,
   items: ReadonlyMap<string, ItemRecord>,
   before: PurchaseOrderDetail | undefined,
-): FieldError[] {
+): Result<PurchaseOrderLineFields[]> {
   const errors: FieldError[] = [];
+  const lines: PurchaseOrderLineFields[] = [];
   const seen = new Set<string>();
-  const beforeItems = new Set(before?.lines.map((l) => l.itemId) ?? []);
+  const beforeItems = new Set(before?.lines.map((l) => l.itemId));
   input.lines.forEach((l, i) => {
     const item = items.get(l.itemId);
+    const field = `lines.${i}.itemId`;
     if (!item) {
-      errors.push({ field: `lines.${i}.itemId`, message: "登録されていない商品です" });
+      errors.push({ field, message: "登録されていない商品です" });
       return;
     }
-    if (seen.has(l.itemId))
-      errors.push({ field: `lines.${i}.itemId`, message: "同じ商品が複数の行にあります" });
+    if (seen.has(l.itemId)) errors.push({ field, message: "同じ商品が複数の行にあります" });
     seen.add(l.itemId);
     if (item.supplierId !== input.supplierId)
-      errors.push({ field: `lines.${i}.itemId`, message: "この仕入先の取扱商品ではありません" });
+      errors.push({ field, message: "この仕入先の取扱商品ではありません" });
     if (item.discontinued && !beforeItems.has(l.itemId))
-      errors.push({ field: `lines.${i}.itemId`, message: "取扱終了の商品です" });
-    const priceError = orderLinePriceError(item.inputPriceOnOrder, l.unitPriceCenti);
-    if (priceError) errors.push({ field: `lines.${i}.unitPriceCenti`, message: priceError });
+      errors.push({ field, message: "取扱終了の商品です" });
+    const price = orderLinePrice(item.inputPriceOnOrder, l.unitPriceCenti);
+    if (!price.ok) {
+      errors.push({ field: `lines.${i}.unitPriceCenti`, message: price.error.message });
+      return;
+    }
+    lines.push({
+      itemId: l.itemId,
+      quantity: l.quantity,
+      unitPriceCenti: price.value,
+      unitsPerPurchaseUnit: item.unitsPerPurchaseUnit,
+      taxCategory: item.taxCategory,
+      memo: l.memo,
+    });
   });
-  return errors;
+  const [first] = errors;
+  return first ? err("validation", first.message, { fields: errors }) : ok(lines);
 }
 
 /** 入力を検証して、保存する発注と明細を作る（合計と支払予定日は domain で計算する） */
@@ -201,26 +217,9 @@ function prepareOrder(
   const items = new Map(
     ctx.stores.items.getMany(input.lines.map((l) => l.itemId)).map((i) => [i.id, i]),
   );
-  const lineErrors = checkLines(input, items, before);
-  if (lineErrors.length > 0)
-    return err("validation", lineErrors[0]?.message ?? "明細を確認してください", {
-      fields: lineErrors,
-    });
-  const lines: PurchaseOrderLineFields[] = input.lines.flatMap((l) => {
-    const item = items.get(l.itemId);
-    return item
-      ? [
-          {
-            itemId: l.itemId,
-            quantity: l.quantity,
-            unitPriceCenti: l.unitPriceCenti ?? 0,
-            unitsPerPurchaseUnit: item.unitsPerPurchaseUnit,
-            taxCategory: item.taxCategory,
-            memo: l.memo,
-          },
-        ]
-      : [];
-  });
+  const prepared = prepareLines(input, items, before);
+  if (!prepared.ok) return prepared;
+  const lines = prepared.value;
   const rates = taxRatesOn(ctx, input.orderedOn);
   if (!rates.ok) return rates;
   const { summary } = orderAmounts(
@@ -311,41 +310,16 @@ function buildSnapshot(
   const rates = taxRatesOn(ctx, po.orderedOn);
   if (!rates.ok) return rates;
   const company = ctx.stores.settings.getCompany();
-  const { amounts, summary } = orderAmounts(po.lines, rates.value, company.roundingMode);
-  const supplier = ctx.stores.partners.get(po.supplierId);
-  if (!supplier) return err("not_found", "仕入先が見つかりません");
-  let destination: PurchaseOrderSnapshot["destination"];
-  if (po.destinationKind === "location") {
-    const l = po.destinationLocationId
-      ? ctx.stores.locations.get(po.destinationLocationId)
-      : undefined;
-    destination = {
-      kind: "location",
-      name: l?.name ?? po.destinationName,
-      postalCode: l?.postalCode ?? null,
-      address: l?.address ?? null,
-      phone: l?.phone ?? null,
-    };
-  } else if (po.destinationKind === "customer") {
-    const p = po.destinationCustomerId
-      ? ctx.stores.partners.get(po.destinationCustomerId)
-      : undefined;
-    destination = {
-      kind: "customer",
-      name: p?.name ?? po.destinationName,
-      postalCode: p?.postalCode ?? null,
-      address: p?.address ?? null,
-      phone: p?.phone ?? null,
-    };
-  } else {
-    destination = {
-      kind: "other",
-      name: null,
-      postalCode: null,
-      address: po.destinationAddress,
-      phone: null,
-    };
-  }
+  const { lines, summary } = orderAmounts(po.lines, rates.value, company.roundingMode);
+  const other = po.destinationKind === "other";
+  // その他の届け先は、入力した名前と住所（destinationAddress）をそのまま載せる
+  const destination: PurchaseOrderSnapshot["destination"] = {
+    kind: po.destinationKind,
+    name: other ? null : po.destinationName,
+    postalCode: po.destination.postalCode,
+    address: other ? po.destinationAddress : po.destination.address,
+    phone: po.destination.phone,
+  };
   return ok({
     total: summary.total,
     snapshot: {
@@ -363,17 +337,17 @@ function buildSnapshot(
         email: company.email,
       },
       supplier: {
-        name: supplier.name,
-        honorific: supplier.honorific,
+        name: po.supplierName,
+        honorific: po.supplier.honorific,
         contactName: po.supplierContactName,
-        postalCode: supplier.postalCode,
-        address: supplier.address,
-        phone: supplier.phone,
-        fax: supplier.fax,
+        postalCode: po.supplier.postalCode,
+        address: po.supplier.address,
+        phone: po.supplier.phone,
+        fax: po.supplier.fax,
       },
       destination,
       employeeName: po.employeeName,
-      lines: po.lines.map((l, i) => ({
+      lines: lines.map((l, i) => ({
         no: i + 1,
         itemCode: l.itemCode,
         itemName: l.itemName,
@@ -383,7 +357,7 @@ function buildSnapshot(
         unitsPerPurchaseUnit: l.unitsPerPurchaseUnit,
         salesUnitName: l.salesUnitName,
         unitPriceCenti: l.unitPriceCenti,
-        amount: amounts[i] ?? 0,
+        amount: l.amount,
         taxCategory: l.taxCategory,
         memo: l.memo,
       })),
@@ -598,15 +572,11 @@ export const getPurchaseOrder = defineQuery({
     const order = ctx.stores.purchaseOrders.get(id);
     if (!order) return null;
     const mode = ctx.stores.settings.getCompany().roundingMode;
-    const accepted = new Map(
-      ctx.stores.receipts.acceptedByLine(id).map((a) => [a.lineId, a.accepted]),
-    );
-    const returned = new Map(
-      ctx.stores.purchaseReturns.returnedByLine(id).map((r) => [r.lineId, r.units]),
-    );
+    const accepted = countBy(ctx.stores.receipts.acceptedByLine(id), (a) => a.accepted);
+    const returned = countBy(ctx.stores.purchaseReturns.returnedByLine(id), (r) => r.units);
     const lines = order.lines.map((l): PurchaseOrderLineView => {
-      const acceptedQuantity = accepted.get(l.id) ?? 0;
-      const returnedUnits = returned.get(l.id) ?? 0;
+      const acceptedQuantity = accepted(l.id);
+      const returnedUnits = returned(l.id);
       return {
         ...l,
         amount: lineAmount(l.unitPriceCenti, l.quantity, mode),
@@ -714,17 +684,21 @@ export const previewPurchaseOrder = defineQuery({
           error: "単価は小数第2位までの数字で入力してください（例：1234.56）",
           warnings: [],
         };
-      const error =
-        quantity === null
-          ? "数量は1以上の整数で入力してください"
-          : (orderLinePriceError(item.inputPriceOnOrder, price) ?? null);
-      if (quantity === null || price === null)
-        return { itemId: l.itemId, amount: null, error, warnings: [] };
-      priced.push({ quantity, unitPriceCenti: price, taxCategory: item.taxCategory });
+      const checked = orderLinePrice(item.inputPriceOnOrder, price);
+      if (quantity === null)
+        return {
+          itemId: l.itemId,
+          amount: null,
+          error: "数量は1以上の整数で入力してください",
+          warnings: [],
+        };
+      if (!checked.ok)
+        return { itemId: l.itemId, amount: null, error: checked.error.message, warnings: [] };
+      priced.push({ quantity, unitPriceCenti: checked.value, taxCategory: item.taxCategory });
       return {
         itemId: l.itemId,
-        amount: lineAmount(price, quantity, mode),
-        error,
+        amount: lineAmount(checked.value, quantity, mode),
+        error: null,
         warnings: lotWarnings(quantity, item.purchaseMinLot),
       };
     });

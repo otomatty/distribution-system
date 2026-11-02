@@ -12,7 +12,7 @@ import {
   confirmOrder,
   invoiceDifference,
   orderAmounts,
-  orderLinePriceError,
+  orderLinePrice,
   orderStatusAfterInvoicePaid,
   orderStatusAfterPaymentCancelled,
   paySupplierInvoice,
@@ -59,10 +59,10 @@ describe("purchase order", () => {
     expect(confirmOrder("draft", 1, "email", "order@example.co.jp").ok).toBe(true);
   });
   it("単価の検証（発注時に仕入価格を入力する商品）", () => {
-    expect(orderLinePriceError(false, null)).toBe("単価を入力してください");
-    expect(orderLinePriceError(false, 0)).toBeUndefined();
-    expect(orderLinePriceError(true, 0)).toContain("発注時に仕入価格を入力");
-    expect(orderLinePriceError(true, 100)).toBeUndefined();
+    expect(unwrapErr(orderLinePrice(false, null)).message).toBe("単価を入力してください");
+    expect(orderLinePrice(false, 0)).toEqual({ ok: true, value: 0 });
+    expect(unwrapErr(orderLinePrice(true, 0)).message).toContain("発注時に仕入価格を入力");
+    expect(orderLinePrice(true, 100)).toEqual({ ok: true, value: 100 });
   });
   it("発注の金額は明細ごとに丸め、税は税率ごとに1回", () => {
     const r = orderAmounts(
@@ -75,7 +75,7 @@ describe("purchase order", () => {
       "floor",
     );
     // 999.99 → 999、0.5 → 0、200
-    expect(r.amounts).toEqual([999, 0, 200]);
+    expect(r.lines.map((l) => l.amount)).toEqual([999, 0, 200]);
     expect(r.summary.groups).toEqual([
       { category: "standard", rateBps: 1000, subtotal: 200, tax: 20 },
       { category: "reduced", rateBps: 800, subtotal: 999, tax: 79 },
@@ -213,15 +213,14 @@ describe("入荷", () => {
           });
           const recorded = recordReceipt("ordered", ls, inputs);
           if (!recorded.ok) return;
-          const closedNow = recorded.value.lines.map((l, i) => l.closed && !ls[i]?.closed);
           const back = unwrap(
             revertReceipt(
               recorded.value.lines,
-              inputs.map((input, i) => ({
-                purchaseOrderLineId: input.lineId,
-                accepted: input.accepted,
-                returned: input.returned,
-                closedRemaining: closedNow[i] ?? false,
+              recorded.value.changes.map((c) => ({
+                purchaseOrderLineId: c.line.id,
+                accepted: c.accepted,
+                returned: c.returned,
+                closedRemaining: c.closedNow,
               })),
             ),
           );
@@ -260,9 +259,7 @@ describe("仕入返品", () => {
   it("記録の検証", () => {
     expect(
       unwrap(recordPurchaseReturn("received", returnable, [{ lineId: "l1", units: 3 }], "floor")),
-    ).toEqual([
-      { lineId: "l1", units: 3, amount: 300, taxCategory: "reduced", unitPriceCenti: 120_000 },
-    ]);
+    ).toEqual([{ line: returnable[0], units: 3, amount: 300 }]);
     expect(
       recordPurchaseReturn("paid", returnable, [{ lineId: "l1", units: 19 }], "floor").ok,
     ).toBe(true);

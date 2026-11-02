@@ -199,13 +199,32 @@ function selected(
   };
 }
 
+export interface InvoicePreview {
+  readonly error: string | null;
+  readonly amounts: InvoiceAmounts | null;
+  /** 請求額 − 計算額（請求額が未入力なら null） */
+  readonly difference: number | null;
+  /** 取引条件からの支払予定日 */
+  readonly suggestedDueOn: string | null;
+  readonly receiptCount: number;
+  readonly returnCount: number;
+}
+
 /** 登録画面で、チェックのたびに計算額と差額をその場で計算する（保存はしない） */
 export const previewSupplierInvoice = defineQuery({
   permission: "view",
   input: z.object({ ...selectionInput, invoicedAmount: z.number().int().nullable().default(null) }),
-  run(ctx, input) {
+  run(ctx, input): InvoicePreview {
     const s = selected(ctx, input.supplierId, input.receiptIds, input.returnIds);
-    const supplier = ctx.stores.partners.get(input.supplierId);
+    const empty = {
+      amounts: null,
+      difference: null,
+      suggestedDueOn: null,
+      receiptCount: s.receipts.length,
+      returnCount: s.returns.length,
+    };
+    const supplier = supplierOf(ctx, input.supplierId);
+    if (!supplier.ok) return { ...empty, error: supplier.error.message };
     const amounts = computeAmounts(
       ctx,
       input.invoiceDate,
@@ -213,23 +232,14 @@ export const previewSupplierInvoice = defineQuery({
       s.returns,
       input.shippingFee,
     );
-    if (!amounts.ok)
-      return {
-        error: amounts.error.message,
-        amounts: null,
-        difference: null,
-        suggestedDueOn: null,
-        receiptCount: s.receipts.length,
-        returnCount: s.returns.length,
-      };
+    if (!amounts.ok) return { ...empty, error: amounts.error.message };
     return {
+      ...empty,
       error: null,
       amounts: amounts.value,
       difference:
         input.invoicedAmount === null ? null : input.invoicedAmount - amounts.value.computedAmount,
-      suggestedDueOn: supplier ? suggestedDueOn(supplier, s.receipts) : null,
-      receiptCount: s.receipts.length,
-      returnCount: s.returns.length,
+      suggestedDueOn: suggestedDueOn(supplier.value, s.receipts),
     };
   },
 });
@@ -307,21 +317,21 @@ export const createSupplierInvoice = defineCommand({
   },
 });
 
-/** 請求書の発注の状態を、支払・支払の取消に合わせて変える */
+/**
+ * 請求書の発注の状態を、支払・支払の取消に合わせて変える（domain の遷移関数で次の状態を決める）。
+ * 変えた発注の ID を返す。
+ */
 function updateOrders(
   ctx: UsecaseContext,
   invoiceId: string,
   next: (status: PurchaseOrderStatus, orderId: string) => PurchaseOrderStatus,
   action: string,
-): Result<string[]> {
+): string[] {
   const changed: string[] = [];
-  for (const orderId of ctx.stores.supplierInvoices.orderIds(invoiceId)) {
-    const po = ctx.stores.purchaseOrders.get(orderId);
-    if (!po) continue;
-    const status = next(po.status, orderId);
+  for (const po of ctx.stores.supplierInvoices.ordersOf(invoiceId)) {
+    const status = next(po.status, po.id);
     if (status === po.status) continue;
-    if (!ctx.stores.purchaseOrders.update(po.id, po.version, { status }, writeMeta(ctx)))
-      return err("conflict", STALE_VERSION_MESSAGE);
+    ctx.stores.purchaseOrders.setStatus(po.id, status, writeMeta(ctx));
     ctx.audit.record({
       entityType: "purchase_order",
       entityId: po.id,
@@ -331,7 +341,7 @@ function updateOrders(
     });
     changed.push(po.id);
   }
-  return ok(changed);
+  return changed;
 }
 
 function applyPayment(
@@ -363,13 +373,12 @@ function applyPayment(
       ),
     "pay",
   );
-  if (!orders.ok) return orders;
   ctx.audit.record({
     entityType: "supplier_invoice",
     entityId: invoice.id,
     action: "pay",
     before: { status: invoice.status },
-    after: { status: next.value, paymentId, ...payment, paidOrderIds: orders.value },
+    after: { status: next.value, paymentId, ...payment, paidOrderIds: orders },
   });
   return ok({ paymentId });
 }
@@ -454,21 +463,19 @@ export const cancelSupplierPaymentCommand = defineCommand({
     if (!next.ok) return next;
     if (!ctx.stores.supplierInvoices.update(id, v, { status: next.value }, writeMeta(ctx)))
       return err("conflict", STALE_VERSION_MESSAGE);
-    if (invoice.payment)
-      ctx.stores.supplierInvoices.cancelPayment(invoice.payment.id, reason, writeMeta(ctx));
+    ctx.stores.supplierInvoices.cancelPayments(id, reason, writeMeta(ctx));
     const orders = updateOrders(
       ctx,
       id,
       (status) => orderStatusAfterPaymentCancelled(status),
       "cancel_payment",
     );
-    if (!orders.ok) return orders;
     ctx.audit.record({
       entityType: "supplier_invoice",
       entityId: id,
       action: "cancel_payment",
       before: { status: invoice.status, payment: invoice.payment },
-      after: { status: next.value, reason, orderIds: orders.value },
+      after: { status: next.value, reason, orderIds: orders },
     });
     return ok({ id });
   },
@@ -687,9 +694,9 @@ export const payableBalancesQuery = defineQuery({
     const to = input.to ?? monthOf(ctx.clock.today());
     const from = input.from ?? addMonths(to, -5);
     const months = monthsBetween(from, to, 24);
-    if (months.length === 0) return { months, rows: [] };
-    const first = months[0] ?? from;
-    const last = months.at(-1) ?? to;
+    const first = months[0];
+    const last = months.at(-1);
+    if (first === undefined || last === undefined) return { months: [], rows: [] };
     const supplierId = input.supplierId || undefined;
     const opening = ctx.stores.supplierInvoices.openingBalances(monthRange(first).from, supplierId);
     const monthly = ctx.stores.supplierInvoices.monthly(

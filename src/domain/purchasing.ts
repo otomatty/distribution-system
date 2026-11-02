@@ -102,15 +102,16 @@ export function cancelOrder(
 /**
  * 明細の単価の検証。単価は必須（マスタの仕入価格が初期値）。
  * 「発注時に仕入価格を入力する」商品は、0 より大きい単価を入力しなければならない（相場で変わる商品など）。
+ * 正しければ単価（centi-yen）を返す。
  */
-export function orderLinePriceError(
+export function orderLinePrice(
   inputPriceOnOrder: boolean,
   unitPriceCenti: number | null,
-): string | undefined {
-  if (unitPriceCenti === null) return "単価を入力してください";
+): Result<number> {
+  if (unitPriceCenti === null) return err("validation", "単価を入力してください");
   if (inputPriceOnOrder && unitPriceCenti <= 0)
-    return "この商品は発注時に仕入価格を入力してください";
-  return undefined;
+    return err("validation", "この商品は発注時に仕入価格を入力してください");
+  return ok(unitPriceCenti);
 }
 
 /** 取引日時点の税率（税区分ごと）。どちらかの税率が税率表になければ undefined */
@@ -133,20 +134,18 @@ export interface PricedLine {
 
 /**
  * 発注の金額。明細の金額（単価 × 数量）の1円未満は明細ごとに、消費税は発注書1枚ごとに税率ごとに1回丸める。
- * amounts は lines と同じ順の明細の金額（円）。
+ * lines は渡した明細に金額（円）を足したもの（同じ順）。
  */
-export function orderAmounts(
-  lines: readonly PricedLine[],
+export function orderAmounts<L extends PricedLine>(
+  lines: readonly L[],
   rates: Readonly<Record<TaxCategory, number>>,
   mode: RoundingMode,
-): { amounts: number[]; summary: TaxSummary } {
-  const amounts = lines.map((l) => lineAmount(l.unitPriceCenti, l.quantity, mode));
-  const summary = summarizeTax(
-    lines.map((l, i) => ({ amount: amounts[i] ?? 0, taxCategory: l.taxCategory })),
-    rates,
-    mode,
-  );
-  return { amounts, summary };
+): { lines: (L & { readonly amount: number })[]; summary: TaxSummary } {
+  const priced = lines.map((l) => ({
+    ...l,
+    amount: lineAmount(l.unitPriceCenti, l.quantity, mode),
+  }));
+  return { lines: priced, summary: summarizeTax(priced, rates, mode) };
 }
 
 /** 取消の操作を出してよい状態か（入荷の有無は cancelOrder で確かめる） */
@@ -164,23 +163,34 @@ export interface ReceiptLineInput {
   readonly closeRemaining: boolean;
 }
 
+/** 入荷で変わった明細（入荷の明細として記録する） */
+export interface ReceiptChange<L extends PurchaseOrderLineState> {
+  /** 入荷の前の明細 */
+  readonly line: L;
+  readonly accepted: number;
+  readonly returned: number;
+  /** この入荷で残りを打ち切ったか */
+  readonly closedNow: boolean;
+}
+
 /**
  * 入荷の記録を検証し、記録後の明細の状態と発注の状態を返す。
  * 全明細の残りが 0 になれば入荷済み、そうでなければ発注済みのまま（分納）。
+ * changes は受入数・返品数・打ち切りのあった明細（明細の順）。
  */
-export function recordReceipt(
+export function recordReceipt<L extends PurchaseOrderLineState>(
   status: PurchaseOrderStatus,
-  lines: readonly PurchaseOrderLineState[],
+  lines: readonly L[],
   inputs: readonly ReceiptLineInput[],
-): Result<{ lines: PurchaseOrderLineState[]; status: PurchaseOrderStatus }> {
+): Result<{ lines: L[]; status: PurchaseOrderStatus; changes: ReceiptChange<L>[] }> {
   if (status !== "ordered") return err("invalid_state", "発注済みの発注だけに入荷を記録できます");
   const byId = new Map(inputs.map((i) => [i.lineId, i]));
   if (byId.size !== inputs.length) return err("validation", "同じ明細が複数あります");
   for (const id of byId.keys()) {
     if (!lines.some((l) => l.id === id)) return err("validation", "発注にない明細が含まれています");
   }
-  let touched = false;
-  const next: PurchaseOrderLineState[] = [];
+  const next: L[] = [];
+  const changes: ReceiptChange<L>[] = [];
   for (const line of lines) {
     const input = byId.get(line.id);
     if (!input) {
@@ -202,16 +212,18 @@ export function recordReceipt(
     }
     // すでに残りのない明細の「打ち切り」は何もしない
     const closes = input.closeRemaining && remaining - accepted - returned > 0;
-    if (accepted + returned > 0 || closes) touched = true;
+    if (accepted + returned > 0 || closes)
+      changes.push({ line, accepted, returned, closedNow: closes });
     next.push({
       ...line,
       receivedQuantity: line.receivedQuantity + accepted + returned,
       closed: line.closed || closes,
     });
   }
-  if (!touched) return err("validation", "受入数・返品数・打ち切りのいずれかを入力してください");
+  if (changes.length === 0)
+    return err("validation", "受入数・返品数・打ち切りのいずれかを入力してください");
   const done = next.every((l) => remainingQuantity(l) === 0);
-  return ok({ lines: next, status: done ? "received" : "ordered" });
+  return ok({ lines: next, status: done ? "received" : "ordered", changes });
 }
 
 /** 入荷を取り消したときの発注の状態。支払済みの請求書に含まれる入荷は取り消せない。 */
@@ -311,28 +323,26 @@ export interface PurchaseReturnInput {
   readonly units: number;
 }
 
-export interface PurchaseReturnLineResult {
-  readonly lineId: string;
+export interface PurchaseReturnLineResult<L extends ReturnableLine> {
+  readonly line: L;
   readonly units: number;
   readonly amount: number;
-  readonly taxCategory: TaxCategory;
-  readonly unitPriceCenti: number;
 }
 
 /**
  * 仕入返品の検証と金額。入荷のある発注（発注済み・入荷済み・支払済み）だけが対象で、
  * 明細ごとに「受入数 × 入数 − これまでの仕入返品」を超えて返品できない。
  */
-export function recordPurchaseReturn(
+export function recordPurchaseReturn<L extends ReturnableLine>(
   status: PurchaseOrderStatus,
-  lines: readonly ReturnableLine[],
+  lines: readonly L[],
   inputs: readonly PurchaseReturnInput[],
   mode: RoundingMode,
-): Result<PurchaseReturnLineResult[]> {
+): Result<PurchaseReturnLineResult<L>[]> {
   if (status !== "ordered" && status !== "received" && status !== "paid")
     return err("invalid_state", "入荷のある発注だけ仕入返品を記録できます");
   const seen = new Set<string>();
-  const out: PurchaseReturnLineResult[] = [];
+  const out: PurchaseReturnLineResult<L>[] = [];
   for (const input of inputs) {
     if (seen.has(input.lineId)) return err("validation", "同じ明細が複数あります");
     seen.add(input.lineId);
@@ -344,7 +354,7 @@ export function recordPurchaseReturn(
     if (input.units > returnableUnits(line))
       return err("validation", "返品数が入荷した数（これまでの返品を除く）を超えています");
     out.push({
-      lineId: line.id,
+      line,
       units: input.units,
       amount: purchaseReturnAmount(
         line.unitPriceCenti,
@@ -352,8 +362,6 @@ export function recordPurchaseReturn(
         input.units,
         mode,
       ),
-      taxCategory: line.taxCategory,
-      unitPriceCenti: line.unitPriceCenti,
     });
   }
   if (out.length === 0) return err("validation", "返品する数を1つ以上入力してください");

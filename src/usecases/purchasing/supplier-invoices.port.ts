@@ -1,5 +1,5 @@
 import type { AmountLine } from "../../domain/money";
-import type { SupplierInvoiceStatus } from "../../domain/purchasing";
+import type { PurchaseOrderStatus, SupplierInvoiceStatus } from "../../domain/purchasing";
 import type { WriteMeta } from "../ports";
 import type { Page } from "../schemas";
 
@@ -117,9 +117,10 @@ export interface SupplierInvoiceStore {
     payment: { paidOn: string; amount: number; memo: string | null },
     meta: WriteMeta,
   ): void;
-  cancelPayment(paymentId: string, reason: string, meta: WriteMeta): void;
-  /** 請求書に結びついた入荷の発注 */
-  orderIds(invoiceId: string): string[];
+  /** 請求書の取り消していない支払を取り消す */
+  cancelPayments(invoiceId: string, reason: string, meta: WriteMeta): void;
+  /** 請求書に結びついた入荷の発注（今の状態） */
+  ordersOf(invoiceId: string): { id: string; status: PurchaseOrderStatus }[];
   /** 発注の入荷（取り消していない、受入のあるもの）のうち、支払済みの請求書に入っていないものの件数 */
   unpaidReceiptCount(orderId: string): number;
   /** 発注の入荷を含む請求書（取消を除く） */

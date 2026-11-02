@@ -70,8 +70,22 @@ export interface PurchaseOrderRecord extends PurchaseOrderFields {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly supplierName: string;
+  /** 仕入先の宛名と連絡先（発注書に載せる） */
+  readonly supplier: {
+    readonly honorific: string;
+    readonly postalCode: string | null;
+    readonly address: string | null;
+    readonly phone: string | null;
+    readonly fax: string | null;
+  };
   /** 納入先の名前（保管場所名・販売先名。その他の届け先は null） */
   readonly destinationName: string | null;
+  /** 納入先（保管場所・販売先）の連絡先。その他の届け先はすべて null */
+  readonly destination: {
+    readonly postalCode: string | null;
+    readonly address: string | null;
+    readonly phone: string | null;
+  };
   readonly employeeName: string | null;
 }
 
@@ -119,6 +133,11 @@ export interface PurchaseOrderStore {
     >,
     meta: WriteMeta,
   ): boolean;
+  /**
+   * 入荷・支払など、ほかの伝票の操作に伴う状態の変更（同じトランザクションで読んだ今の状態から、
+   * domain の遷移関数で決めた状態にする）。版番号は1つ進める
+   */
+  setStatus(id: string, status: PurchaseOrderStatus, meta: WriteMeta): void;
   /** 作成中の発注の明細を入れ替える */
   replaceLines(
     orderId: string,
