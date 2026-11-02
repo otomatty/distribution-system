@@ -69,8 +69,6 @@ export interface UnbilledShipmentFilter {
 
 export interface ShipmentStore {
   get(id: string): ShipmentRecord | undefined;
-  /** 受注の有効な（取り消していない）発送 */
-  activeFor(salesOrderId: string): ShipmentRecord | undefined;
   /** 受注の発送の履歴（新しい順。取り消した発送も含む） */
   historyFor(salesOrderId: string): ShipmentHistoryRow[];
   insert(

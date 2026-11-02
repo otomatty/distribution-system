@@ -159,8 +159,6 @@ export interface SalesOrderStore {
   get(id: string): SalesOrderDetail | undefined;
   /** 出荷予定日の新しい順 */
   list(filter: SalesOrderFilter, page: number, pageSize: number): Page<SalesOrderListRow>;
-  /** CSV 用。list と同じ条件と順で limit 件まで */
-  listAll(filter: SalesOrderFilter, limit: number): SalesOrderListRow[];
   amountSources(orderIds: readonly string[]): OrderAmountSources;
   insert(
     order: SalesOrderHeader & {

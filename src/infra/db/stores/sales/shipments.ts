@@ -73,14 +73,6 @@ export function shipmentStore(db: Db): ShipmentStore {
       const r = db.select().from(shipments).where(eq(shipments.id, id)).get();
       return r ? toRecord(r) : undefined;
     },
-    activeFor(salesOrderId) {
-      const r = db
-        .select()
-        .from(shipments)
-        .where(and(eq(shipments.salesOrderId, salesOrderId), eq(shipments.cancelled, false)))
-        .get();
-      return r ? toRecord(r) : undefined;
-    },
     historyFor(salesOrderId) {
       const rows = db
         .select({ shipment: shipments, createdByName: employees.name })

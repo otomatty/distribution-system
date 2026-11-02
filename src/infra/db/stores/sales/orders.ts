@@ -338,15 +338,6 @@ export function salesOrderStore(db: Db): SalesOrderStore {
       return { rows: rows.map(toListRow), total, page, pageSize };
     },
 
-    listAll(filter, limit) {
-      return listBase()
-        .where(listWhere(filter))
-        .orderBy(...listOrder)
-        .limit(limit)
-        .all()
-        .map(toListRow);
-    },
-
     amountSources(orderIds) {
       if (orderIds.length === 0) return { lines: [], charges: [] };
       const lines = db

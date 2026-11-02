@@ -5,6 +5,7 @@
  * 1. 発行するユースケースの側（usecases/<区分>/）に、帳票の内容（スナップショット）の zod スキーマを書く。
  *    発行するときは、そのスキーマの形の値を ctx.documents.issue({ snapshot }) に渡す
  * 2. web/views/documents/<帳票>.tsx に defineTemplate({ schema, render }) でテンプレートを書く。
+ *    defineTemplate は "./template" から import する（"./registry" から import すると、この一覧との循環 import になる）。
  *    共通の部品は parts.tsx、レイアウトと CSS は layout.tsx にある。テンプレートは値を表示するだけで、金額を計算しない
  * 3. 下の documentTemplates に1行で登録する
  *
