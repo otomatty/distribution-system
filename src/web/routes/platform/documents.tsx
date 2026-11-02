@@ -346,87 +346,16 @@ async function loadDetail(c: Context<AppEnv>, id: string): Promise<DocumentDetai
   return runQuery(c, "documents.get", { id });
 }
 
-/** 送付の欄（送付の操作と送付履歴）。送信中の送付があれば、終わるまで3秒ごとに描き直す */
-function SendPanel(props: {
-  detail: DocumentDetail;
-  errors?: FormErrors;
-  error?: DomainError | null;
-  notice?: string | null;
-  values?: { method: string; recipient: string; note: string };
-}) {
-  const { document: doc, partner, sends } = props.detail;
+/** 送付履歴。送信中の送付があれば、終わるまで3秒ごとにこの部分だけを読み直す */
+function SendHistory(props: { detail: DocumentDetail }) {
+  const { document: doc, sends } = props.detail;
   const pending = sends.some((s) => s.status === "pending");
-  const errors = props.errors ?? {};
-  const values = props.values ?? {
-    method: partner?.defaultSendMethod === "email" ? "email" : "manual",
-    recipient: partner?.email ?? "",
-    note: "",
-  };
   const url = paths.documentSends(doc.id);
   return (
-    <section
-      class="card"
-      id="send-panel"
+    <div
+      id="send-history"
       {...(pending ? { "hx-get": url, "hx-trigger": "every 3s", "hx-swap": "outerHTML" } : {})}
     >
-      <h2>送付</h2>
-      {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
-      {props.detail.sendBlocker ? <Alert kind="warning">{props.detail.sendBlocker}</Alert> : null}
-      {props.detail.canSend && !props.detail.sendBlocker ? (
-        <form
-          method="post"
-          action={url}
-          hx-post={url}
-          hx-target="#send-panel"
-          hx-swap="outerHTML"
-          class="form"
-        >
-          <ErrorSummary error={props.error} />
-          <FormKey />
-          <fieldset>
-            <legend>送付の方法</legend>
-            <label class="checkbox">
-              <input type="radio" name="method" value="email" checked={values.method === "email"} />{" "}
-              メールで送る（PDF を添付）
-            </label>
-            <label class="checkbox">
-              <input
-                type="radio"
-                name="method"
-                value="manual"
-                checked={values.method === "manual"}
-              />{" "}
-              手動で送付したことを記録する（FAX など）
-            </label>
-            <p class="hint">
-              取引先の既定の送付方法：
-              {partner?.defaultSendMethod === "email" ? "メール" : "送付しない（手動）"}
-              {partner?.fax ? `　FAX：${partner.fax}` : ""}
-            </p>
-          </fieldset>
-          <div class="grid-2">
-            <Field
-              label="宛先のメールアドレス（メールの場合）"
-              name="recipient"
-              error={errors["recipient"]}
-            >
-              <Input name="recipient" type="email" value={values.recipient} />
-            </Field>
-            <Field
-              label="メモ（手動の場合。送った FAX 番号など）"
-              name="note"
-              error={errors["note"]}
-            >
-              <Input name="note" value={values.note} maxlength={500} />
-            </Field>
-          </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">
-              送付する
-            </button>
-          </div>
-        </form>
-      ) : null}
       <h3>送付履歴</h3>
       {sends.length === 0 ? (
         <p class="muted">まだ送付していません</p>
@@ -476,6 +405,87 @@ function SendPanel(props: {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 送付の欄（送付の操作と送付履歴）。送付・再送の後はこの欄を描き直す */
+function SendPanel(props: {
+  detail: DocumentDetail;
+  errors?: FormErrors;
+  error?: DomainError | null;
+  notice?: string | null;
+  values?: { method: string; recipient: string; note: string };
+}) {
+  const { document: doc, partner } = props.detail;
+  const errors = props.errors ?? {};
+  const values = props.values ?? {
+    method: partner?.defaultSendMethod === "email" ? "email" : "manual",
+    recipient: partner?.email ?? "",
+    note: "",
+  };
+  const url = paths.documentSends(doc.id);
+  return (
+    <section class="card" id="send-panel">
+      <h2>送付</h2>
+      {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
+      <ErrorSummary error={props.error} />
+      {props.detail.sendBlocker ? <Alert kind="warning">{props.detail.sendBlocker}</Alert> : null}
+      {props.detail.canSend && !props.detail.sendBlocker ? (
+        <form
+          method="post"
+          action={url}
+          hx-post={url}
+          hx-target="#send-panel"
+          hx-swap="outerHTML"
+          class="form"
+        >
+          <FormKey />
+          <fieldset>
+            <legend>送付の方法</legend>
+            <label class="checkbox">
+              <input type="radio" name="method" value="email" checked={values.method === "email"} />{" "}
+              メールで送る（PDF を添付）
+            </label>
+            <label class="checkbox">
+              <input
+                type="radio"
+                name="method"
+                value="manual"
+                checked={values.method === "manual"}
+              />{" "}
+              手動で送付したことを記録する（FAX など）
+            </label>
+            <p class="hint">
+              取引先の既定の送付方法：
+              {partner?.defaultSendMethod === "email" ? "メール" : "送付しない（手動）"}
+              {partner?.fax ? `　FAX：${partner.fax}` : ""}
+            </p>
+          </fieldset>
+          <div class="grid-2">
+            <Field
+              label="宛先のメールアドレス（メールの場合）"
+              name="recipient"
+              error={errors["recipient"]}
+            >
+              <Input name="recipient" type="email" value={values.recipient} />
+            </Field>
+            <Field
+              label="メモ（手動の場合。送った FAX 番号など）"
+              name="note"
+              error={errors["note"]}
+            >
+              <Input name="note" value={values.note} maxlength={500} />
+            </Field>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+              送付する
+            </button>
+          </div>
+        </form>
+      ) : null}
+      <SendHistory detail={props.detail} />
     </section>
   );
 }
@@ -564,7 +574,7 @@ documentRoutes.get("/:id", async (c) => {
 documentRoutes.get("/:id/sends", async (c) => {
   const detail = await loadDetail(c, c.req.param("id"));
   if (!detail) return c.notFound();
-  return c.html(<SendPanel detail={detail} />);
+  return c.html(<SendHistory detail={detail} />);
 });
 
 documentRoutes.post("/:id/sends", async (c) => {

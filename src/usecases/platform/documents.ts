@@ -14,20 +14,14 @@ import {
 } from "../../domain/documents";
 import { err, ok, type Result } from "../../domain/result";
 import { can } from "../../domain/roles";
-import {
-  defineCommand,
-  defineQuery,
-  STALE_VERSION_MESSAGE,
-  type Actor,
-  type QueryContext,
-} from "../core";
+import { defineCommand, defineQuery, type Actor, type QueryContext } from "../core";
 import { emailInput } from "../masters/contact";
 import type { PartnerRecord } from "../masters/partners.port";
 import { idSchema, optionalBusinessDate, optionalText, pageInput } from "../schemas";
 import type { DocumentFilter, DocumentRecord, DocumentSendRecord } from "./documents.port";
 
 const amount = z
-  .number()
+  .number({ error: "金額は数字で入力してください" })
   .int("円単位の整数で入力してください")
   .min(-9_999_999_999)
   .max(9_999_999_999)
@@ -169,10 +163,7 @@ export const documentAttention = defineQuery({
   run(ctx) {
     const types = DOCUMENT_TYPES.filter((t) => can(ctx.actor.roles, DOCUMENT_SEND_PERMISSIONS[t]));
     return {
-      failedSends:
-        types.length > 0
-          ? ctx.stores.documents.count({ sendStatus: "failed", documentTypes: types })
-          : 0,
+      failedSends: ctx.stores.documents.count({ sendStatus: "failed", documentTypes: types }),
       /** 管理者だけに見せる（それ以外は null） */
       failedRenders: can(ctx.actor.roles, "platform.admin")
         ? ctx.stores.documents.count({ renderStatus: "failed" })
@@ -258,10 +249,10 @@ export const rerenderDocument = defineCommand({
         "作成済みの PDF は作り直せません（発行時点の記録として保存しています）",
       );
     }
-    const meta = { at: ctx.clock.now().toISOString(), by: ctx.actor.employeeId };
-    if (!ctx.stores.documents.resetRender(doc.id, doc.version, meta)) {
-      return err("conflict", STALE_VERSION_MESSAGE);
-    }
+    ctx.stores.documents.resetRender(doc.id, {
+      at: ctx.clock.now().toISOString(),
+      by: ctx.actor.employeeId,
+    });
     const jobId = ctx.jobs.enqueue("render_document", { documentId: doc.id });
     ctx.audit.record({
       entityType: "document",

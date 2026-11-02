@@ -201,25 +201,16 @@ export function documentStore(db: Db): DocumentStore {
         .get();
       return r?.error ?? null;
     },
-    resetRender(id, expectedVersion, meta) {
-      const rows = db
-        .update(documents)
+    resetRender(id, meta) {
+      db.update(documents)
         .set({
           status: "pending",
           version: sql`${documents.version} + 1`,
           updatedAt: meta.at,
           updatedBy: meta.by,
         })
-        .where(
-          and(
-            eq(documents.id, id),
-            eq(documents.version, expectedVersion),
-            ne(documents.status, "ready"),
-          ),
-        )
-        .returning({ id: documents.id })
-        .all();
-      return rows.length === 1;
+        .where(and(eq(documents.id, id), ne(documents.status, "ready")))
+        .run();
     },
   };
 }

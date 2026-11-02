@@ -35,16 +35,17 @@ export interface PartyBlock {
   readonly email?: string | null | undefined;
 }
 
+/** 郵便番号と住所（ある方だけ） */
+function place(p: PartyBlock): string {
+  return [postal(p.postalCode), p.address ?? ""].filter((x) => x !== "").join(" ");
+}
+
 /** 宛名（左上）。敬称は取引先の設定（御中・様） */
 export function Addressee(props: { to: PartyBlock & { readonly honorific: string } }) {
   const t = props.to;
   return (
     <div class="doc-to">
-      {t.postalCode || t.address ? (
-        <p class="small">
-          {postal(t.postalCode)} {t.address ?? ""}
-        </p>
-      ) : null}
+      {t.postalCode || t.address ? <p class="small">{place(t)}</p> : null}
       <p class="name">
         {t.name} {t.honorific}
       </p>
@@ -61,11 +62,7 @@ export function Issuer(props: {
     <div class="doc-from">
       <p class="name">{f.name}</p>
       {f.registrationNumber ? <p>登録番号：{f.registrationNumber}</p> : null}
-      {f.postalCode || f.address ? (
-        <p>
-          {postal(f.postalCode)} {f.address ?? ""}
-        </p>
-      ) : null}
+      {f.postalCode || f.address ? <p>{place(f)}</p> : null}
       {f.phone ? <p>TEL：{f.phone}</p> : null}
       {f.fax ? <p>FAX：{f.fax}</p> : null}
       {f.email ? <p>{f.email}</p> : null}

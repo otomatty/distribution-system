@@ -73,6 +73,6 @@ export interface DocumentStore {
   getSend(id: string): DocumentSendRecord | undefined;
   /** PDF 化に失敗したときの理由（処理の記録から） */
   renderError(documentId: string): string | null;
-  /** PDF を作り直すため、作成待ちに戻す。版番号が一致したときだけ更新し、更新できたら true */
-  resetRender(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** PDF を作り直すため、作成待ちに戻す（作成済みのものは変えない） */
+  resetRender(id: string, meta: WriteMeta): void;
 }

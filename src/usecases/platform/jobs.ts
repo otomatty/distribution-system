@@ -89,6 +89,9 @@ export const enqueueBulkDocuments = defineCommand({
     .refine((v) => v.entityIds.length === 0 || v.documentType !== undefined, {
       path: ["documentType"],
       message: "伝票で指定する場合は帳票の種類を指定してください",
+    })
+    .refine((v) => v.documentIds.length + v.entityIds.length <= BULK_DOCUMENTS_MAX, {
+      message: `一度にまとめられるのは${BULK_DOCUMENTS_MAX}件までです`,
     }),
   run(ctx, input) {
     const ids = [
@@ -99,9 +102,6 @@ export const enqueueBulkDocuments = defineCommand({
     ];
     const unique = [...new Set(ids)];
     if (unique.length === 0) return err("validation", "PDF にする帳票を選んでください");
-    if (unique.length > BULK_DOCUMENTS_MAX) {
-      return err("validation", `一度にまとめられるのは${BULK_DOCUMENTS_MAX}件までです`);
-    }
     const payload: BulkDocumentsPayload = {
       documentIds: unique,
       name: input.name || `帳票_${ctx.clock.today()}`,
