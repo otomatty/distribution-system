@@ -5,6 +5,7 @@ import type { AppEnv } from "../../types";
 import { payableRoutes } from "./payables";
 import { purchaseOrderRoutes } from "./purchase-orders";
 import { receivingRoutes } from "./receiving";
+import { supplierInvoiceAttachmentRoutes } from "./supplier-invoice-attachments";
 import { supplierInvoiceRoutes } from "./supplier-invoices";
 
 export const purchasingRoutes = new Hono<AppEnv>();
@@ -12,4 +13,5 @@ export const purchasingRoutes = new Hono<AppEnv>();
 purchasingRoutes.route("/purchase-orders", purchaseOrderRoutes);
 purchasingRoutes.route("/receiving", receivingRoutes);
 purchasingRoutes.route("/supplier-invoices", supplierInvoiceRoutes);
+purchasingRoutes.route("/supplier-invoices", supplierInvoiceAttachmentRoutes);
 purchasingRoutes.route("/payables", payableRoutes);

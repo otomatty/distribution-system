@@ -176,6 +176,9 @@ export function receiptStore(db: Db): ReceiptStore {
             filter.locationId
               ? eq(purchaseOrders.destinationLocationId, filter.locationId)
               : undefined,
+            filter.deliveryOn
+              ? eq(purchaseOrders.deliveryRequestedOn, filter.deliveryOn)
+              : undefined,
           ),
         )
         .orderBy(

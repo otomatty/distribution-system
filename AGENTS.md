@@ -55,6 +55,7 @@ src/
     paths/<区分>.ts  URL を生成するヘルパー
   worker.ts          エントリーポイント（fetch・queue・scheduled）
 public/assets/       画面の CSS と補助スクリプト（ビルドなしの素の JavaScript）、htmx
+public/sw.js         倉庫のタブレットのオフライン閲覧（service worker。範囲は発送リストと入荷予定一覧だけ）
 drizzle/             生成したマイグレーション（business：業務 DB、auth：ログイン情報）
 tests/
   integration/       Workers 環境の結合テスト（画面のルートとユースケース）
@@ -109,6 +110,8 @@ docs/requirements.md 要件定義書の写し
 - 一括 PDF：`jobs.bulkDocuments`（帳票の ID、または `documentType` と元の伝票の ID）を呼ぶか、ユースケースの中で `ctx.jobs.enqueue("bulk_documents", { documentIds, name }, documentIds.length)` で登録し、処理状況（`paths.jobs()`）へ移る
 - CSV：`web/csv-exports.ts` の `csvExports` に定義（名前 → `{ fileName, fetch, columns }`）を足し、一覧の `#results` の中に `<CsvButton>` を置き、POST のルートで `exportCsv(c, 名前, 絞り込み条件, formKey(form))` を返す。2,000件を超えると自動で非同期になる。小さな表をその場で返すだけなら `web/csv.ts` の `csvResponse`
 - ダッシュボード：`web/dashboard/<区分>.ts` に欄（`DashboardSection`）を書き、`web/dashboard/sections.ts` の一覧に1行で登録する。件数は照会（ユースケース）で数え、項目は絞り込み済みの一覧の URL を持つ
+- CSV の取込（商品の一括登録が見本）：`domain/csv.ts` の `parseCsv`（RFC 4180）で読み、列の読み取りは domain に、行の検証は登録画面と同じ zod のスキーマで行う。文字コード（BOM 付き UTF-8・UTF-8・Shift_JIS）の判定とファイルの大きさの上限は web 層。「確かめる（照会。書き込まない）→ 登録する（コマンド。1つのトランザクション）」の2段階にし、確かめたときの計画（更新する行の版番号）を登録のときに比べる（`web/routes/masters/item-import.tsx`）
+- 受け取ったファイル（仕入先請求書の PDF が見本）：形式は拡張子ではなく中身で確かめ、版ごとに新しいキーで R2 に置いてから、業務 DB に版（SHA-256 つき）を記録する。上書き・削除はせず、記録できなかったファイルだけを消す（`web/routes/purchasing/supplier-invoice-attachments.tsx`、`docs/operations.md`）
 - 運用（バックアップと復元、バケットロック、失敗に気づく方法）は `docs/operations.md`
 
 ## 3. コマンド
@@ -191,7 +194,15 @@ E2E テストの Chromium は `bunx playwright install chromium` で入れます
 
 ### 画面の補助スクリプト
 
-- `public/assets/app.js` はビルドしない素の JavaScript です（通信断の表示と再送信、下書きの保存、数量の増減ボタン）。htmx で書けることはこのファイルに書かない
+- `public/assets/app.js` はビルドしない素の JavaScript です（通信断の表示と再送信、下書きの保存、数量の増減ボタン、オフライン閲覧の登録と消去）。htmx で書けることはこのファイルに書かない
+- 発送リストと入荷予定一覧のオフライン閲覧（要件定義書 7章の Should）は service worker（`public/sw.js`）で行う。
+  localStorage に残す方法では、通信が途切れた後に画面を開き直す（タブレットのブラウザを閉じた後や、URL を開いた）ときに画面そのものを読み込めないため。
+  service worker はルートから配信し（`/sw.js`）、範囲（scope）は `/shipping` と `/receiving` だけにして、ほかの画面には関わらない。
+  ファイルは同じ生成元なので、CSP（`script-src 'self'`、埋め込みのスクリプトなし）のままで動く
+  - 画面は通信を優先し、取れなかったときだけ最後に読み込んだ画面を返す（絞り込みの htmx の応答も画面全体なので残す）。残すのは、結果の欄に目印（`web/views/offline-snapshot.tsx` の `data-offline-snapshot`）のある正常な HTML の応答だけ（ログイン画面への移動やエラーは残さない）
+  - 残した画面を返すときは目印を `cached` に変える。画面は読み込んだ時刻と「通信が途切れているため…」を出し、`app.js` が操作のボタンと入力欄を使えなくする
+  - 共有のタブレットのため、端末に残すもの（下書き・残した画面・service worker の登録）は、ログアウトの後の画面（`data-clear-drafts`）でまとめて消す。端末に何かを残す機能を足すときは、同じ目印で消す
+  - `public/sw.js` は素の JavaScript なので、型の情報を使う lint の規則は `public/assets/*.js` と同じく外している（`.oxlintrc.json`）
 - 外部のライブラリは CDN から読み込まず、`public/assets/vendor` に置く（`bun run build:assets`）
 
 ### 実行環境

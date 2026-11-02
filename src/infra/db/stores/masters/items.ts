@@ -108,6 +108,10 @@ export function itemStore(db: Db): ItemStore {
       const r = base().where(eq(items.code, code)).get();
       return r ? toRecord(r) : undefined;
     },
+    findByCodes(codes) {
+      if (codes.length === 0) return [];
+      return base().where(inList(items.code, codes)).all().map(toRecord);
+    },
     list(filter, page, pageSize) {
       const w = where(filter);
       const total = db.select({ n: count() }).from(items).where(w).get()?.n ?? 0;

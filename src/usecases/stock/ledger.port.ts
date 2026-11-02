@@ -82,8 +82,16 @@ export interface LedgerFilter {
 export interface LedgerListRow extends LedgerEntry {
   readonly locationName: string;
   readonly createdByName: string | null;
-  /** 発生元が在庫操作なら、その番号（SOP-2026-000001 など） */
+  /**
+   * 発生元の伝票の番号：入荷は RC-、仕入返品は PR-、発送は納品書の DN-、返品伝票は RT-、在庫操作は SOP-。
+   * 発生元が見つからなければ null
+   */
   readonly sourceNumber: string | null;
+  /**
+   * 発生元を表示する画面の伝票の ID：入荷・仕入返品は発注、発送・返品伝票は受注、在庫操作はその伝票。
+   * 見つからなければ null
+   */
+  readonly sourceOwnerId: string | null;
   /** 打ち消し済みか */
   readonly reversed: boolean;
   readonly balance: number;

@@ -1,6 +1,8 @@
+import fc from "fast-check";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
+import { parseCsv, unescapeCsvValue } from "../domain/csv";
 import { csvField, csvResponse, encodeCsv } from "./csv";
 import type { AppEnv } from "./types";
 
@@ -34,6 +36,27 @@ describe("CSV", () => {
       ],
     );
     expect(text).toBe('\uFEFF番号,金額\r\nA-1,100\r\n"B,2",\r\n');
+  });
+
+  it("書き出した CSV は、取込（domain/csv.ts）で元の値に戻る（数式よけの ' も外れる）", () => {
+    // 元から「'」+「= + - @ タブ CR」で始まる値は、数式よけの ' と区別できないので除く
+    const value = fc
+      .string({
+        maxLength: 10,
+        unit: fc.constantFrom("a", "あ", ",", '"', "\n", "\r\n", "=", "+", "-", "@", "'", " "),
+      })
+      .filter((v) => !/^'[=+\-@\t\r]/.test(v));
+    const row = fc.array(value, { minLength: 2, maxLength: 5 });
+    fc.assert(
+      fc.property(fc.array(row, { maxLength: 6 }), (rows) => {
+        const parsed = parseCsv(encodeCsv(["a", "b"], rows));
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        const [head, ...body] = parsed.value;
+        expect(head?.fields).toEqual(["a", "b"]);
+        expect(body.map((r) => r.fields.map(unescapeCsvValue))).toEqual(rows);
+      }),
+    );
   });
 
   it("ダウンロードの応答（日本語のファイル名は RFC 5987）", async () => {

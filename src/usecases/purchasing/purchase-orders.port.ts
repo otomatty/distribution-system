@@ -26,6 +26,8 @@ export interface PurchaseOrderFields {
   readonly deliveryRequestedOn: string | null;
   readonly paymentDueOn: string | null;
   readonly sendMethod: OrderSendMethod;
+  /** メーカー直の受注から作った発注なら、その受注（作るときに決まり、編集では変わらない） */
+  readonly salesOrderId: string | null;
   readonly memo: string | null;
   /** 明細の金額の合計（税抜・円） */
   readonly subtotal: number;
@@ -87,6 +89,8 @@ export interface PurchaseOrderRecord extends PurchaseOrderFields {
     readonly phone: string | null;
   };
   readonly employeeName: string | null;
+  /** 結びついた受注の番号（メーカー直） */
+  readonly salesOrderNumber: string | null;
 }
 
 export interface PurchaseOrderDetail extends PurchaseOrderRecord {
@@ -109,6 +113,8 @@ export interface PurchaseOrderFilter {
   readonly q?: string | undefined;
   /** 納品希望日がこの日より前で、まだ入荷が終わっていない（発注済み）もの */
   readonly deliveryBefore?: string | undefined;
+  /** この受注から作った発注（メーカー直） */
+  readonly salesOrderId?: string | undefined;
 }
 
 export interface PurchaseOrderStore {

@@ -59,6 +59,8 @@ export interface ItemStore {
   /** 指定した ID の商品（見つからない ID は含めない）。並び順は ids の順 */
   getMany(ids: readonly string[]): ItemRecord[];
   findByCode(code: string): ItemRecord | undefined;
+  /** 指定した商品コードの商品（見つからないコードは含めない。CSV の一括登録で使う） */
+  findByCodes(codes: readonly string[]): ItemRecord[];
   /** 商品コードの順 */
   list(filter: ItemFilter, page: number, pageSize: number): Page<ItemRecord>;
   insert(id: string, fields: ItemFields, meta: WriteMeta): void;

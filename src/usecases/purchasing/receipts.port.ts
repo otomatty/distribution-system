@@ -84,6 +84,9 @@ export interface ReceiptStore {
   activeCount(orderId: string): number;
   /** 発注明細ごとの、取り消していない入荷の受入数の合計（仕入単位） */
   acceptedByLine(orderId: string): { lineId: string; accepted: number }[];
-  /** 発注済みで残りのある明細（入荷予定一覧）。納品希望日の順 */
-  scheduled(filter: { locationId?: string | undefined }): ScheduledLine[];
+  /** 発注済みで残りのある明細（入荷予定一覧）。納品希望日の順。deliveryOn は納品希望日がその日のものだけ */
+  scheduled(filter: {
+    locationId?: string | undefined;
+    deliveryOn?: string | undefined;
+  }): ScheduledLine[];
 }

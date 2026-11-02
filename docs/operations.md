@@ -36,11 +36,19 @@ Email Service に問題が出た場合は、`src/infra/mail/mailer.ts` の `Mail
 
 ### 保存先
 
-| 種類                        | R2 のキー                                        |
-| --------------------------- | ------------------------------------------------ |
-| 帳票の PDF                  | `documents/<種類>/<取引年>/<番号>-<帳票 ID>.pdf` |
-| 一括 PDF・CSV（処理の結果） | `jobs/<処理 ID>/<ファイル名>`                    |
-| 日次バックアップ            | `backups/<YYYY-MM-DD>.json.gz`                   |
+| 種類                        | R2 のキー                                         |
+| --------------------------- | ------------------------------------------------- |
+| 帳票の PDF                  | `documents/<種類>/<取引年>/<番号>-<帳票 ID>.pdf`  |
+| 仕入先請求書の添付 PDF      | `supplier-invoices/<請求書 ID>/<ファイル ID>.pdf` |
+| 一括 PDF・CSV（処理の結果） | `jobs/<処理 ID>/<ファイル名>`                     |
+| 日次バックアップ            | `backups/<YYYY-MM-DD>.json.gz`                    |
+
+仕入先から受け取った請求書の PDF（要件定義書 3.7 Should）は、仕入先請求書の詳細から添付します（PDF だけ、10 MB まで）。
+版ごとに `supplier_invoice_attachments` に1行（ファイル名・大きさ・SHA-256・保存した人と日時）を記録し、R2 には版ごとに別のキーで置きます。
+保存した版は消さず、上書きもしません。差し替えは新しい版として追加し、画面は最新の版を示します（前の版もダウンロードできる）。
+仕入先請求書（請求日・請求額・仕入先）が検索の手がかりになり、取り消した請求書にも添付は残ります（取消の後は追加できない）。
+R2 の customMetadata にも SHA-256 を残すので、R2 のファイルだけでも改変がないことを確かめられます。
+画面から保存したが記録できなかったファイル（権限や状態の誤り、同じ受付番号の再送信）はすぐに消します。
 
 帳票の索引（種類・番号・取引年月日・金額・取引先・R2 のキー・取消）は業務 DB の `documents` にあり、
 「帳票の検索」（`/documents`）で範囲指定と組み合わせで検索できます。取消済みの帳票も消さずに残します。
@@ -54,6 +62,7 @@ Email Service に問題が出た場合は、`src/infra/mail/mailer.ts` の `Mail
 ```sh
 # 設定（環境ごとに1回）
 npx wrangler r2 bucket lock add distribution-files-<環境> documents-retention documents/ --retention-days 2922
+npx wrangler r2 bucket lock add distribution-files-<環境> supplier-invoices-retention supplier-invoices/ --retention-days 2922
 
 # 確認
 npx wrangler r2 bucket lock list distribution-files-<環境>
@@ -65,7 +74,9 @@ npx wrangler r2 bucket lock list distribution-files-<環境>
 2. 同じキーへの上書き（`npx wrangler r2 object put ... --remote`）が拒否されること
 
 バケットロックは、設定を変えられる権限があれば外せます。真実性の要件は事務処理規程と組み合わせて満たします（方法は税理士に確認する）。
-ロックの対象は `documents/` だけです。`jobs/`（処理の結果）と `backups/` は対象外です。
+ロックの対象は `documents/` と `supplier-invoices/` です。`jobs/`（処理の結果）と `backups/` は対象外です。
+`supplier-invoices/` をロックすると、記録できなかったファイルを消す処理も拒否されます（その場合は業務 DB に記録のないファイルとして残り、
+画面には出ません。ログに `unrecorded attachment left in R2` が出ます）。
 
 ## 3. バックアップ
 

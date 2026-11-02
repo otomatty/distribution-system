@@ -21,6 +21,7 @@ import type {
   MonthlyPayable,
   SupplierInvoiceFilter,
   SupplierInvoiceRecord,
+  SupplierInvoiceAttachmentRecord,
   SupplierInvoiceStore,
   SupplierPaymentRecord,
 } from "../../../../usecases/purchasing/supplier-invoices.port";
@@ -33,6 +34,7 @@ import {
   purchaseReturns,
   receiptLines,
   receipts,
+  supplierInvoiceAttachments,
   supplierInvoices,
   supplierPayments,
 } from "../../schema";
@@ -311,6 +313,29 @@ export function supplierInvoiceStore(db: Db): SupplierInvoiceStore {
         .where(eq(supplierPayments.supplierInvoiceId, invoiceId))
         .orderBy(desc(supplierPayments.id))
         .all();
+    },
+    attachments(invoiceId): SupplierInvoiceAttachmentRecord[] {
+      return db
+        .select({
+          id: supplierInvoiceAttachments.id,
+          supplierInvoiceId: supplierInvoiceAttachments.supplierInvoiceId,
+          r2Key: supplierInvoiceAttachments.r2Key,
+          fileName: supplierInvoiceAttachments.fileName,
+          size: supplierInvoiceAttachments.size,
+          sha256: supplierInvoiceAttachments.sha256,
+          createdAt: supplierInvoiceAttachments.createdAt,
+          createdByName: employees.name,
+        })
+        .from(supplierInvoiceAttachments)
+        .leftJoin(employees, eq(employees.id, supplierInvoiceAttachments.createdBy))
+        .where(eq(supplierInvoiceAttachments.supplierInvoiceId, invoiceId))
+        .orderBy(desc(supplierInvoiceAttachments.id))
+        .all();
+    },
+    insertAttachment(row, meta) {
+      db.insert(supplierInvoiceAttachments)
+        .values({ ...row, ...auditInsert(meta) })
+        .run();
     },
     insertPayment(id, invoiceId, payment, meta) {
       db.insert(supplierPayments)

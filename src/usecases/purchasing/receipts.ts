@@ -22,6 +22,7 @@ import {
   businessDate,
   idSchema,
   nonNegativeInt,
+  optionalBusinessDate,
   optionalText,
   requiredText,
   version,
@@ -223,16 +224,21 @@ export interface ScheduleGroup {
 /**
  * 入荷予定一覧（要件定義書 3.6）：発注済みで未入荷の明細を、保管場所ごとに納品希望日の順で表示する。
  * メーカー直・その他の届け先の発注は、最後に別のまとまりで表示する（在庫には入らない）。
+ * on を指定すると、納品希望日がその日のものだけにする（ダッシュボードの「今日の入荷予定」から開く）。
  */
 export const receivingSchedule = defineQuery({
   permission: "view",
   input: z.object({
     locationId: z.string().max(64).optional(),
     overdue: z.boolean().default(false),
+    on: optionalBusinessDate,
   }),
-  run(ctx, { locationId, overdue }): ScheduleGroup[] {
+  run(ctx, { locationId, overdue, on }): ScheduleGroup[] {
     const today = ctx.clock.today();
-    const rows = ctx.stores.receipts.scheduled({ locationId: locationId || undefined });
+    const rows = ctx.stores.receipts.scheduled({
+      locationId: locationId || undefined,
+      deliveryOn: on ?? undefined,
+    });
     const orders = new Map<
       string,
       { first: ScheduledLine; lines: ScheduledOrder["lines"][number][] }

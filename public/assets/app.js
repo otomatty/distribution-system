@@ -380,16 +380,87 @@
     if (form && readyForms.has(form)) saveDraft(form);
   });
 
+  // ---- オフライン閲覧（発送リスト・入荷予定一覧。public/sw.js） ----------------------
+  // data-offline-snapshot のある画面で service worker を登録する（範囲は data-offline-scope の画面だけ）。
+  // service worker が通信の途切れた時に残しておいた画面を返すと、目印が "cached" になるので、操作を止める。
+  // ログアウトの後の画面（data-clear-drafts）では、下書きと同じように残した画面と登録を消す（共有のタブレットのため）
+  var SNAPSHOT_CACHE_PREFIX = "offline-snapshots-";
+
+  function setupOfflineSnapshot() {
+    var marker = document.querySelector("[data-offline-snapshot]");
+    if (!marker) return;
+    if (marker.getAttribute("data-offline-snapshot") === "cached") {
+      var main = document.getElementById("main") || document.body;
+      var controls = main.querySelectorAll("button, input, select, textarea");
+      for (var i = 0; i < controls.length; i++) controls[i].disabled = true;
+      return;
+    }
+    var scope = marker.getAttribute("data-offline-scope");
+    if (!scope || !("serviceWorker" in navigator)) return;
+    // 初めて開いた画面は service worker を通らずに読み込んだので、登録の後に残してもらう
+    var controlledAtLoad = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker
+      .register("/sw.js", { scope: scope })
+      .then(function () {
+        return navigator.serviceWorker.ready;
+      })
+      .then(function (registration) {
+        if (!controlledAtLoad && registration.active)
+          // service worker への知らせ（ウィンドウ間の postMessage ではないので、渡すのは転送するものの一覧）
+          registration.active.postMessage({ type: "snapshot", url: window.location.href }, []);
+        return null;
+      })
+      .catch(function () {
+        // 登録できない環境（プライベートブラウズなど）では、オフライン閲覧なしで使う
+      });
+  }
+
+  function clearOfflineSnapshots() {
+    if (window.caches) {
+      window.caches
+        .keys()
+        .then(function (keys) {
+          return Promise.all(
+            keys
+              .filter(function (k) {
+                return k.indexOf(SNAPSHOT_CACHE_PREFIX) === 0;
+              })
+              .map(function (k) {
+                return window.caches.delete(k);
+              }),
+          );
+        })
+        .catch(function () {});
+    }
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then(function (registrations) {
+          registrations.forEach(function (r) {
+            r.unregister().catch(function () {});
+          });
+          return null;
+        })
+        .catch(function () {});
+    }
+  }
+
   // ---- 初期化 ---------------------------------------------------------------
   // 下書きの復元は画面を開いたときだけ行う（入力エラーで返ってきたフォームはサーバーの内容を使う）
   function init(root, allowRestore) {
     var forms = (root || document).querySelectorAll("form[data-draft]");
     for (var i = 0; i < forms.length; i++) initDraft(forms[i], allowRestore);
-    if ((root || document).querySelector && (root || document).querySelector("[data-clear-drafts]"))
+    if (
+      (root || document).querySelector &&
+      (root || document).querySelector("[data-clear-drafts]")
+    ) {
       clearAllDrafts();
+      clearOfflineSnapshots();
+    }
   }
   document.addEventListener("DOMContentLoaded", function () {
     init(document, true);
+    setupOfflineSnapshot();
     if (!navigator.onLine) showOffline(false);
   });
   document.addEventListener("htmx:load", function (event) {
