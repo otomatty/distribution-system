@@ -25,6 +25,8 @@ export const salesOrders = sqliteTable(
     uniqueIndex("sales_orders_number").on(t.number),
     index("sales_orders_status_ship").on(t.status, t.shipPlannedOn),
     index("sales_orders_customer").on(t.customerId),
+    // 受注の詳細で分割先の受注を探す（受注の取得のたびに使う。発送・一括発送でも呼ばれる）
+    index("sales_orders_split_from").on(t.splitFromId),
   ],
 );
 
