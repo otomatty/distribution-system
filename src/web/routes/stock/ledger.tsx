@@ -25,16 +25,28 @@ export const stockLedgerRoutes = new Hono<AppEnv>();
 
 const REASON_OPTIONS = Object.entries(STOCK_REASONS).map(([value, label]) => ({ value, label }));
 
+/** 発生元の伝票を表示する画面（入荷・仕入返品は発注、発送・返品伝票は受注、在庫操作はその伝票） */
+function sourceHref(row: LedgerListRow): string | null {
+  const owner = row.sourceOwnerId;
+  if (owner === null) return null;
+  switch (row.sourceType) {
+    case "receipt":
+    case "purchase_return":
+      return paths.purchaseOrder(owner);
+    case "shipment":
+    case "sales_return":
+      return paths.salesOrder(owner);
+    case "stock_operation":
+      return paths.stockOperation(owner);
+  }
+  return null;
+}
+
 function SourceCell(props: { row: LedgerListRow }) {
   const r = props.row;
-  const label = STOCK_SOURCE_LABELS[r.sourceType];
-  if (r.sourceType === "stock_operation")
-    return (
-      <a href={paths.stockOperation(r.sourceId)}>
-        {label} {r.sourceNumber ?? ""}
-      </a>
-    );
-  return <span>{label}</span>;
+  const label = `${STOCK_SOURCE_LABELS[r.sourceType]} ${r.sourceNumber ?? ""}`.trim();
+  const href = sourceHref(r);
+  return href ? <a href={href}>{label}</a> : <span>{label}</span>;
 }
 
 // 商品の ID は ULID（"operations" などのほかの画面の URL と重ならない）

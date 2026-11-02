@@ -32,6 +32,7 @@ import {
 } from "../../views/components";
 import { qty } from "../../views/format";
 import { Layout } from "../../views/layout";
+import { OfflineSnapshot } from "../../views/offline-snapshot";
 import { OrderStatusBadge, ReceiptCancelForm } from "../../views/purchasing";
 import { LineQuantity } from "../../views/stock";
 
@@ -42,8 +43,10 @@ export const receivingRoutes = new Hono<AppEnv>();
 receivingRoutes.get("/", async (c) => {
   const locationId = c.req.query("locationId") ?? "";
   const overdue = c.req.query("overdue") === "1";
+  // 納品希望日（ダッシュボードの「今日の入荷予定」から開くと今日）。空ならすべて
+  const on = c.req.query("on") ?? "";
   const [groups, locations] = await Promise.all([
-    runQuery(c, "receipts.schedule", { locationId: locationId || undefined, overdue }),
+    runQuery(c, "receipts.schedule", { locationId: locationId || undefined, overdue, on }),
     runQuery(c, "locations.options", {}),
   ]);
   return c.html(
@@ -72,6 +75,9 @@ receivingRoutes.get("/", async (c) => {
             empty="すべて"
           />
         </Field>
+        <Field label="納品希望日" name="on" hint="空ならすべての日">
+          <Input name="on" type="date" value={on} />
+        </Field>
         <Checkbox name="overdue" value="1" label="納品希望日を過ぎたものだけ" checked={overdue} />
         <noscript>
           <button type="submit" class="btn btn-secondary">
@@ -80,6 +86,7 @@ receivingRoutes.get("/", async (c) => {
         </noscript>
       </form>
       <section id="results">
+        <OfflineSnapshot scope={paths.receiving()} loadedAt={new Date()} />
         {groups.length === 0 ? (
           <EmptyState message="入荷予定はありません" />
         ) : (

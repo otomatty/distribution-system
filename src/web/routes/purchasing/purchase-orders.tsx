@@ -3,6 +3,7 @@
  * 詳細（確定と送付、メモ、取消、入荷の履歴と取消、仕入返品、発注書と送付履歴、仕入先請求書）。
  */
 import { Hono, type Context } from "hono";
+import type { Child } from "hono/jsx";
 
 import { toBusinessDate } from "../../../domain/dates";
 import { RENDER_STATUS_LABELS, SEND_STATUS_LABELS } from "../../../domain/documents";
@@ -46,6 +47,7 @@ import { CsvButton } from "../../views/csv-button";
 import { centiPlain, centiYen, dateTime, qty, rate, yen } from "../../views/format";
 import { ItemPicker, ItemPickerButton, pickedItemIds } from "../../views/item-picker";
 import { Layout } from "../../views/layout";
+import { MakerDirectDraftNote, MakerDirectSupplierChoice } from "../../views/maker-direct";
 import {
   destinationText,
   ORDER_STATUS_OPTIONS,
@@ -249,6 +251,8 @@ interface OrderValues {
   readonly deliveryRequestedOn: string;
   readonly paymentDueOn: string;
   readonly memo: string;
+  /** メーカー直の受注から作るとき、その受注の ID（作るときだけ送る） */
+  readonly salesOrderId: string;
 }
 
 /** 明細の行の入力（画面に入力された文字のまま） */
@@ -281,6 +285,7 @@ function valuesFromForm(form: FormData_): OrderValues {
     deliveryRequestedOn: str(form, "deliveryRequestedOn"),
     paymentDueOn: str(form, "paymentDueOn"),
     memo: str(form, "memo"),
+    salesOrderId: str(form, "salesOrderId"),
   };
 }
 
@@ -577,6 +582,7 @@ function OrderForm(props: {
       <FormKey />
       {props.version !== undefined ? <Version value={props.version} /> : null}
       <input type="hidden" name="supplierId" value={v.supplierId} />
+      {v.salesOrderId ? <input type="hidden" name="salesOrderId" value={v.salesOrderId} /> : null}
       <fieldset>
         <legend>発注先と日付</legend>
         <div class="grid-3">
@@ -774,6 +780,94 @@ async function renderFormError(
   );
 }
 
+/**
+ * メーカー直の受注から発注を作る画面（要件定義書 3.8 Should）。受注の明細が複数の仕入先にまたがるときは
+ * 仕入先を選んでもらい、選んだ仕入先の商品だけを明細にする。納入先は受注の販売先、数量は仕入単位に換算した値、
+ * 納品希望日は受注の納品希望日を初期値にする。保存は通常の発注の作成（受注の ID つき）で行う。
+ */
+async function makerDirectNew(c: Context<AppEnv>, salesOrderId: string, supplierId: string) {
+  const actor = c.get("actor");
+  const page = (body: Child) =>
+    c.html(
+      <Layout title="発注の作成（メーカー直）" actor={actor} current={paths.purchaseOrders()}>
+        <PageHeader title="発注の作成（メーカー直）" />
+        {body}
+      </Layout>,
+    );
+  const plan = await runQuery(c, "purchaseOrders.makerDirectPlan", { salesOrderId });
+  if (!plan) return c.notFound();
+  const back = (
+    <p>
+      <a href={paths.salesOrder(salesOrderId)}>受注に戻る</a>
+    </p>
+  );
+  // 仕入先が1つだけで、まだ発注がなければ選ばずに進む
+  const [single] = plan.suppliers.length === 1 ? plan.suppliers : [];
+  const chosen = supplierId || (single?.activeOrder === null ? single.supplierId : "");
+  if (!chosen) {
+    const number = (await runQuery(c, "salesOrders.get", { id: salesOrderId }))?.order.number ?? "";
+    return page(
+      <>
+        <MakerDirectSupplierChoice plan={plan} number={number} />
+        {back}
+      </>,
+    );
+  }
+  const result = await runQuery(c, "purchaseOrders.makerDirectDraft", {
+    salesOrderId,
+    supplierId: chosen,
+  });
+  if (!result.draft)
+    return page(
+      <>
+        <Alert kind="warning">{result.error}</Alert>
+        {back}
+      </>,
+    );
+  const draft = result.draft;
+  const today = toBusinessDate(new Date());
+  const lines: LineValues[] = draft.lines.map((l) => ({
+    itemId: l.itemId,
+    quantity: String(l.quantity),
+    price: l.unitPriceCenti === null ? "" : centiPlain(l.unitPriceCenti),
+    memo: "",
+  }));
+  const [options, views] = await Promise.all([
+    formOptions(c, draft.supplierId),
+    lineViews(c, today, lines),
+  ]);
+  if (!options) return c.notFound();
+  return page(
+    <>
+      <MakerDirectDraftNote draft={draft} />
+      <OrderForm
+        action={paths.purchaseOrderNew()}
+        values={{
+          supplierId: draft.supplierId,
+          orderedOn: today,
+          supplierContactName: "",
+          destinationKind: "customer",
+          destinationLocationId: "",
+          destinationCustomerId: draft.customerId,
+          destinationAddress: "",
+          employeeId: actor.employeeId,
+          deliveryRequestedOn: draft.deliveryRequestedOn ?? "",
+          paymentDueOn: "",
+          memo: "",
+          salesOrderId: draft.salesOrderId,
+        }}
+        lines={views.lines}
+        summary={views.summary}
+        summaryError={views.error}
+        options={options}
+        errors={{}}
+        submitLabel="作成中として保存"
+      />
+      <OrderPicker supplierId={draft.supplierId} />
+    </>,
+  );
+}
+
 purchaseOrderRoutes.get("/new", async (c) => {
   const actor = c.get("actor");
   const supplierId = c.req.query("supplierId") ?? "";
@@ -786,6 +880,8 @@ purchaseOrderRoutes.get("/new", async (c) => {
       </Layout>,
     );
   }
+  const salesOrderId = c.req.query("salesOrderId") ?? "";
+  if (salesOrderId) return makerDirectNew(c, salesOrderId, supplierId);
   const options = supplierId ? await formOptions(c, supplierId) : null;
   if (!options) {
     // 1. 仕入先を選ぶ（発注書は仕入先ごとに1枚。商品はその仕入先の取扱商品に限る）
@@ -835,6 +931,7 @@ purchaseOrderRoutes.get("/new", async (c) => {
           deliveryRequestedOn: "",
           paymentDueOn: "",
           memo: "",
+          salesOrderId: "",
         }}
         lines={[]}
         summary={null}
@@ -1145,6 +1242,12 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
               </>,
             ],
             ["社内の担当者", order.employeeName],
+            [
+              "受注（メーカー直）",
+              order.salesOrderId ? (
+                <a href={paths.salesOrder(order.salesOrderId)}>{order.salesOrderNumber}</a>
+              ) : null,
+            ],
             ["支払予定日", order.paymentDueOn],
             ["確定日時", order.confirmedAt ? dateTime(order.confirmedAt) : null],
             ["取消の理由", order.cancelReason],
@@ -1420,6 +1523,7 @@ purchaseOrderRoutes.get("/:id/edit", async (c) => {
           deliveryRequestedOn: order.deliveryRequestedOn ?? "",
           paymentDueOn: order.paymentDueOn ?? "",
           memo: order.memo ?? "",
+          salesOrderId: order.salesOrderId ?? "",
         }}
         lines={views.lines}
         summary={views.summary}

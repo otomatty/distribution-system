@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { paths } from "../../paths";
 import type { AppEnv } from "../../types";
 import { employeeRoutes } from "./employees";
+import { itemImportRoutes } from "./item-import";
 import { itemRoutes } from "./items";
 import { locationRoutes } from "./locations";
 import { partnerRoutes } from "./partners";
@@ -13,6 +14,8 @@ import { simpleMasterRoutes } from "./simple-masters";
 export const mastersRoutes = new Hono<AppEnv>();
 
 mastersRoutes.route("/partners", partnerRoutes);
+// 商品の CSV 一括登録は /items/:id より先に取り付ける
+mastersRoutes.route("/items/import", itemImportRoutes);
 mastersRoutes.route("/items", itemRoutes);
 mastersRoutes.route("/masters/locations", locationRoutes);
 mastersRoutes.route(

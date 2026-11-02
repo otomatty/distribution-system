@@ -6,6 +6,8 @@
  * - 帳票：documents/<種類>/<取引年>/<番号>-<帳票 ID>.<pdf|html>（バケットロックで7年保持）
  * - 処理結果：jobs/<処理 ID>/<ファイル名>
  * - バックアップ：backups/<YYYY-MM-DD>.json.gz
+ * - 仕入先請求書の添付 PDF：supplier-invoices/<請求書 ID>/<ファイル ID>.pdf（版ごとに別のファイル。上書き・削除しない。
+ *   キーは domain/attachments.ts の supplierInvoiceAttachmentKey で決める）
  */
 import type { DocumentType } from "../../domain/documents";
 
@@ -83,6 +85,39 @@ export async function putFile(
     },
     customMetadata: { fileName: file.fileName },
   });
+}
+
+/**
+ * 仕入先請求書の添付 PDF を保存する。内容の SHA-256 もメタデータに残す（R2 だけを見ても改変を確かめられるように）。
+ * キーは版ごとに新しい ID なので、既存のファイルを上書きすることはない
+ */
+export async function putAttachment(
+  bucket: R2Bucket,
+  key: string,
+  body: Uint8Array,
+  file: { readonly fileName: string; readonly sha256: string },
+): Promise<void> {
+  await bucket.put(key, body, {
+    httpMetadata: {
+      contentType: "application/pdf",
+      contentDisposition: contentDisposition(file.fileName),
+    },
+    customMetadata: { fileName: file.fileName, sha256: file.sha256 },
+    sha256: file.sha256,
+  });
+}
+
+/**
+ * 保存したが業務 DB に記録できなかったファイルを消す（記録のないファイルを残さないため）。
+ * 消せなくても（バケットロックなど）処理は続ける。消せたら true
+ */
+export async function discardFile(bucket: R2Bucket, key: string): Promise<boolean> {
+  try {
+    await bucket.delete(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 保存済みか（バケットロックの対象は上書きできないので、書く前に確かめる） */

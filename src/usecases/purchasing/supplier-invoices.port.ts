@@ -32,6 +32,20 @@ export interface SupplierPaymentRecord {
   readonly createdByName: string | null;
 }
 
+/** 仕入先請求書に添付した PDF の1つの版（消さない・上書きしない。新しい版を追加して差し替える） */
+export interface SupplierInvoiceAttachmentRecord {
+  readonly id: string;
+  readonly supplierInvoiceId: string;
+  readonly r2Key: string;
+  readonly fileName: string;
+  /** バイト数 */
+  readonly size: number;
+  /** 内容の SHA-256（16進数） */
+  readonly sha256: string;
+  readonly createdAt: string;
+  readonly createdByName: string | null;
+}
+
 export interface SupplierInvoiceRecord extends SupplierInvoiceFields {
   readonly id: string;
   readonly status: SupplierInvoiceStatus;
@@ -111,6 +125,13 @@ export interface SupplierInvoiceStore {
   setReturnInvoice(returnIds: readonly string[], invoiceId: string | null): void;
   /** 支払の記録（取消を含む、新しい順） */
   payments(invoiceId: string): SupplierPaymentRecord[];
+  /** 添付した PDF のすべての版（新しい順） */
+  attachments(invoiceId: string): SupplierInvoiceAttachmentRecord[];
+  /** 添付した PDF の版を追加する（版は消さない・書き換えない） */
+  insertAttachment(
+    row: Omit<SupplierInvoiceAttachmentRecord, "createdAt" | "createdByName">,
+    meta: WriteMeta,
+  ): void;
   insertPayment(
     id: string,
     invoiceId: string,

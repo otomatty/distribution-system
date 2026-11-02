@@ -1,5 +1,6 @@
 /** マスタ（社員・設定・取引先・商品・保管場所・払い出し先店舗・ジャンル）のユースケース */
 import { createEmployee, getEmployee, listEmployees, updateEmployee } from "./employees";
+import { checkItemImport, importItems } from "./item-import";
 import {
   createItem,
   deleteItem,
@@ -45,6 +46,7 @@ export const mastersCommands = {
   "items.update": updateItem,
   "items.discontinue": discontinueItem,
   "items.delete": deleteItem,
+  "items.import": importItems,
   "locations.create": createLocation,
   "locations.update": updateLocation,
   "locations.archive": archiveLocation,
@@ -67,6 +69,7 @@ export const mastersQueries = {
   "items.get": getItem,
   "items.getMany": getItems,
   "items.pick": pickItems,
+  "items.importCheck": checkItemImport,
   "locations.list": listLocations,
   "locations.get": getLocation,
   "locations.options": locationOptions,

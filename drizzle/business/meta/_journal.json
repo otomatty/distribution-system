@@ -19,8 +19,22 @@
     {
       "idx": 2,
       "version": "6",
-      "when": 1793609832515,
-      "tag": "0002_sales_orders_split_from",
+      "when": 1793607811357,
+      "tag": "0002_supplier_invoice_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793611358835,
+      "tag": "0003_purchase_orders_sales_order_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793614079085,
+      "tag": "0004_sales_orders_split_from",
       "breakpoints": true
     }
   ]

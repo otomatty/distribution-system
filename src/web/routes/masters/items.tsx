@@ -397,9 +397,14 @@ itemRoutes.get("/", async (c) => {
         title="商品"
         actions={
           canManage ? (
-            <a class="btn btn-primary" href={paths.itemNew()}>
-              商品を登録
-            </a>
+            <>
+              <a class="btn btn-secondary" href={paths.itemImport()}>
+                CSV で一括登録
+              </a>
+              <a class="btn btn-primary" href={paths.itemNew()}>
+                商品を登録
+              </a>
+            </>
           ) : null
         }
       />

@@ -1,6 +1,6 @@
 /**
  * ダッシュボードの「受注・出荷」の欄（要件定義書 3.13）：今日の出荷予定（保管場所別）、出荷可能数が足りない受注、
- * 出荷予定日を過ぎた未発送の受注。今日の入荷予定は仕入の欄で扱う。
+ * 出荷予定日を過ぎた未発送の受注、今日の入荷予定（倉庫で受け取る。件数は仕入の区分の照会で数える）。
  */
 import { paths } from "../paths";
 import { runQuery } from "../usecase";
@@ -11,7 +11,10 @@ export const salesSection: DashboardSection = {
   title: "受注・出荷",
   roles: ["sales"],
   async load(c) {
-    const d = await runQuery(c, "sales.dashboard", {});
+    const [d, receipts] = await Promise.all([
+      runQuery(c, "sales.dashboard", {}),
+      runQuery(c, "receipts.dueToday", {}),
+    ]);
     const items: DashboardItem[] = d.shipPlanned.map((p) => ({
       label: `今日の出荷予定（${p.locationName}）`,
       count: p.count,
@@ -44,6 +47,11 @@ export const salesSection: DashboardSection = {
         count: d.overdue,
         href: paths.salesOrders({ status: "received", shipTo: d.overdueShipTo }),
         attention: true,
+      },
+      {
+        label: "今日の入荷予定",
+        count: receipts.count,
+        href: paths.receiving({ on: receipts.today }),
       },
     );
     return items;

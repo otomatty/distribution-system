@@ -61,3 +61,23 @@ export const purchasingDashboard = defineQuery({
     };
   },
 });
+
+export interface ReceiptsDueToday {
+  readonly today: string;
+  /** 納品希望日が今日で、まだ入荷が終わっていない発注（発注済み）の件数 */
+  readonly count: number;
+}
+
+/**
+ * ダッシュボードの「受注・出荷」の欄の「今日の入荷予定」（要件定義書 3.13）。倉庫で受け取る人が見る。
+ * 入荷予定一覧（receipts.schedule）を今日の納品希望日で絞り込んだときの発注の件数と同じ
+ */
+export const receiptsDueToday = defineQuery({
+  permission: "view",
+  input: z.object({}),
+  run(ctx): ReceiptsDueToday {
+    const today = ctx.clock.today();
+    const lines = ctx.stores.receipts.scheduled({ deliveryOn: today });
+    return { today, count: new Set(lines.map((l) => l.purchaseOrderId)).size };
+  },
+});

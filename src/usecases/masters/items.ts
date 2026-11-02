@@ -104,10 +104,10 @@ const fieldsShape = {
   memo: optionalText(2000),
 };
 
-/** 登録では商品コードを空にでき、空なら自動で採番する */
-const createInput = z.object({ ...fieldsShape, code: codeInput.default("") });
+/** 登録では商品コードを空にでき、空なら自動で採番する（CSV の一括登録も同じ検証を使う） */
+export const createInput = z.object({ ...fieldsShape, code: codeInput.default("") });
 /** 編集では商品コードは必須 */
-const updateFields = z.object({
+export const updateFields = z.object({
   ...fieldsShape,
   code: codeInput.refine((v) => v !== "", "商品コードを入力してください"),
 });
@@ -120,8 +120,8 @@ function fieldError(prefix: string, field: string, message: string): Result<neve
  * 仕入先と取扱ジャンルの存在を確かめる。取引終了の仕入先・ジャンルは、新しく選ぶことはできない
  * （登録済みの商品がそのまま使い続けるのはよい）。
  */
-function checkReferences(
-  ctx: UsecaseContext,
+export function checkReferences(
+  ctx: Pick<UsecaseContext, "stores">,
   fields: Pick<ItemFields, "supplierId" | "genreId">,
   before: ItemRecord | undefined,
   prefix: string,
@@ -146,6 +146,24 @@ function duplicateCode(prefix: string): Result<never> {
   });
 }
 
+/**
+ * 自動で採番する商品コード（IT000001 の形式）。手で入力したコードと重なれば、空いている番号まで進める。
+ * reserved は、同じ処理の中ですでに使うことにしたコード（CSV の一括登録で、ファイルの中のコードと重ならないように）
+ */
+export function nextFreeItemCode(
+  ctx: Pick<UsecaseContext, "clock" | "sequences" | "stores">,
+  reserved: (code: string) => boolean,
+): string | undefined {
+  const today = ctx.clock.today();
+  function* candidates() {
+    for (;;) yield ctx.sequences.next("item", today);
+  }
+  return firstFreeCode(
+    candidates(),
+    (c) => reserved(c) || ctx.stores.items.findByCode(c) !== undefined,
+  );
+}
+
 export const createItem = defineCommand({
   permission: "items.manage",
   input: createInput,
@@ -154,11 +172,7 @@ export const createItem = defineCommand({
     if (problem) return problem;
     let code = input.code;
     if (code === "") {
-      const today = ctx.clock.today();
-      function* candidates() {
-        for (;;) yield ctx.sequences.next("item", today);
-      }
-      const free = firstFreeCode(candidates(), (c) => ctx.stores.items.findByCode(c) !== undefined);
+      const free = nextFreeItemCode(ctx, () => false);
       if (!free)
         return err("conflict", "商品コードを自動で採番できませんでした。コードを入力してください");
       code = free;

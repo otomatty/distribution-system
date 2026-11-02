@@ -22,6 +22,10 @@ import {
   partners,
   purchaseOrderLines,
   purchaseOrders,
+  purchaseReturns,
+  receipts,
+  salesReturns,
+  shipments,
   stockBalances,
   stockLedger,
   stockOperations,
@@ -317,7 +321,13 @@ export function stockStore(db: Db): StockStore {
           },
           locationName: locations.name,
           createdByName: employees.name,
-          sourceNumber: stockOperations.number,
+          // 発生元の伝票は種類ごとに別の表にある。種類と ID で1つだけが結びつく
+          sourceNumber: sql<
+            string | null
+          >`coalesce(${stockOperations.number}, ${receipts.number}, ${purchaseReturns.number}, ${shipments.deliveryNoteNumber}, ${salesReturns.number})`,
+          sourceOwnerId: sql<
+            string | null
+          >`coalesce(${stockOperations.id}, ${receipts.purchaseOrderId}, ${purchaseReturns.purchaseOrderId}, ${shipments.salesOrderId}, ${salesReturns.salesOrderId})`,
           reversed: sql<number>`exists(select 1 from ${stockLedger} where ${stockLedger.reversesId} = ${scoped.id})`,
         })
         .from(scoped)
@@ -326,6 +336,19 @@ export function stockStore(db: Db): StockStore {
         .leftJoin(
           stockOperations,
           and(eq(scoped.sourceType, "stock_operation"), eq(stockOperations.id, scoped.sourceId)),
+        )
+        .leftJoin(receipts, and(eq(scoped.sourceType, "receipt"), eq(receipts.id, scoped.sourceId)))
+        .leftJoin(
+          purchaseReturns,
+          and(eq(scoped.sourceType, "purchase_return"), eq(purchaseReturns.id, scoped.sourceId)),
+        )
+        .leftJoin(
+          shipments,
+          and(eq(scoped.sourceType, "shipment"), eq(shipments.id, scoped.sourceId)),
+        )
+        .leftJoin(
+          salesReturns,
+          and(eq(scoped.sourceType, "sales_return"), eq(salesReturns.id, scoped.sourceId)),
         )
         .where(where)
         .orderBy(asc(scoped.businessDate), asc(scoped.id))
@@ -349,6 +372,7 @@ export function stockStore(db: Db): StockStore {
           locationName: r.locationName,
           createdByName: r.createdByName,
           sourceNumber: r.sourceNumber,
+          sourceOwnerId: r.sourceOwnerId,
           reversed: r.reversed === 1,
         }));
       return { opening, rows: { rows, total, page, pageSize } };

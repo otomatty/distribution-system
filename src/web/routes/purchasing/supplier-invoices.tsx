@@ -39,6 +39,7 @@ import { CsvButton } from "../../views/csv-button";
 import { dateTime, rate, yen } from "../../views/format";
 import { Layout } from "../../views/layout";
 import { INVOICE_STATUS_OPTIONS, SupplierInvoiceStatusBadge } from "../../views/purchasing";
+import { AttachmentSection } from "../../views/supplier-invoice-attachments";
 
 export const supplierInvoiceRoutes = new Hono<AppEnv>();
 
@@ -50,6 +51,7 @@ const SI_NOTICES: Readonly<Record<string, string>> = {
   paid: "支払を記録しました",
   paymentCancelled: "支払を取り消しました",
   cancelled: "仕入先請求書を取り消しました。結びつけていた入荷は、別の請求書に入れ直せます",
+  attached: "請求書の PDF を保存しました",
 };
 
 async function supplierOptions(c: Context<AppEnv>): Promise<Option[]> {
@@ -834,6 +836,7 @@ supplierInvoiceRoutes.get("/:id", async (c) => {
           </table>
         ) : null}
       </section>
+      <AttachmentSection view={view} />
       {view.actions.pay ? <PayForm view={view} /> : null}
       {view.payments.length > 0 ? (
         <section class="card">
