@@ -65,11 +65,11 @@ function page(c: Context<AppEnv>, body: Child, status: 200 | 409 | 422 = 200) {
 }
 
 const COLUMN_NOTES: Readonly<Record<string, string>> = {
-  code: "空なら自動で採番。登録済みのコードなら、その商品を更新します",
+  code: "空なら新しい商品として登録し、コードを自動で採番。登録済みのコードなら、その商品を CSV の内容で上書きします",
   jan: "8桁または13桁（任意）",
   name: "必須",
-  supplierId: "取引先の名前（必須）",
-  genreId: "ジャンルの名前（任意）",
+  supplierId: "仕入先の名前（取引先に登録した名前。必須）",
+  genreId: "ジャンルの名前（ジャンルに登録した名前。任意）",
   temperatureZone: "常温・冷蔵・冷凍（空なら常温）",
   taxCategory: "標準・軽減（必須）",
   purchaseUnitName: "例：ケース（必須）",
@@ -143,6 +143,21 @@ itemImportRoutes.get("/", (c) =>
             ひな形（CSV）をダウンロード
           </a>
         </p>
+        <ul class="import-rules">
+          <li>
+            商品コードが登録済みの商品と同じ行は、その商品を CSV
+            の内容で上書きします（空の列は空または初期値になります）。
+          </li>
+          <li>商品コードが空の行は、新しい商品として登録し、商品コードを自動で採番します。</li>
+          <li>
+            仕入先とジャンルは、ID
+            ではなく名前で書きます（取引先・ジャンルに登録した名前と同じにします）。
+          </li>
+          <li>
+            取扱終了と在庫の列はありません。取扱終了は商品の画面で、初期在庫は在庫調整で入れます（CSV
+            では変わりません）。
+          </li>
+        </ul>
         <details>
           <summary>列の書き方</summary>
           <div class="table-wrap">
