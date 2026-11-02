@@ -301,30 +301,38 @@ describe("集計の基準", () => {
     expect(r).toEqual({ ok: false, error: expect.objectContaining({ code: "validation" }) });
   });
 
-  it("CSV 用には行 × 月を表の順に縦に並べ、ページに分けて返す", async () => {
+  it("CSV 用には行 × 月を表の順に縦に並べ、行の単位でページに分けて返す", async () => {
     const first = await systemQuery("reports.cells", {
       view: "purchases_item",
       from: "2026-09",
       to: "2026-10",
       page: 1,
-      pageSize: 3,
+      pageSize: 1,
     });
     expect(first.total).toBe(4);
     expect(first.rows.map((c) => [c.name, c.month, c.amount])).toEqual([
       ["集計テスト商品A", "2026-09", 2_400],
       ["集計テスト商品A", "2026-10", 2_100],
-      ["集計テスト商品B", "2026-09", 2_001],
     ]);
     const second = await systemQuery("reports.cells", {
       view: "purchases_item",
       from: "2026-09",
       to: "2026-10",
       page: 2,
-      pageSize: 3,
+      pageSize: 1,
     });
     expect(second.rows.map((c) => [c.measure, c.axis, c.code, c.month, c.amount])).toEqual([
+      ["purchases", "item", data.b.code, "2026-09", 2_001],
       ["purchases", "item", data.b.code, "2026-10", 0],
     ]);
+    const third = await systemQuery("reports.cells", {
+      view: "purchases_item",
+      from: "2026-09",
+      to: "2026-10",
+      page: 3,
+      pageSize: 1,
+    });
+    expect(third.rows).toEqual([]);
     const invalid = await systemQuery("reports.cells", { from: "x", page: 1, pageSize: 3 });
     expect(invalid).toEqual({ rows: [], total: 0, page: 1, pageSize: 3 });
   });

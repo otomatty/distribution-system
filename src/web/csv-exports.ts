@@ -180,7 +180,10 @@ export const csvExports = {
     fetch: (q, filter, page, pageSize) => q("payables.list", { ...filter, page, pageSize }),
     columns: supplierInvoiceColumns(),
   }),
-  /** 売上・仕入の集計：行 × 月を縦に並べる（Excel のピボットテーブルで集計し直せる） */
+  /**
+   * 売上・仕入の集計：行 × 月を縦に並べる（Excel のピボットテーブルで集計し直せる）。
+   * 1ページは「行（販売先・仕入先・商品）pageSize 件分 × 月」なので、CSV の行は pageSize より多く返る
+   */
   reports: defineCsvExport({
     fileName: "売上・仕入の集計",
     fetch: (q, filter, page, pageSize) => q("reports.cells", { ...filter, page, pageSize }),

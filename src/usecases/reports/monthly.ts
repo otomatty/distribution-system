@@ -216,8 +216,10 @@ export interface ReportCell {
 }
 
 /**
- * CSV 用：行 × 月の金額を、画面の行の順・月の順に並べてページごとに返す（金額が 0 の月も含める）。
- * 期間の指定が正しくなければ、行のない結果を返す（画面で先に誤りを表示している）。
+ * CSV 用：行 × 月の金額を、画面の行の順・月の順に並べて返す（金額が 0 の月も含める）。
+ * ページは行（販売先・仕入先・商品）の単位で分け、1ページに pageSize 行分の「行 × 月」を返す
+ * （集計はページごとに計算し直すので、CSV の行ごとに分けると計算の回数が月の数だけ増える）。
+ * total は CSV の行の数（行 × 月）。期間の指定が正しくなければ、行のない結果を返す（画面で先に誤りを表示している）。
  */
 export const reportCells = defineQuery({
   permission: "view",
@@ -226,23 +228,16 @@ export const reportCells = defineQuery({
     const computed = compute(ctx, filter);
     if (!computed.ok) return { rows: [], total: 0, page, pageSize };
     const { allRows, period, measure, axis } = computed.value;
-    const count = period.months.length;
-    const start = (page - 1) * pageSize;
-    const end = Math.min(allRows.length * count, start + pageSize);
-    const rows: ReportCell[] = [];
-    for (let i = start; i < end; i += 1) {
-      const row = allRows[Math.floor(i / count)];
-      const month = period.months[i % count];
-      if (!row || month === undefined) break;
-      rows.push({
+    const rows = allRows.slice((page - 1) * pageSize, page * pageSize).flatMap((row) =>
+      period.months.map((month, i): ReportCell => ({
         measure,
         axis,
         code: row.code,
         name: row.name,
         month,
-        amount: row.amounts[i % count] ?? 0,
-      });
-    }
-    return { rows, total: allRows.length * count, page, pageSize };
+        amount: row.amounts[i] ?? 0,
+      })),
+    );
+    return { rows, total: allRows.length * period.months.length, page, pageSize };
   },
 });
