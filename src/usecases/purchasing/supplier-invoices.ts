@@ -18,7 +18,7 @@ import {
   monthsBetween,
   paymentDueDate,
 } from "../../domain/dates";
-import type { TaxSummary } from "../../domain/money";
+import { sumAmounts, type TaxSummary } from "../../domain/money";
 import {
   cancelSupplierInvoice,
   cancelSupplierPayment,
@@ -77,10 +77,6 @@ const signedYen = z
   .min(-9_999_999_999, "金額が大きすぎます")
   .max(9_999_999_999, "金額が大きすぎます");
 
-function sumAmounts(amounts: readonly { amount: number }[]): number {
-  return amounts.reduce((s, a) => s + a.amount, 0);
-}
-
 export interface InvoiceAmounts {
   readonly summary: TaxSummary;
   readonly computedAmount: number;
@@ -113,8 +109,8 @@ function computeAmounts(
   return ok({
     summary,
     computedAmount,
-    receiptsSubtotal: receiptLines.reduce((s, l) => s + l.amount, 0),
-    returnsSubtotal: returnLines.reduce((s, l) => s + l.amount, 0),
+    receiptsSubtotal: sumAmounts(receiptLines),
+    returnsSubtotal: sumAmounts(returnLines),
     shippingFee,
   });
 }

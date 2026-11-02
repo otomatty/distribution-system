@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import {
+  allocationTotal,
   applyAllocation,
   cancelPayment,
   invoiceOutstanding,
@@ -111,7 +112,7 @@ function allocate(
   for (const row of rows) {
     const invoice = open.get(row.invoiceId);
     if (!invoice) return conflict();
-    const next = applyAllocation(invoice, row.amount + row.adjustment);
+    const next = applyAllocation(invoice, allocationTotal(row));
     if (!next.ok) return next;
     // 画面の版番号は上で確かめ、同じトランザクションで読んだ版番号なので、ここで競合することはない
     ctx.stores.invoices.update(invoice.id, invoice.version, next.value, m);
@@ -235,7 +236,7 @@ function releaseOne(ctx: UsecaseContext, allocation: AllocationRecord): Result<v
   ctx.stores.customerPayments.cancelAllocation(allocation.id, allocation.version, m);
   const invoice = ctx.stores.invoices.get(allocation.invoiceId);
   if (!invoice) return err("not_found", "請求書が見つかりません");
-  const next = releaseAllocation(invoice, allocation.amount + allocation.adjustment);
+  const next = releaseAllocation(invoice, allocationTotal(allocation));
   if (!next.ok) return next;
   // 同じトランザクションで読んだ版番号なので、ここで競合することはない
   ctx.stores.invoices.update(invoice.id, invoice.version, next.value, m);
@@ -362,7 +363,8 @@ export const listOpenInvoices = defineQuery({
 
 export interface PaymentView {
   readonly payment: CustomerPaymentRecord;
-  readonly allocations: readonly AllocationRecord[];
+  /** 消込。settled は請求書に充てた額（入金から充てた額 + 差額） */
+  readonly allocations: readonly (AllocationRecord & { readonly settled: number })[];
   readonly allocatedAmount: number;
   readonly unallocated: number;
   /** 残りを消し込める請求書（取り消した入金・未消込残高のない入金では空） */
@@ -380,7 +382,7 @@ export const getCustomerPayment = defineQuery({
     const unallocated = payment.cancelled ? 0 : paymentUnallocated(payment.amount, amounts);
     return {
       payment,
-      allocations,
+      allocations: allocations.map((a) => Object.assign(a, { settled: allocationTotal(a) })),
       allocatedAmount: amounts.reduce((s, a) => s + a, 0),
       unallocated,
       openInvoices: payment.cancelled ? [] : openInvoices(ctx, payment.customerId),
