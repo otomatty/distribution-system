@@ -9,9 +9,10 @@
  * - 帳票は索引をすべて登録し、PDF は最近の数日分だけ作る（scale.renderDays）
  *
  * 手順を足すときは STEPS に追加する。請求の区分（請求書・締め処理・入金と消込・返品伝票・販売先廃棄）は、
- * 取引（operations）の後に billing の手順として同じ期間を1日ずつ進めて足す。
+ * 取引（operations）の後の billing の手順で、同じ期間を1日ずつ進めて作る（billing.ts）。
  */
 import { err, ok, type Result } from "../../domain/result";
+import { runBilling } from "./billing";
 import {
   allItemSpecs,
   allPartnerSpecs,
@@ -86,6 +87,14 @@ const STEPS: readonly SeedStep[] = [
     chunks: ({ scale }) => Math.ceil(scale.days / scale.daysPerChunk),
     run(session, chunk) {
       return ok(runOperations(session, chunk));
+    },
+  },
+  {
+    name: "billing",
+    label: "返品伝票・請求書・締め処理・返還請求書・入金と消込・販売先廃棄",
+    chunks: ({ scale }) => Math.ceil(scale.days / scale.daysPerChunk),
+    run(session, chunk) {
+      return ok(runBilling(session, loadWorld(session), chunk));
     },
   },
 ];

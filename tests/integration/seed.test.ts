@@ -99,6 +99,16 @@ function fingerprint() {
       .from(schema.stockLedger)
       .orderBy(schema.stockLedger.id)
       .all(),
+    customerInvoices: db
+      .select({
+        number: schema.invoices.number,
+        total: schema.invoices.total,
+        allocated: schema.invoices.allocated,
+        status: schema.invoices.status,
+      })
+      .from(schema.invoices)
+      .orderBy(schema.invoices.number)
+      .all(),
     invoices: db
       .select({
         number: schema.supplierInvoices.invoiceNumber,
@@ -263,6 +273,27 @@ describe("テストデータの投入（tiny）", () => {
         .filter((d) => d.status !== "pending").length,
       documents: db.select().from(schema.documents).all().length,
       shipments: db.select().from(schema.shipments).all().length,
+      customerInvoiceStatuses: new Set(
+        db
+          .select()
+          .from(schema.invoices)
+          .all()
+          .map((i) => i.status),
+      ),
+      closingInvoices: db
+        .select()
+        .from(schema.invoices)
+        .all()
+        .filter((i) => i.periodTo !== null).length,
+      returns: db.select().from(schema.salesReturns).all(),
+      returnLines: db.select().from(schema.salesReturnLines).all(),
+      creditNotes: db
+        .select()
+        .from(schema.salesReturns)
+        .all()
+        .filter((r) => r.creditNoteNumber !== null).length,
+      payments: db.select().from(schema.customerPayments).all().length,
+      disposals: db.select().from(schema.disposals).all().length,
     }));
     expect([...shape.poStatuses].toSorted()).toEqual(
       ["cancelled", "draft", "ordered", "paid", "received"].toSorted(),
@@ -279,6 +310,19 @@ describe("テストデータの投入（tiny）", () => {
     expect([...shape.roles].toSorted()).toEqual(["accounting", "admin", "purchasing", "sales"]);
     expect(shape.rendered).toBe(0);
     expect(shape.documents).toBeGreaterThan(shape.shipments);
+    // 請求：発送ごとと締め処理の請求書、入金済み・一部入金・未入金、返品伝票（在庫に戻す・廃棄）と返還請求書、販売先廃棄
+    expect([...shape.customerInvoiceStatuses].toSorted((a, b) => a.localeCompare(b))).toEqual([
+      "paid",
+      "partial",
+      "unpaid",
+    ]);
+    expect(shape.closingInvoices).toBeGreaterThan(0);
+    expect(shape.returns.length).toBeGreaterThan(0);
+    expect(new Set(shape.returnLines.map((l) => l.restock)).size).toBe(2);
+    expect(shape.returns.some((r) => r.invoiceId !== null)).toBe(true);
+    expect(shape.creditNotes).toBeGreaterThan(0);
+    expect(shape.payments).toBeGreaterThan(0);
+    expect(shape.disposals).toBeGreaterThan(0);
 
     // 済んだ回をやり直しても（応答が届かなかったときなど）、前回の結果を返すだけで二重に投入しない
     const before = await fingerprint();

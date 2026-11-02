@@ -4,6 +4,8 @@
  * - 受注：発送済みの受注には有効な発送が1件、それ以外は0件
  * - 発注：明細の入荷済みの数 = 有効な入荷の受入数 + 返品数、入荷済み・支払済みの発注は残りが0
  * - 仕入先請求書：支払済みの請求書には有効な支払が1件、支払済みの発注の入荷（受入のあるもの）はすべて支払済みの請求書に入っている
+ * - 請求：請求書の消込済みの額 = 有効な消込の合計、状態（未入金・一部入金・入金済み）が消込と合う、
+ *   請求した発送は有効な請求書に載っている、入金より多く消し込んでいない
  * - 採番：番号の最大 = 採番の次の番号 − 1
  */
 import { and, count, eq, isNotNull, sql } from "drizzle-orm";
@@ -155,6 +157,64 @@ function purchasingChecks(db: Db): SeedCheck[] {
   ];
 }
 
+function billingChecks(db: Db): SeedCheck[] {
+  const invoices = db
+    .select({
+      number: schema.invoices.number,
+      status: schema.invoices.status,
+      total: schema.invoices.total,
+      allocated: schema.invoices.allocated,
+      recorded: sql<number>`coalesce((SELECT sum(a.amount + a.adjustment) FROM payment_allocations a
+        WHERE a.invoice_id = invoices.id AND a.cancelled = 0), 0)`,
+    })
+    .from(schema.invoices)
+    .all();
+  const allocated = invoices
+    .filter((i) => i.allocated !== i.recorded)
+    .map((i) => `${i.number} 請求書 ${i.allocated} / 消込 ${i.recorded}`);
+  const expected = (i: (typeof invoices)[number]) =>
+    i.status === "cancelled"
+      ? "cancelled"
+      : i.allocated >= i.total
+        ? "paid"
+        : i.allocated === 0
+          ? "unpaid"
+          : "partial";
+  const status = invoices
+    .filter((i) => i.status !== expected(i))
+    .map((i) => `${i.number}（${i.status}）合計 ${i.total} / 消込 ${i.allocated}`);
+  const shipments = db
+    .select({ number: schema.shipments.deliveryNoteNumber })
+    .from(schema.shipments)
+    .leftJoin(schema.invoices, eq(schema.invoices.id, schema.shipments.invoiceId))
+    .where(
+      and(
+        isNotNull(schema.shipments.invoiceId),
+        sql`(${schema.invoices.id} IS NULL OR ${schema.invoices.status} = 'cancelled' OR ${schema.shipments.cancelled} = 1)`,
+      ),
+    )
+    .all()
+    .map((s) => `${s.number} が取消済み・存在しない請求書に載っている`);
+  const payments = db
+    .select({
+      id: schema.customerPayments.id,
+      amount: schema.customerPayments.amount,
+      used: sql<number>`coalesce((SELECT sum(a.amount) FROM payment_allocations a
+        WHERE a.payment_id = customer_payments.id AND a.cancelled = 0), 0)`,
+    })
+    .from(schema.customerPayments)
+    .where(eq(schema.customerPayments.cancelled, false))
+    .all()
+    .filter((p) => p.used > p.amount)
+    .map((p) => `入金 ${p.id} ${p.amount} に ${p.used} を消し込んでいる`);
+  return [
+    check("請求書の消込済みの額 = 消込の合計", allocated),
+    check("請求書の状態 = 消込の状態", status),
+    check("請求した発送は有効な請求書に載っている", shipments),
+    check("入金より多く消し込んでいない", payments),
+  ];
+}
+
 function sequenceChecks(db: Db): SeedCheck[] {
   const columns: readonly [DocumentKind, string[]][] = [
     [
@@ -213,6 +273,39 @@ function sequenceChecks(db: Db): SeedCheck[] {
         .all()
         .map((r) => r.n),
     ],
+    [
+      "invoice",
+      db
+        .select({ n: schema.invoices.number })
+        .from(schema.invoices)
+        .all()
+        .map((r) => r.n),
+    ],
+    [
+      "salesReturn",
+      db
+        .select({ n: schema.salesReturns.number })
+        .from(schema.salesReturns)
+        .all()
+        .map((r) => r.n),
+    ],
+    [
+      "creditNote",
+      db
+        .select({ n: schema.salesReturns.creditNoteNumber })
+        .from(schema.salesReturns)
+        .where(isNotNull(schema.salesReturns.creditNoteNumber))
+        .all()
+        .map((r) => r.n ?? ""),
+    ],
+    [
+      "disposal",
+      db
+        .select({ n: schema.disposals.number })
+        .from(schema.disposals)
+        .all()
+        .map((r) => r.n),
+    ],
   ];
   const next = new Map(
     db
@@ -251,6 +344,7 @@ export function verifySeed(db: Db): SeedVerifyResult {
     ...stockChecks(db),
     ...salesChecks(db),
     ...purchasingChecks(db),
+    ...billingChecks(db),
     ...sequenceChecks(db),
   ];
   const counts: Record<string, number> = {
@@ -319,6 +413,46 @@ export function verifySeed(db: Db): SeedVerifyResult {
         .where(eq(schema.purchaseOrders.status, "paid"))
         .get(),
     ),
+    請求書: n(db.select({ n: count() }).from(schema.invoices).get()),
+    締め処理の請求書: n(
+      db
+        .select({ n: count() })
+        .from(schema.invoices)
+        .where(isNotNull(schema.invoices.periodTo))
+        .get(),
+    ),
+    一部入金の請求書: n(
+      db
+        .select({ n: count() })
+        .from(schema.invoices)
+        .where(eq(schema.invoices.status, "partial"))
+        .get(),
+    ),
+    未入金の請求書: n(
+      db
+        .select({ n: count() })
+        .from(schema.invoices)
+        .where(eq(schema.invoices.status, "unpaid"))
+        .get(),
+    ),
+    入金: n(db.select({ n: count() }).from(schema.customerPayments).get()),
+    消込: n(db.select({ n: count() }).from(schema.paymentAllocations).get()),
+    振込手数料の差額: n(
+      db
+        .select({ n: count() })
+        .from(schema.paymentAllocations)
+        .where(eq(schema.paymentAllocations.adjustmentKind, "bank_fee"))
+        .get(),
+    ),
+    返品伝票: n(db.select({ n: count() }).from(schema.salesReturns).get()),
+    返還請求書: n(
+      db
+        .select({ n: count() })
+        .from(schema.salesReturns)
+        .where(isNotNull(schema.salesReturns.creditNoteNumber))
+        .get(),
+    ),
+    販売先廃棄: n(db.select({ n: count() }).from(schema.disposals).get()),
     分納の発注: n(
       db
         .select({ n: count() })
