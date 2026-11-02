@@ -36,7 +36,7 @@ src/
     core.ts          ユースケースの共通の型（操作者、時刻、採番、操作履歴、ジョブ、帳票）
     registry.ts      ユースケースの一覧（区分ごとの index.ts をまとめる）
     ports.ts         ポートの一覧（区分ごとの stores.ts をまとめる）
-    <区分>/          masters・stock・purchasing・sales・billing・platform
+    <区分>/          masters・stock・purchasing・sales・billing・platform・reports
       index.ts       この区分のユースケースの一覧（commands / queries）
       stores.ts      この区分のポート（インターフェース）
   infra/
@@ -72,6 +72,7 @@ docs/requirements.md 要件定義書の写し
 | sales      | 受注、引当、分割、発送リスト、発送と取消、納品書                                   |
 | billing    | 請求書、締め処理、返品伝票、返還請求書、入金と消込、売掛残高、販売先廃棄、集計     |
 | platform   | 帳票の PDF 化と送付、帳票の検索、処理状況、CSV、バックアップ、ダッシュボード       |
+| reports    | 売上・仕入の集計（月別に、販売先別・仕入先別・商品別）                             |
 
 依存の向きは次のとおりで、oxlint のルールで強制しています。違反する import を書かないでください。
 

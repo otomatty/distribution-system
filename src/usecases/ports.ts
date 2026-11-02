@@ -6,6 +6,7 @@ import type { BillingStores } from "./billing/stores";
 import type { MastersStores } from "./masters/stores";
 import type { PlatformStores } from "./platform/stores";
 import type { PurchasingStores } from "./purchasing/stores";
+import type { ReportsStores } from "./reports/stores";
 import type { SalesStores } from "./sales/stores";
 import type { StockStores } from "./stock/stores";
 
@@ -20,4 +21,5 @@ export type Stores = MastersStores &
   PurchasingStores &
   SalesStores &
   BillingStores &
-  PlatformStores;
+  PlatformStores &
+  ReportsStores;

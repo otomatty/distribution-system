@@ -1052,3 +1052,28 @@ details.card > summary {
     display: block;
   }
 }
+
+/* ---- 集計（/reports）：月の列を横にスクロールし、名前の列は固定する ---- */
+.report-table th.sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  min-width: 12rem;
+  font-weight: 600;
+}
+.report-table thead th.sticky-col,
+.report-table tfoot th.sticky-col {
+  background: var(--surface-2);
+}
+.report-table td.num {
+  white-space: nowrap;
+}
+.report-summary {
+  max-width: 32rem;
+}
+.report-basis ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}

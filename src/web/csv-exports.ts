@@ -26,6 +26,7 @@ import {
   PURCHASE_ORDER_STATUS_LABELS,
   SUPPLIER_INVOICE_STATUS_LABELS,
 } from "../domain/purchasing";
+import { REPORT_AXIS_LABELS, REPORT_MEASURE_LABELS } from "../domain/reports";
 import type { Result } from "../domain/result";
 import { SALES_ORDER_STATUS_LABELS } from "../domain/sales";
 import type { ActorRef } from "../infra/do/actor-ref";
@@ -178,6 +179,19 @@ export const csvExports = {
     fileName: "支払予定一覧",
     fetch: (q, filter, page, pageSize) => q("payables.list", { ...filter, page, pageSize }),
     columns: supplierInvoiceColumns(),
+  }),
+  /** 売上・仕入の集計：行 × 月を縦に並べる（Excel のピボットテーブルで集計し直せる） */
+  reports: defineCsvExport({
+    fileName: "売上・仕入の集計",
+    fetch: (q, filter, page, pageSize) => q("reports.cells", { ...filter, page, pageSize }),
+    columns: [
+      { header: "集計", value: (r) => REPORT_MEASURE_LABELS[r.measure] },
+      { header: "区分", value: (r) => REPORT_AXIS_LABELS[r.axis] },
+      { header: "コード", value: (r) => r.code },
+      { header: "名前", value: (r) => r.name },
+      { header: "月", value: (r) => r.month },
+      { header: "金額（税抜）", value: (r) => r.amount },
+    ],
   }),
 } satisfies Readonly<Record<string, CsvExport>>;
 
