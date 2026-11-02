@@ -21,7 +21,7 @@ import {
   type InvoiceReturnSource,
   type InvoiceShipmentSource,
 } from "../../domain/billing";
-import type { TaxSummary } from "../../domain/money";
+import { formatYen, sumAmounts, type TaxSummary } from "../../domain/money";
 import { err, ok, type Result } from "../../domain/result";
 import { cancelInvoice } from "../../domain/sales";
 import {
@@ -52,8 +52,24 @@ import {
   type SnapshotReturn,
 } from "./snapshots";
 
-/** 1つの販売先の1回の締め処理・1つの請求書で扱う発送・返品伝票の上限 */
-const MAX_SOURCES = 500;
+/**
+ * 1つの販売先の1回の締め処理（1枚の請求書）で扱う発送・返品伝票の上限。締め処理の画面（closingCandidates）と
+ * 締め処理（closeInvoices）は、どちらも上限 + 1 件まで読み、上限を超えたら同じ理由で締め処理しない
+ * （以前は画面が上限まで、締め処理が上限 + 1 件まで読んで比べたため、上限を超える販売先はいつまでも
+ * 「画面を開き直してください」になっていた）。発送・返品伝票の読み込みと請求書の明細の登録は、
+ * バインド変数の上限（100個）に収まるように書いてある（inList・insertBatches）ので、件数は画面の大きさで決めた
+ */
+export const CLOSING_MAX_SHIPMENTS = 2000;
+export const CLOSING_MAX_RETURNS = 500;
+
+/** 締め処理の対象の件数が上限を超えていれば、その理由 */
+function closingOverLimit(shipments: number, returns: number): string | null {
+  if (shipments > CLOSING_MAX_SHIPMENTS)
+    return `締め期間内の未請求の発送が ${formatYen(CLOSING_MAX_SHIPMENTS)} 件を超えているため、1枚の請求書にできません。管理者に連絡してください`;
+  if (returns > CLOSING_MAX_RETURNS)
+    return `締め日までの未請求の返品伝票が ${formatYen(CLOSING_MAX_RETURNS)} 件を超えているため、1枚の請求書にできません。管理者に連絡してください`;
+  return null;
+}
 
 function meta(ctx: Pick<UsecaseContext, "clock" | "actor">) {
   return { at: ctx.clock.now().toISOString(), by: ctx.actor.employeeId };
@@ -415,8 +431,8 @@ export const closeInvoices = defineCommand({
           customerId: idSchema,
           periodFrom: businessDate,
           periodTo: businessDate,
-          shipments: z.array(refInput).min(1).max(MAX_SOURCES),
-          returns: z.array(refInput).max(MAX_SOURCES).default([]),
+          shipments: z.array(refInput).min(1).max(CLOSING_MAX_SHIPMENTS),
+          returns: z.array(refInput).max(CLOSING_MAX_RETURNS).default([]),
         }),
       )
       .min(1, "締め処理する販売先を選んでください")
@@ -435,12 +451,14 @@ export const closeInvoices = defineCommand({
       if (!terms) return err("invalid_state", `${name}：締め日が設定されていない販売先です`);
       const shipments = ctx.stores.shipments.unbilled(
         { customerId: t.customerId, shippedFrom: t.periodFrom, shippedTo: t.periodTo },
-        MAX_SOURCES + 1,
+        CLOSING_MAX_SHIPMENTS + 1,
       );
       const returns = ctx.stores.salesReturns.unbilled(
         { customerId: t.customerId, returnedTo: t.periodTo },
-        MAX_SOURCES + 1,
+        CLOSING_MAX_RETURNS + 1,
       );
+      const overLimit = closingOverLimit(shipments.length, returns.length);
+      if (overLimit) return err("validation", `${name}：${overLimit}`);
       const checked = validateClosing({
         closingDay: terms.closingDay,
         periodFrom: t.periodFrom,
@@ -545,15 +563,13 @@ export const reissueInvoice = defineCommand({
     if (!customer.ok) return customer;
     const cancelled = cancelExisting(ctx, invoice, v, reason, "cancel_for_reissue");
     if (!cancelled.ok) return cancelled;
-    const ids = new Set(cancelled.value.shipmentIds);
-    const dates = invoice.shipments.map((s) => s.shippedOn).toSorted();
-    const shipments = ctx.stores.shipments
-      .unbilled(
-        { customerId: invoice.customerId, shippedFrom: dates[0], shippedTo: dates.at(-1) },
-        2000,
-      )
-      .filter((s) => ids.has(s.shipmentId));
-    if (shipments.length !== ids.size || shipments.length === 0) return conflict();
+    const ids = [...new Set(cancelled.value.shipmentIds)];
+    // 元の請求書の発送だけを読む（同じ期間のほかの未請求の発送が多くても、件数の上限で漏れないように）
+    const shipments = ctx.stores.shipments.unbilled(
+      { customerId: invoice.customerId, shipmentIds: ids },
+      ids.length,
+    );
+    if (shipments.length !== ids.length || shipments.length === 0) return conflict();
     const returns = ctx.stores.salesReturns
       .getMany(cancelled.value.returnIds)
       .toSorted(
@@ -796,8 +812,10 @@ export interface ClosingCandidate {
     readonly number: string;
   }[];
   readonly summary: TaxSummary | null;
-  /** 請求書にできない理由（合計がマイナス、税率の設定がないなど） */
+  /** 請求書にできない理由（合計がマイナス、税率の設定がない、件数が上限を超えるなど） */
   readonly error: string | null;
+  /** 締め処理できる（締め日を迎えていて、請求書にできない理由がない） */
+  readonly issuable: boolean;
 }
 
 function closingCandidates(
@@ -811,13 +829,14 @@ function closingCandidates(
     const target = closingTarget(c.oldestUnbilledOn, c.closingDay, today);
     const shipments = ctx.stores.shipments.unbilled(
       { customerId: c.id, shippedFrom: target.from, shippedTo: target.to },
-      MAX_SOURCES,
+      CLOSING_MAX_SHIPMENTS + 1,
     );
     const returns = ctx.stores.salesReturns.unbilled(
       { customerId: c.id, returnedTo: target.to },
-      MAX_SOURCES,
+      CLOSING_MAX_RETURNS + 1,
     );
-    const plan = preview(ctx, shipments, returns);
+    const overLimit = closingOverLimit(shipments.length, returns.length);
+    const plan = overLimit ? err("validation", overLimit) : preview(ctx, shipments, returns);
     out.push({
       customerId: c.id,
       customerName: c.name,
@@ -841,22 +860,46 @@ function closingCandidates(
       })),
       summary: plan.ok ? plan.value.summary : null,
       error: plan.ok ? null : plan.error.message,
+      issuable: target.ready && plan.ok,
     });
   }
   return out.toSorted((a, b) => a.periodTo.localeCompare(b.periodTo));
 }
 
+export interface ClosingSelection {
+  /** 選んだ販売先のうち、締め処理できるもの */
+  readonly targets: readonly ClosingCandidate[];
+  /** その請求額（税込）の合計 */
+  readonly total: number;
+}
+
 /**
  * 締め処理の対象：締め日のある販売先ごとに、最も古い未請求の発送が属する締め期間と、
- * その期間の未請求の発送・締め日までの未請求の返品伝票、請求書にしたときの金額。締め日の早い順
+ * その期間の未請求の発送・締め日までの未請求の返品伝票、請求書にしたときの金額。締め日の早い順。
+ * selected（締め処理の確認の画面で選んだ販売先）を指定すると、そのうち締め処理できるものと請求額の合計も返す
  */
 export const listClosingCandidates = defineQuery({
   permission: "view",
-  input: z.object({ customerId: z.string().max(64).optional() }),
-  run(ctx, { customerId }): { today: string; candidates: ClosingCandidate[] } {
+  input: z.object({
+    customerId: z.string().max(64).optional(),
+    selected: z.array(idSchema).max(200).optional(),
+  }),
+  run(
+    ctx,
+    { customerId, selected },
+  ): { today: string; candidates: ClosingCandidate[]; selection: ClosingSelection | null } {
+    const candidates = closingCandidates(ctx, customerId || undefined);
+    const chosen = selected ? new Set(selected) : null;
+    const targets = chosen ? candidates.filter((c) => c.issuable && chosen.has(c.customerId)) : [];
     return {
       today: ctx.clock.today(),
-      candidates: closingCandidates(ctx, customerId || undefined),
+      candidates,
+      selection: chosen
+        ? {
+            targets,
+            total: sumAmounts(targets.map((t) => ({ amount: t.summary?.total ?? 0 }))),
+          }
+        : null,
     };
   },
 });

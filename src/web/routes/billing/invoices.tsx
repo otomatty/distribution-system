@@ -11,6 +11,7 @@ import type { DomainError } from "../../../domain/result";
 import { INVOICE_STATUS_LABELS, ALLOCATION_ADJUSTMENT_LABELS } from "../../../domain/sales";
 import type {
   ClosingCandidate,
+  ClosingSelection,
   InvoiceDraft,
   InvoiceView,
   IssuedInvoice,
@@ -645,7 +646,7 @@ function ClosingTable(props: { candidates: readonly ClosingCandidate[]; canManag
         </thead>
         <tbody>
           {props.candidates.map((c) => {
-            const issuable = c.ready && c.error === null;
+            const issuable = c.issuable;
             return (
               <tr class={c.error ? "row-warning" : !c.ready ? "row-muted" : undefined}>
                 <td>
@@ -737,12 +738,12 @@ function ClosingResults(props: {
 }
 
 function ClosingConfirm(props: {
-  targets: readonly ClosingCandidate[];
+  selection: ClosingSelection;
   issuedOn: string;
   error?: DomainError | undefined;
 }) {
-  const n = props.targets.length;
-  const total = props.targets.reduce((s, t) => s + (t.summary?.total ?? 0), 0);
+  const { targets, total } = props.selection;
+  const n = targets.length;
   return (
     <div class="card confirm-panel" role="region" aria-label="締め処理の確認">
       <h2>締め処理の確認</h2>
@@ -764,7 +765,7 @@ function ClosingConfirm(props: {
         >
           <FormKey />
           <input type="hidden" name="issuedOn" value={props.issuedOn} />
-          {props.targets.map((t) => (
+          {targets.map((t) => (
             <>
               <input type="hidden" name="customerId" value={t.customerId} />
               <input
@@ -790,7 +791,7 @@ function ClosingConfirm(props: {
             ）。発行した請求書は、取消と再発行でしか直せません。
           </p>
           <ul class="small">
-            {props.targets.map((t) => (
+            {targets.map((t) => (
               <li>
                 {t.customerName}：{t.periodFrom}〜{t.periodTo}、発送 {t.shipments.length} 件
                 {t.returns.length > 0 ? `・返品 ${t.returns.length} 件` : ""}、{candidateTotal(t)}
@@ -855,6 +856,12 @@ async function closingCandidates(c: Context<AppEnv>, customerId?: string) {
   return (await runQuery(c, "invoices.closing", { customerId })).candidates;
 }
 
+/** 締め処理の候補と、選んだ販売先のうち締め処理できるもの・請求額の合計 */
+async function closingSelection(c: Context<AppEnv>, selected: readonly string[]) {
+  const r = await runQuery(c, "invoices.closing", { selected: [...selected] });
+  return { candidates: r.candidates, selection: r.selection ?? { targets: [], total: 0 } };
+}
+
 invoiceRoutes.get("/closing", async (c) => {
   const customerId = c.req.query("customerId") || undefined;
   const candidates = await closingCandidates(c, customerId);
@@ -879,12 +886,8 @@ invoiceRoutes.get("/closing", async (c) => {
 
 invoiceRoutes.post("/closing/confirm", async (c) => {
   const form = await readForm(c);
-  const selected = new Set(strs(form, "customerId"));
-  const candidates = await closingCandidates(c);
-  const targets = candidates.filter(
-    (t) => selected.has(t.customerId) && t.ready && t.error === null,
-  );
-  const panel = <ClosingConfirm targets={targets} issuedOn={str(form, "issuedOn")} />;
+  const { selection } = await closingSelection(c, strs(form, "customerId"));
+  const panel = <ClosingConfirm selection={selection} issuedOn={str(form, "issuedOn")} />;
   if (isHtmx(c)) return c.html(panel);
   return c.html(
     <Layout title="締め処理" actor={c.get("actor")} current={paths.invoices()}>
@@ -916,17 +919,15 @@ invoiceRoutes.post("/closing/run", async (c) => {
     { issuedOn: str(form, "issuedOn"), targets },
     formKey(form),
   );
-  const candidates = await closingCandidates(c);
+  const { candidates, selection } = await closingSelection(
+    c,
+    targets.map((t) => t.customerId),
+  );
   const canManage = hasPermission(c.get("actor").roles, "invoices.manage");
-  const selected = new Set(targets.map((t) => t.customerId));
   const panel = result.ok ? (
     <ClosedPanel issued={result.value.issued} />
   ) : (
-    <ClosingConfirm
-      targets={candidates.filter((t) => selected.has(t.customerId) && t.ready && t.error === null)}
-      issuedOn={str(form, "issuedOn")}
-      error={result.error}
-    />
+    <ClosingConfirm selection={selection} issuedOn={str(form, "issuedOn")} error={result.error} />
   );
   const body = <ClosingResults candidates={candidates} canManage={canManage} panel={panel} />;
   if (isHtmx(c)) return c.html(body);

@@ -137,6 +137,7 @@ export function shipmentStore(db: Db): ShipmentStore {
       if (filter.customerId) conds.push(eq(salesOrders.customerId, filter.customerId));
       if (filter.shippedFrom) conds.push(gte(shipments.shippedOn, filter.shippedFrom));
       if (filter.shippedTo) conds.push(lte(shipments.shippedOn, filter.shippedTo));
+      if (filter.shipmentIds) conds.push(inList(shipments.id, filter.shipmentIds));
       const heads = db
         .select({
           shipmentId: shipments.id,
