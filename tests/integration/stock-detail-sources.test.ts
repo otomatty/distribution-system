@@ -1,6 +1,6 @@
 /**
  * 在庫明細（/stock/:itemId）の発生元の欄（要件定義書 3.4）。入荷・仕入返品・発送・在庫操作のどの行にも、
- * 発生元の伝票の番号とその画面へのリンクを出す。
+ * 発生元の伝票の番号とその画面へのリンクを出す（返品伝票は受注の画面）。
  */
 import { describe, expect, it } from "vitest";
 
@@ -10,7 +10,7 @@ import { createConfirmedOrder, orderView, receive } from "./purchasing-fixtures"
 import { createCustomer, createOrder, getOrder, today } from "./sales-fixtures";
 
 describe("在庫明細の発生元", () => {
-  it("入荷 RC-・仕入返品 PR-・発送 DN-・在庫操作 SOP- の番号と、発注・受注・在庫操作の画面へのリンクを出す", async () => {
+  it("入荷 RC-・仕入返品 PR-・発送 DN-・返品伝票 RT-・在庫操作 SOP- の番号と、発注・受注・在庫操作の画面へのリンクを出す", async () => {
     const supplierId = await createSupplier();
     const locationId = await createLocation();
     const item = await createItem(supplierId);
@@ -43,6 +43,14 @@ describe("在庫明細の発生元", () => {
       shippedOn: today(),
     });
 
+    const soLine = (await getOrder(so.id)).order.lines[0]?.id ?? "";
+    const salesReturn = await systemCommand("salesReturns.create", {
+      salesOrderId: so.id,
+      returnedOn: today(),
+      memo: "",
+      lines: [{ salesOrderLineId: soLine, quantity: 1, restock: true, locationId }],
+    });
+
     const user = await createEmployee(["purchasing"]);
     const html = await (await as(user).get(`/stock/${item.id}?from=2026-01-01`)).text();
     const receiptView = (await orderView(po.id)).receipts[0];
@@ -57,5 +65,6 @@ describe("在庫明細の発生元", () => {
     expect(html).toContain(
       `<a href="/stock/operations/${operationId}">在庫操作 ${operation?.number}</a>`,
     );
+    expect(html).toContain(`<a href="/sales-orders/${so.id}">返品伝票 ${salesReturn.number}</a>`);
   });
 });

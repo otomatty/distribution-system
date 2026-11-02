@@ -5,7 +5,7 @@ import { registerItem, registerLocation, registerSupplier } from "./masters-help
 import { createAndConfirmOrder } from "./purchasing-helpers";
 import { registerCustomer, registerSalesOrder } from "./sales-helpers";
 
-test("発注 → 入荷 → 在庫に見える → 警告のない引当で受注 → 発送 → 納品書が帳票の検索に出る", async ({
+test("発注 → 入荷 → 在庫に見える → 警告のない引当で受注 → 発送 → 納品書が帳票の検索に出る → 請求書を発行する", async ({
   page,
 }) => {
   const violations: string[] = [];
@@ -77,6 +77,23 @@ test("発注 → 入荷 → 在庫に見える → 警告のない引当で受�
   const docRow = page.locator("#results").getByRole("row", { name: new RegExp(note) });
   await expect(docRow).toContainText("納品書");
   await expect(docRow).toContainText(customer);
+
+  // 続けて、受注詳細の未請求の発送から請求書を発行する（請求の画面を使う）
+  await page.goto("/sales-orders");
+  await page.getByRole("link", { name: so }).click();
+  await page.getByRole("link", { name: "未請求", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "請求書の発行（発送ごと）" })).toBeVisible();
+  const due = new Date(Date.now() + 9 * 3600_000 + 30 * 86_400_000).toISOString().slice(0, 10);
+  await page.getByLabel("支払期限").fill(due);
+  await page.getByRole("button", { name: "請求書を発行する" }).click();
+  const invoiceHeading = page.getByRole("heading", { name: /^請求書 INV-\d{4}-\d{6}$/ });
+  await expect(invoiceHeading).toBeVisible();
+  const invoice = ((await invoiceHeading.textContent()) ?? "").replace("請求書 ", "");
+  await page.goto("/documents");
+  await page.getByLabel("番号").fill(invoice);
+  await expect(
+    page.locator("#results").getByRole("row", { name: new RegExp(invoice) }),
+  ).toContainText(customer);
 
   expect(violations).toEqual([]);
 });
