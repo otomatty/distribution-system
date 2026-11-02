@@ -6,6 +6,7 @@ import { normalizeRegistrationNumber } from "../../domain/validation";
 import { defineCommand, defineQuery, STALE_VERSION_MESSAGE } from "../core";
 import { businessDate, optionalText, requiredText, version } from "../schemas";
 import { emailInput, faxInput, phoneInput, postalCodeInput } from "./contact";
+import type { TaxRateRecord } from "./settings.port";
 
 export const updateCompanySettings = defineCommand({
   permission: "settings.manage",
@@ -86,9 +87,18 @@ export const getSettings = defineQuery({
   permission: "view",
   input: z.object({}),
   run(ctx) {
-    return {
-      company: ctx.stores.settings.getCompany(),
-      taxRates: ctx.stores.settings.listTaxRates(),
-    };
+    const taxRates = ctx.stores.settings.listTaxRates();
+    const today = ctx.clock.today();
+    // 税区分ごとに、今日の時点で適用されている税率（適用開始日が今日以前で最も新しいもの）
+    const activeTaxRateIds = (["standard", "reduced"] as const).flatMap((category) => {
+      const current = taxRates
+        .filter((r) => r.category === category && r.effectiveFrom <= today)
+        .reduce<TaxRateRecord | undefined>(
+          (best, r) => (!best || r.effectiveFrom > best.effectiveFrom ? r : best),
+          undefined,
+        );
+      return current ? [current.id] : [];
+    });
+    return { company: ctx.stores.settings.getCompany(), taxRates, activeTaxRateIds };
   },
 });

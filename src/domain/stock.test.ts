@@ -4,11 +4,15 @@ import { describe, expect, it } from "vitest";
 import { unwrapErr } from "../../tests/support/result";
 import {
   allocationDelta,
+  applyAllocationChanges,
   applyMovements,
   available,
   balanceKey,
   isBelowReorderPoint,
+  isStockReason,
+  isStockSourceType,
   netMovements,
+  openEntries,
   parseShortages,
   stockOperationMovements,
   type StockBalance,
@@ -211,5 +215,118 @@ describe("stockOperationMovements", () => {
         lines: [{ itemId: "a", quantity: 1.5 }],
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("調整の向き", () => {
+  it("サンプル・処分はマイナス、初期在庫はプラスだけ", () => {
+    const base = { kind: "adjustment" as const, locationId: "x" };
+    expect(
+      stockOperationMovements({ ...base, reason: "sample", lines: [{ itemId: "a", quantity: 2 }] })
+        .ok,
+    ).toBe(false);
+    expect(
+      stockOperationMovements({
+        ...base,
+        reason: "disposal",
+        lines: [{ itemId: "a", quantity: -2 }],
+      }).ok,
+    ).toBe(true);
+    expect(
+      stockOperationMovements({
+        ...base,
+        reason: "initial",
+        lines: [{ itemId: "a", quantity: -1 }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      stockOperationMovements({
+        ...base,
+        reason: "adjustment",
+        lines: [
+          { itemId: "a", quantity: -1 },
+          { itemId: "b", quantity: 4 },
+        ],
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+describe("applyAllocationChanges", () => {
+  it("引当数は現在庫を超えてもよいが、0 未満にはならない", () => {
+    expect(
+      applyAllocationChanges([{ itemId: "a", locationId: "x", quantity: 5 }], () => ({
+        onHand: 1,
+        allocated: 0,
+      })),
+    ).toEqual({ ok: true, value: [{ itemId: "a", locationId: "x", allocated: 5 }] });
+    const error = unwrapErr(
+      applyAllocationChanges([{ itemId: "a", locationId: "x", quantity: -3 }], () => ({
+        onHand: 1,
+        allocated: 2,
+      })),
+    );
+    expect(error.code).toBe("invalid_state");
+    expect(parseShortages(error.details)).toEqual([{ itemId: "a", locationId: "x", shortBy: 1 }]);
+  });
+  it("現在庫・引当数は 0 以上で、出荷可能数 = 現在庫 − 引当数（性質）", () => {
+    const change = fc.record({
+      itemId: fc.constantFrom("a", "b"),
+      locationId: fc.constantFrom("x", "y"),
+      quantity: fc.integer({ min: -6, max: 6 }),
+    });
+    fc.assert(
+      fc.property(
+        fc.array(fc.tuple(fc.boolean(), fc.array(change, { maxLength: 4 })), { maxLength: 25 }),
+        (steps) => {
+          const balances = new Map<string, StockBalance>();
+          const get = (i: string, l: string) => balances.get(balanceKey(i, l)) ?? zero;
+          for (const [isAllocation, batch] of steps) {
+            if (isAllocation) {
+              const r = applyAllocationChanges(batch, get);
+              if (!r.ok) continue;
+              for (const b of r.value) {
+                const current = get(b.itemId, b.locationId);
+                balances.set(balanceKey(b.itemId, b.locationId), {
+                  ...current,
+                  allocated: b.allocated,
+                });
+              }
+            } else {
+              const r = applyMovements(batch, get);
+              if (!r.ok) continue;
+              for (const b of r.value) {
+                const current = get(b.itemId, b.locationId);
+                balances.set(balanceKey(b.itemId, b.locationId), { ...current, onHand: b.onHand });
+              }
+            }
+          }
+          for (const b of balances.values()) {
+            expect(b.onHand).toBeGreaterThanOrEqual(0);
+            expect(b.allocated).toBeGreaterThanOrEqual(0);
+            expect(available(b)).toBe(b.onHand - b.allocated);
+          }
+        },
+      ),
+      { seed: 20261102 },
+    );
+  });
+});
+
+describe("openEntries", () => {
+  it("打ち消し済みの行と打ち消しの行を除く", () => {
+    const entries = [
+      { id: "1", reversesId: null },
+      { id: "2", reversesId: null },
+      { id: "3", reversesId: "1" },
+    ];
+    expect(openEntries(entries)).toEqual([{ id: "2", reversesId: null }]);
+    expect(openEntries([])).toEqual([]);
+  });
+  it("理由と発生元の判定", () => {
+    expect(isStockReason("receipt")).toBe(true);
+    expect(isStockReason("unknown")).toBe(false);
+    expect(isStockSourceType("shipment")).toBe(true);
+    expect(isStockSourceType("toString")).toBe(false);
   });
 });

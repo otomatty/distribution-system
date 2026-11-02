@@ -18,6 +18,25 @@ export const STOCK_REASONS = {
 
 export type StockReason = keyof typeof STOCK_REASONS;
 
+/** 台帳の行の発生元（どの伝票で在庫が動いたか） */
+export const STOCK_SOURCE_LABELS = {
+  receipt: "入荷",
+  purchase_return: "仕入返品",
+  shipment: "発送",
+  sales_return: "返品伝票",
+  stock_operation: "在庫操作",
+} as const;
+
+export type StockSourceType = keyof typeof STOCK_SOURCE_LABELS;
+
+export function isStockReason(value: string): value is StockReason {
+  return Object.hasOwn(STOCK_REASONS, value);
+}
+
+export function isStockSourceType(value: string): value is StockSourceType {
+  return Object.hasOwn(STOCK_SOURCE_LABELS, value);
+}
+
 /** 在庫の増減1件（台帳の1行に対応）。quantity は符号つき。 */
 export interface StockMovement {
   readonly itemId: string;
@@ -86,6 +105,45 @@ export function applyMovements(
   return ok(results);
 }
 
+/**
+ * 引当数の増減を適用した後の引当数を計算する。
+ * 引当数は 0 未満にならない（なる組があれば invalid_state）。現在庫を超える引当は許す
+ * （受注は出荷可能数を超えても警告だけで登録できる：要件定義書 3.8）。
+ */
+export function applyAllocationChanges(
+  changes: readonly StockMovement[],
+  getBalance: (itemId: string, locationId: string) => StockBalance,
+): Result<{ itemId: string; locationId: string; allocated: number }[]> {
+  const results: { itemId: string; locationId: string; allocated: number }[] = [];
+  const negatives: Shortage[] = [];
+  for (const c of netMovements(changes)) {
+    const allocated = getBalance(c.itemId, c.locationId).allocated + c.quantity;
+    if (allocated < 0)
+      negatives.push({ itemId: c.itemId, locationId: c.locationId, shortBy: -allocated });
+    results.push({ itemId: c.itemId, locationId: c.locationId, allocated });
+  }
+  if (negatives.length > 0) {
+    return err("invalid_state", "引当数が0未満になるため処理できません", {
+      details: negatives.map((s) => `${s.itemId}\u0000${s.locationId}\u0000${s.shortBy}`),
+    });
+  }
+  return ok(results);
+}
+
+export interface LedgerEntryRef {
+  readonly id: string;
+  readonly reversesId: string | null;
+}
+
+/**
+ * 打ち消しの対象になる行（まだ打ち消されていない元の行）を返す。
+ * 打ち消しの行そのものと、すでに打ち消された行は除く。
+ */
+export function openEntries<T extends LedgerEntryRef>(entries: readonly T[]): T[] {
+  const reversed = new Set(entries.flatMap((e) => (e.reversesId ? [e.reversesId] : [])));
+  return entries.filter((e) => e.reversesId === null && !reversed.has(e.id));
+}
+
 /** insufficient_stock の details を Shortage に戻す。 */
 export function parseShortages(details: readonly string[] | undefined): Shortage[] {
   return (details ?? []).flatMap((d) => {
@@ -140,7 +198,8 @@ export const STOCK_OPERATION_LABELS: Readonly<Record<StockOperationKind, string>
   stocktake: "棚卸",
 };
 
-export type AdjustmentReason = "adjustment" | "sample" | "disposal" | "initial";
+export const ADJUSTMENT_REASONS = ["adjustment", "sample", "disposal", "initial"] as const;
+export type AdjustmentReason = (typeof ADJUSTMENT_REASONS)[number];
 
 export interface StockOperationLineInput {
   readonly itemId: string;
@@ -182,6 +241,14 @@ export function stockOperationMovements(
     case "adjustment": {
       if (op.lines.some((l) => l.quantity === 0))
         return err("validation", "数量に0は指定できません");
+      // サンプル・処分は在庫から出すだけ、初期在庫は入れるだけ。逆向きの誤りは「調整」で直す
+      if (
+        (op.reason === "sample" || op.reason === "disposal") &&
+        op.lines.some((l) => l.quantity > 0)
+      )
+        return err("validation", "サンプル・処分は減らす数をマイナスで入力してください");
+      if (op.reason === "initial" && op.lines.some((l) => l.quantity < 0))
+        return err("validation", "初期在庫は増やす数をプラスで入力してください");
       return ok(
         op.lines.map((l) => ({
           itemId: l.itemId,
