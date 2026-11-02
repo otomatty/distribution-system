@@ -29,6 +29,7 @@ import {
 } from "../../views/components";
 import { jaDate, qty } from "../../views/format";
 import { HtmlDocument, Layout } from "../../views/layout";
+import { OfflineSnapshot } from "../../views/offline-snapshot";
 
 export const shippingRoutes = new Hono<AppEnv>();
 
@@ -345,6 +346,7 @@ function Results(props: {
   const { list } = props;
   return (
     <section id="shipping-results">
+      <OfflineSnapshot scope={paths.shipping()} loadedAt={new Date()} />
       {props.error ? <Alert kind="error">{props.error}</Alert> : null}
       {props.panel ?? null}
       {!props.locationId ? (

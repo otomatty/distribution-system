@@ -1076,3 +1076,26 @@ details.card > summary {
   margin: 0;
   padding-left: 1.2rem;
 }
+
+/* ---- オフライン閲覧（発送リスト・入荷予定一覧。public/sw.js が残した画面を表示するときだけ注意を出す） ---- */
+.offline-snapshot {
+  margin: 0 0 0.75rem;
+}
+.offline-snapshot .snapshot-time {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.offline-snapshot .snapshot-offline {
+  display: none;
+  margin: 0.4rem 0 0;
+  padding: 0.7rem 1rem;
+  border: 1px solid #ecd297;
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 600;
+}
+.offline-snapshot[data-offline-snapshot="cached"] .snapshot-offline {
+  display: block;
+}

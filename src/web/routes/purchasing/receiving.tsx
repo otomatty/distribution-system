@@ -32,6 +32,7 @@ import {
 } from "../../views/components";
 import { qty } from "../../views/format";
 import { Layout } from "../../views/layout";
+import { OfflineSnapshot } from "../../views/offline-snapshot";
 import { OrderStatusBadge, ReceiptCancelForm } from "../../views/purchasing";
 import { LineQuantity } from "../../views/stock";
 
@@ -85,6 +86,7 @@ receivingRoutes.get("/", async (c) => {
         </noscript>
       </form>
       <section id="results">
+        <OfflineSnapshot scope={paths.receiving()} loadedAt={new Date()} />
         {groups.length === 0 ? (
           <EmptyState message="入荷予定はありません" />
         ) : (

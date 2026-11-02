@@ -169,7 +169,7 @@
       }
     },
     {
-      "files": ["public/assets/*.js"],
+      "files": ["public/assets/*.js", "public/sw.js"],
       "rules": {
         "typescript/no-unsafe-assignment": "off",
         "typescript/no-unsafe-member-access": "off",
