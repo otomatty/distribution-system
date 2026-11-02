@@ -67,6 +67,10 @@
         ],
       },
       "triggers": { "crons": ["0 18 * * *"] },
+      // 帳票の PDF 化（Browser Rendering）。開発とテストでは付けず、HTML のまま保存する
+      "browser": { "binding": "BROWSER" },
+      // 帳票のメール送付（Cloudflare Email Service）。開発とテストでは付けず、ログに出力する
+      "send_email": [{ "name": "EMAIL" }],
     },
     "production": {
       "vars": {
@@ -95,6 +99,10 @@
         ],
       },
       "triggers": { "crons": ["0 18 * * *"] },
+      // 帳票の PDF 化（Browser Rendering）。開発とテストでは付けず、HTML のまま保存する
+      "browser": { "binding": "BROWSER" },
+      // 帳票のメール送付（Cloudflare Email Service）。開発とテストでは付けず、ログに出力する
+      "send_email": [{ "name": "EMAIL" }],
     },
   },
 }

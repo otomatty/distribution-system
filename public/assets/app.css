@@ -314,6 +314,17 @@ h3 {
 .stat.attention .value {
   color: var(--danger);
 }
+.stat.attention {
+  border-color: #f1bdb7;
+  background: var(--danger-soft);
+}
+.stat .note {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.dashboard-section > h2 {
+  margin-top: 1rem;
+}
 
 /* ---- ボタン ---- */
 .btn {
@@ -689,6 +700,29 @@ body.touch .table th {
   display: block;
   height: 100%;
   background: var(--primary);
+}
+/* 進み具合（<progress>。CSP で style 属性を使えないため、幅は value で表す） */
+progress.progress-bar {
+  appearance: none;
+  width: 100%;
+  min-width: 8rem;
+  height: 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+progress.progress-bar::-webkit-progress-bar {
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+progress.progress-bar::-webkit-progress-value {
+  background: var(--primary);
+  border-radius: 999px;
+}
+progress.progress-bar::-moz-progress-bar {
+  background: var(--primary);
+  border-radius: 999px;
 }
 
 @media print {

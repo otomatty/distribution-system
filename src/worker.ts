@@ -1,5 +1,5 @@
 /** Worker のエントリーポイント（画面・API、Queues、Cron） */
-import { errorFields, log } from "./infra/observability/log";
+import { reportCritical } from "./infra/observability/notify";
 import { createApp } from "./web/app";
 
 export { BusinessDb } from "./infra/do/business-db";
@@ -20,7 +20,8 @@ export default {
       const { runScheduled } = await import("./infra/queue/scheduled");
       await runScheduled(controller.cron, env);
     } catch (e) {
-      log("error", "scheduled task failed", { cron: controller.cron, ...errorFields(e) });
+      // 定期処理の失敗は管理者にメールで知らせる（同じエラーは1時間に1回まで）
+      await reportCritical(env, "scheduled task failed", e, { cron: controller.cron });
       throw e;
     }
   },

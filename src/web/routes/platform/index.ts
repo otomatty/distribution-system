@@ -2,5 +2,10 @@
 import { Hono } from "hono";
 
 import type { AppEnv } from "../../types";
+import { documentRoutes } from "./documents";
+import { jobRoutes } from "./jobs";
 
 export const platformRoutes = new Hono<AppEnv>();
+
+platformRoutes.route("/documents", documentRoutes);
+platformRoutes.route("/jobs", jobRoutes);

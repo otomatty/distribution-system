@@ -17,6 +17,11 @@ export default defineConfig({
           GOOGLE_CLIENT_SECRET: "test-client-secret",
           TEST_AUTH_MIGRATIONS: authMigrations,
         },
+        // 非同期処理（Queues）はテストから明示的に動かす（tests/integration/jobs.ts の runJobs）。
+        // 自動で配られないよう、まとめる件数と待ち時間を最大にする
+        queueConsumers: {
+          "distribution-jobs-dev": { maxBatchSize: 100, maxBatchTimeout: 60, maxRetries: 3 },
+        },
       },
     }),
   ],

@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 
-import { errorFields, log } from "../infra/observability/log";
+import { reportCritical } from "../infra/observability/notify";
 import { authFor } from "./auth";
 import { requireActor, securityHeaders } from "./middleware";
 import { authRoutes } from "./routes/auth";
@@ -48,7 +48,17 @@ export function createApp(): Hono<AppEnv> {
     if (error instanceof HTTPException) return error.getResponse();
     if (error instanceof QueryError && error.code === "forbidden")
       return c.text(error.message, 403);
-    log("error", "unhandled error", { path: c.req.path, ...errorFields(error) });
+    // 想定外のエラーはログに残し、管理者にメールで知らせる（同じエラーは1時間に1回まで）
+    const report = reportCritical(c.env, "unhandled error", error, {
+      method: c.req.method,
+      path: c.req.path,
+    });
+    try {
+      c.executionCtx.waitUntil(report);
+    } catch {
+      // 実行コンテキストがない場合（テストから直接呼んだときなど）は待たずに続ける
+      void report;
+    }
     return c.text("エラーが発生しました。時間をおいてもう一度お試しください。", 500);
   });
   return app;

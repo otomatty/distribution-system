@@ -51,14 +51,19 @@ export function hasPermission(actorRoles: readonly string[], permission: Permiss
   return can(actorRoles.filter(isRole), permission);
 }
 
-/** 基本的なセキュリティヘッダー */
+/**
+ * 基本的なセキュリティヘッダー。
+ * CSP は画面の既定のもの。帳票の HTML（埋め込みの <style> を使う）など、ルートが CSP を決めた応答はそれを残す
+ */
 export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "same-origin");
   c.header("X-Frame-Options", "DENY");
-  c.header(
-    "Content-Security-Policy",
-    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'; base-uri 'self'",
-  );
+  if (!c.res.headers.has("Content-Security-Policy")) {
+    c.header(
+      "Content-Security-Policy",
+      "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'; base-uri 'self'",
+    );
+  }
 };

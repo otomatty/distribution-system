@@ -2,8 +2,18 @@ import { enc, withQuery, type Query } from "./query";
 
 /** 帳票・処理状況など共通の仕組みの画面 */
 export const platformPaths = {
-  jobs: () => "/jobs",
+  jobs: (query?: Query) => withQuery("/jobs", query),
   job: (id: string) => `/jobs/${enc(id)}`,
   jobDownload: (id: string) => `/jobs/${enc(id)}/download`,
+
   documents: (query?: Query) => withQuery("/documents", query),
+  documentsCsv: () => "/documents/csv",
+  documentsBulk: () => "/documents/bulk",
+  document: (id: string) => `/documents/${enc(id)}`,
+  documentDownload: (id: string) => `/documents/${enc(id)}/download`,
+  /** 送付の欄（送付の操作と送付履歴）。GET で部分 HTML、POST で送付 */
+  documentSends: (id: string) => `/documents/${enc(id)}/sends`,
+  documentSendRetry: (id: string, sendId: string) =>
+    `/documents/${enc(id)}/sends/${enc(sendId)}/retry`,
+  documentRerender: (id: string) => `/documents/${enc(id)}/rerender`,
 };

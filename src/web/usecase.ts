@@ -2,6 +2,7 @@
 import type { Context } from "hono";
 
 import type { Result } from "../domain/result";
+import type { ActorRef } from "../infra/do/actor-ref";
 import { businessDb } from "../infra/do/client";
 import type {
   CommandInput,
@@ -36,11 +37,25 @@ export async function runQuery<N extends QueryName>(
   name: N,
   input: QueryInput<N>,
 ): Promise<QueryOutput<N>> {
-  const result = (await businessDb(c.env).query(name, input, c.get("actorRef"))) as Result<unknown>;
+  const result = await queryAs(c.env, c.get("actorRef"), name, input);
   if (!result.ok) throw new QueryError(result.error.code, result.error.message);
+  return result.value;
+}
+
+/**
+ * 画面の外（Queues の処理など）から、操作者を指定して照会する。
+ * input は業務 DB の側で zod のスキーマで検証するので、外から来た値（job の内容）もそのまま渡せる。
+ */
+export async function queryAs<N extends QueryName>(
+  env: Env,
+  actorRef: ActorRef,
+  name: N,
+  input: QueryInput<N> | Readonly<Record<string, unknown>>,
+): Promise<Result<QueryOutput<N>>> {
+  const result = (await businessDb(env).query(name, input, actorRef)) as Result<unknown>;
   // runCommand と同じ理由で、registry の型に戻す
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  return result.value as QueryOutput<N>;
+  return result as Result<QueryOutput<N>>;
 }
 
 export class QueryError extends Error {
