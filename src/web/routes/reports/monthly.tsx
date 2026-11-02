@@ -114,6 +114,30 @@ function Summary(props: { report: MonthlyReport }) {
   );
 }
 
+/** 行から、請求の区分の画面（同じ期間の請求書・廃棄率）へ移るリンク */
+function RowLinks(props: { report: MonthlyReport; rowKey: string }) {
+  const { report, rowKey } = props;
+  const { dateFrom, dateTo } = report.period;
+  if (report.measure !== "sales" || report.axis === "supplier") return null;
+  const rates =
+    report.axis === "customer"
+      ? { customerId: rowKey, groupBy: "customer" }
+      : { itemId: rowKey, groupBy: "item" };
+  return (
+    <div class="small">
+      {report.axis === "customer" ? (
+        <>
+          <a href={paths.invoices({ customerId: rowKey, issuedFrom: dateFrom, issuedTo: dateTo })}>
+            請求書
+          </a>
+          {"・"}
+        </>
+      ) : null}
+      <a href={paths.disposalRates({ from: dateFrom, to: dateTo, ...rates })}>廃棄率</a>
+    </div>
+  );
+}
+
 function Breakdown(props: { report: MonthlyReport; query: Query }) {
   const { report } = props;
   const { months } = report.period;
@@ -153,6 +177,7 @@ function Breakdown(props: { report: MonthlyReport; query: Query }) {
                   <th scope="row" class="sticky-col">
                     {r.code ? <span class="muted small">{r.code} </span> : null}
                     {r.name}
+                    <RowLinks report={report} rowKey={r.key} />
                   </th>
                   {r.amounts.map((a) => (
                     <td class="num">{yen(a)}</td>
@@ -236,7 +261,15 @@ reportRoutes.get("/", async (c) => {
             <div class="toolbar">
               <p class="muted">
                 {monthLabel(result.value.period.from)}〜{monthLabel(result.value.period.to)}
-                （税抜・円）
+                （税抜・円）。関連：<a href={paths.receivables()}>売掛残高</a>・
+                <a
+                  href={paths.disposalRates({
+                    from: result.value.period.dateFrom,
+                    to: result.value.period.dateTo,
+                  })}
+                >
+                  販売先廃棄の廃棄率
+                </a>
               </p>
               <CsvButton action={paths.reportsCsv()} filters={query} />
             </div>

@@ -1,17 +1,13 @@
-import { runInDurableObject } from "cloudflare:test";
-import { env } from "cloudflare:workers";
 /**
  * 売上・仕入の集計（要件定義書 3.13 の Should、/reports）。
  * 売上 = 発送日の月の受注明細（明細ごとに端数処理）+ 送料など − 返品日の月の返品伝票、
  * 仕入 = 入荷日の月の受入の金額 − 返品日の月の仕入返品。取り消したものは含めない。
  */
-import { drizzle } from "drizzle-orm/durable-sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { monthOf, toBusinessDate } from "../../src/domain/dates";
 import type { ReportView } from "../../src/domain/reports";
-import * as schema from "../../src/infra/db/schema";
-import { businessDb } from "../../src/infra/do/client";
+import { recordReturn } from "./billing-fixtures";
 import { addInitialStock, createLocation, createSupplier } from "./fixtures";
 import { as, createEmployee, newKey, systemCommand, systemQuery } from "./helpers";
 import { createConfirmedOrder, receive } from "./purchasing-fixtures";
@@ -32,59 +28,13 @@ async function ship(id: string, shippedOn: string): Promise<string> {
   return r.shipmentId;
 }
 
-/** 返品伝票（請求の区分のユースケースはまだないので、テーブルに直接入れる） */
-async function insertSalesReturn(input: {
-  id: string;
-  salesOrderId: string;
-  customerId: string;
-  returnedOn: string;
-  itemId: string;
-  amount: number;
-  cancelled?: boolean;
-}): Promise<void> {
-  const at = new Date().toISOString();
-  const audit = { createdAt: at, createdBy: "system", updatedAt: at, updatedBy: "system" };
-  await runInDurableObject(businessDb(env), (_instance, state) => {
-    const db = drizzle(state.storage, { schema });
-    const line = db
-      .select()
-      .from(schema.salesOrderLines)
-      .all()
-      .find((l) => l.salesOrderId === input.salesOrderId);
-    db.insert(schema.salesReturns)
-      .values({
-        id: input.id,
-        number: `RT-2026-${input.id.slice(-6)}`,
-        salesOrderId: input.salesOrderId,
-        customerId: input.customerId,
-        returnedOn: input.returnedOn,
-        cancelled: input.cancelled ?? false,
-        ...audit,
-      })
-      .run();
-    db.insert(schema.salesReturnLines)
-      .values({
-        id: `${input.id}L`,
-        salesReturnId: input.id,
-        salesOrderLineId: line?.id ?? "",
-        itemId: input.itemId,
-        quantity: 1,
-        restock: false,
-        unitPriceCenti: 15_050,
-        amount: input.amount,
-        taxCategory: "reduced",
-      })
-      .run();
-  });
-}
-
 /**
  * 9月・10月の取引：
  * - 仕入：9/10 に a 2ケース（2,400円）・b 2ケース（1,000.50円 × 2 = 2,001円）、10/5 に a 1ケース（1,200円）、
  *   10/8 にメーカー直の a 1ケース（1,200円）、10/6 に a を3個の仕入返品（300円）、10/7 の b の入荷は取消
  * - 売上：9/15 に販売先1へ a 3個（150.50円 × 3 = 451円）・b 6個（600円）・送料 800円、
  *   10/3 に販売先2へ a 1個の受注を2件（150円 × 2。明細ごとに丸めるので 301円にならない）、
- *   10/4 の販売先1への発送は取消、10/10 に販売先1の返品伝票 150円（取消した返品伝票は含めない）
+ *   10/4 の販売先1への発送は取消、10/10 に販売先1の返品伝票 a 1個 150円（10/11 の a 2個の返品伝票は取消なので含めない）
  */
 beforeAll(async () => {
   const supplierName = `集計テスト仕入先${Date.now().toString(36)}`;
@@ -178,22 +128,12 @@ beforeAll(async () => {
   const so4 = await order(c1.id, [{ itemId: b.id, quantity: 1, price: 10_000 }]);
   const shipmentId = await ship(so4.id, "2026-10-04");
   await systemCommand("shipments.cancel", { shipmentId, version: 1, reason: "テスト" });
-  await insertSalesReturn({
-    id: "01SALESRETURN0000000000001",
-    salesOrderId: so1.id,
-    customerId: c1.id,
-    returnedOn: "2026-10-10",
-    itemId: a.id,
-    amount: 150,
-  });
-  await insertSalesReturn({
-    id: "01SALESRETURN0000000000002",
-    salesOrderId: so1.id,
-    customerId: c1.id,
-    returnedOn: "2026-10-11",
-    itemId: a.id,
-    amount: 9_999,
-    cancelled: true,
+  await recordReturn(so1.id, { quantity: 1, returnedOn: "2026-10-10" });
+  const cancelledReturn = await recordReturn(so1.id, { quantity: 2, returnedOn: "2026-10-11" });
+  await systemCommand("salesReturns.cancel", {
+    id: cancelledReturn.id,
+    version: 1,
+    reason: "テスト",
   });
 });
 
@@ -381,6 +321,27 @@ describe("集計の画面", () => {
     expect(results).toContain(data.a.code);
     expect(results).toContain("4,500");
     expect(results).toContain('name="view" value="purchases_item"');
+  });
+
+  it("販売先の行から同じ期間の請求書・廃棄率へ、商品の行から廃棄率へ移れる（仕入には出さない）", async () => {
+    const user = await createEmployee(["sales"]);
+    const customers = await (await as(user).get("/reports?from=2026-09&to=2026-10")).text();
+    expect(customers).toContain(
+      `/invoices?customerId=${data.c1.id}&amp;issuedFrom=2026-09-01&amp;issuedTo=2026-10-31`,
+    );
+    expect(customers).toContain(
+      `/disposals/rates?from=2026-09-01&amp;to=2026-10-31&amp;customerId=${data.c1.id}&amp;groupBy=customer`,
+    );
+    expect(customers).toContain('href="/receivables"');
+    const items = await (
+      await as(user).get("/reports?view=sales_item&from=2026-09&to=2026-10")
+    ).text();
+    expect(items).toContain(`itemId=${data.a.id}&amp;groupBy=item`);
+    expect(items).not.toContain("/invoices?customerId=");
+    const purchases = await (
+      await as(user).get("/reports?view=purchases_supplier&from=2026-09&to=2026-10")
+    ).text();
+    expect(purchases).not.toContain("groupBy=");
   });
 
   it("期間の誤りは表の部分にメッセージを出す", async () => {
