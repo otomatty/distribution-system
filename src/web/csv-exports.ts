@@ -21,6 +21,11 @@ import {
   RENDER_STATUS_LABELS,
   SEND_STATUS_LABELS,
 } from "../domain/documents";
+import {
+  DESTINATION_LABELS,
+  PURCHASE_ORDER_STATUS_LABELS,
+  SUPPLIER_INVOICE_STATUS_LABELS,
+} from "../domain/purchasing";
 import type { Result } from "../domain/result";
 import type { ActorRef } from "../infra/do/actor-ref";
 import type { QueryInput, QueryName, QueryOutput } from "../usecases/registry";
@@ -30,6 +35,7 @@ import { paths } from "./paths";
 import type { AppEnv } from "./types";
 import { queryAs, runCommand } from "./usecase";
 import { dateTime } from "./views/format";
+import { destinationText } from "./views/purchasing";
 
 /** これより多い件数の CSV は非同期で作る */
 export const CSV_ASYNC_THRESHOLD = 2000;
@@ -118,7 +124,68 @@ export const csvExports = {
       { header: "発行日時", value: (d) => dateTime(d.createdAt) },
     ],
   }),
+  purchaseOrders: defineCsvExport({
+    fileName: "発注一覧",
+    fetch: (q, filter, page, pageSize) => q("purchaseOrders.list", { ...filter, page, pageSize }),
+    columns: [
+      { header: "発注番号", value: (p) => p.number },
+      { header: "状態", value: (p) => PURCHASE_ORDER_STATUS_LABELS[p.status] },
+      { header: "発注日", value: (p) => p.orderedOn },
+      { header: "仕入先", value: (p) => p.supplierName },
+      { header: "納入先の区分", value: (p) => DESTINATION_LABELS[p.destinationKind] },
+      { header: "納入先", value: (p) => destinationText(p) },
+      { header: "納品希望日", value: (p) => p.deliveryRequestedOn },
+      { header: "支払予定日", value: (p) => p.paymentDueOn },
+      { header: "明細数", value: (p) => p.lineCount },
+      { header: "小計（税抜）", value: (p) => p.subtotal },
+      { header: "消費税", value: (p) => p.tax },
+      { header: "合計（税込）", value: (p) => p.total },
+      { header: "社内の担当者", value: (p) => p.employeeName },
+      { header: "メモ", value: (p) => p.memo },
+      { header: "取消の理由", value: (p) => p.cancelReason },
+    ],
+  }),
+  supplierInvoices: defineCsvExport({
+    fileName: "仕入先請求書一覧",
+    fetch: (q, filter, page, pageSize) => q("supplierInvoices.list", { ...filter, page, pageSize }),
+    columns: supplierInvoiceColumns(),
+  }),
+  payables: defineCsvExport({
+    fileName: "支払予定一覧",
+    fetch: (q, filter, page, pageSize) => q("payables.list", { ...filter, page, pageSize }),
+    columns: supplierInvoiceColumns(),
+  }),
 } satisfies Readonly<Record<string, CsvExport>>;
+
+/** 仕入先請求書の一覧と支払予定一覧の列 */
+function supplierInvoiceColumns(): CsvColumn<{
+  readonly supplierName: string;
+  readonly invoiceNumber: string | null;
+  readonly invoiceDate: string;
+  readonly status: keyof typeof SUPPLIER_INVOICE_STATUS_LABELS;
+  readonly invoicedAmount: number;
+  readonly shippingFee: number;
+  readonly computedAmount: number;
+  readonly difference: number;
+  readonly differenceReason: string | null;
+  readonly paymentDueOn: string | null;
+  readonly payment: { readonly paidOn: string; readonly amount: number } | null;
+}>[] {
+  return [
+    { header: "仕入先", value: (i) => i.supplierName },
+    { header: "請求書番号", value: (i) => i.invoiceNumber },
+    { header: "請求日", value: (i) => i.invoiceDate },
+    { header: "状態", value: (i) => SUPPLIER_INVOICE_STATUS_LABELS[i.status] },
+    { header: "請求額", value: (i) => i.invoicedAmount },
+    { header: "送料", value: (i) => i.shippingFee },
+    { header: "計算額", value: (i) => i.computedAmount },
+    { header: "差額", value: (i) => i.difference },
+    { header: "差額の理由", value: (i) => i.differenceReason },
+    { header: "支払予定日", value: (i) => i.paymentDueOn },
+    { header: "支払日", value: (i) => i.payment?.paidOn ?? null },
+    { header: "支払額", value: (i) => i.payment?.amount ?? null },
+  ];
+}
 
 export type CsvExportName = keyof typeof csvExports;
 

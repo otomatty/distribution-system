@@ -110,6 +110,13 @@ export function monthsBetween(from: string, to: string, max = 36): string[] {
   return out;
 }
 
+/** 月（YYYY-MM）に n か月を足す（負の数なら前の月） */
+export function addMonths(month: string, n: number): string {
+  const m0 = Number(month.slice(5, 7)) - 1 + n;
+  const y = Number(month.slice(0, 4)) + Math.floor(m0 / 12);
+  return `${y}-${String((((m0 % 12) + 12) % 12) + 1).padStart(2, "0")}`;
+}
+
 /** 月の初日と末日（YYYY-MM-DD） */
 export function monthRange(month: string): { from: string; to: string } {
   const y = Number(month.slice(0, 4));

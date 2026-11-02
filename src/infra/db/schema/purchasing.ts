@@ -29,6 +29,12 @@ export const purchaseOrders = sqliteTable(
     memo: text("memo"),
     cancelReason: text("cancel_reason"),
     confirmedAt: text("confirmed_at"),
+    /** 明細の金額の合計（税抜・円）。保存のたびに domain で計算して持つ（一覧と CSV に使う） */
+    subtotal: integer("subtotal").notNull().default(0),
+    /** 消費税（税率ごとに1回丸めた合計・円） */
+    tax: integer("tax").notNull().default(0),
+    /** 税込の合計（円） */
+    total: integer("total").notNull().default(0),
     ...auditColumns,
   },
   (t) => [
@@ -94,7 +100,10 @@ export const receiptLines = sqliteTable(
     taxCategory: text("tax_category", { enum: ["standard", "reduced"] }).notNull(),
     amount: integer("amount").notNull(),
   },
-  (t) => [index("receipt_lines_receipt").on(t.receiptId)],
+  (t) => [
+    index("receipt_lines_receipt").on(t.receiptId),
+    index("receipt_lines_order_line").on(t.purchaseOrderLineId),
+  ],
 );
 
 export const purchaseReturns = sqliteTable(
@@ -103,6 +112,8 @@ export const purchaseReturns = sqliteTable(
     id: id(),
     number: text("number").notNull(),
     supplierId: text("supplier_id").notNull(),
+    /** 返品した商品の発注（発注の詳細画面から記録する） */
+    purchaseOrderId: text("purchase_order_id"),
     returnedOn: text("returned_on").notNull(),
     locationId: text("location_id").notNull(),
     supplierInvoiceId: text("supplier_invoice_id"),
@@ -110,7 +121,11 @@ export const purchaseReturns = sqliteTable(
     memo: text("memo"),
     ...auditColumns,
   },
-  (t) => [index("purchase_returns_supplier").on(t.supplierId)],
+  (t) => [
+    index("purchase_returns_supplier").on(t.supplierId),
+    index("purchase_returns_order").on(t.purchaseOrderId),
+    index("purchase_returns_invoice").on(t.supplierInvoiceId),
+  ],
 );
 
 export const purchaseReturnLines = sqliteTable(
@@ -118,14 +133,21 @@ export const purchaseReturnLines = sqliteTable(
   {
     id: id(),
     purchaseReturnId: text("purchase_return_id").notNull(),
+    /** 返品した発注明細（返品できる数 = 受入数 × 入数 − これまでの返品） */
+    purchaseOrderLineId: text("purchase_order_line_id"),
     itemId: text("item_id").notNull(),
     /** 在庫から減らす数（販売単位） */
     quantity: integer("quantity").notNull(),
+    /** 発注明細の単価の写し（仕入単位あたり、税抜、centi-yen） */
+    unitPriceCenti: integer("unit_price_centi").notNull().default(0),
     /** 返品額（税抜・円） */
     amount: integer("amount").notNull(),
     taxCategory: text("tax_category", { enum: ["standard", "reduced"] }).notNull(),
   },
-  (t) => [index("purchase_return_lines_return").on(t.purchaseReturnId)],
+  (t) => [
+    index("purchase_return_lines_return").on(t.purchaseReturnId),
+    index("purchase_return_lines_order_line").on(t.purchaseOrderLineId),
+  ],
 );
 
 export const supplierInvoices = sqliteTable(

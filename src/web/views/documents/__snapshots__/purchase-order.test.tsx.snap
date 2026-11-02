@@ -1,0 +1,77 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`発注書のテンプレート > 登録されていて、A4 縦の印刷用 HTML を作る（スナップショット） 1`] = `
+"<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta name="robots" content="noindex,nofollow"/><title>発注書 PO-2026-000123</title><style>
+@page { size: A4 portrait; margin: 12mm 12mm 14mm; }
+@page landscape { size: A4 landscape; margin: 10mm 10mm 12mm; }
+html {
+  font-family: Noto Sans CJK JP, Noto Sans JP, IPAexGothic, IPAGothic, Hiragino Sans,
+    Hiragino Kaku Gothic ProN, Yu Gothic, YuGothic, Meiryo, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.5;
+  color: #111;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+body { margin: 0; }
+.sheet { break-after: page; }
+.sheet:last-child { break-after: auto; }
+.sheet.landscape { page: landscape; }
+h1.doc-title {
+  margin: 0 0 6mm;
+  font-size: 18pt;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.4em;
+}
+.doc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8mm; }
+.doc-to { flex: 1; }
+.doc-to p,
+.doc-from p { margin: 0; }
+.doc-to .name {
+  font-size: 13pt;
+  font-weight: 700;
+  border-bottom: 0.3mm solid #111;
+  padding-bottom: 1mm;
+}
+.doc-from { width: 72mm; font-size: 8.5pt; }
+.doc-from .name { font-size: 11pt; font-weight: 700; }
+.doc-meta { margin: 0 0 3mm auto; border-collapse: collapse; font-size: 9pt; }
+.doc-meta th { padding: 0.5mm 3mm 0.5mm 0; text-align: left; font-weight: 400; color: #444; }
+.doc-meta td { padding: 0.5mm 0; text-align: right; }
+.doc-lead { margin: 4mm 0; }
+.doc-total {
+  display: inline-block;
+  margin: 2mm 0 4mm;
+  padding: 1.5mm 4mm;
+  border: 0.4mm solid #111;
+  font-size: 13pt;
+  font-weight: 700;
+}
+table.doc-table { width: 100%; border-collapse: collapse; margin: 2mm 0; }
+.doc-table th,
+.doc-table td { border: 0.25mm solid #555; padding: 1mm 1.6mm; vertical-align: top; }
+.doc-table thead th { background: #eee; font-weight: 700; text-align: center; white-space: nowrap; }
+.doc-table tfoot td,
+.doc-table tfoot th { font-weight: 700; }
+.doc-table tr { break-inside: avoid; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.center { text-align: center; }
+.muted { color: #555; }
+.small { font-size: 8pt; }
+.doc-note { margin-top: 4mm; padding: 2mm 3mm; border: 0.25mm solid #999; white-space: pre-wrap; }
+.doc-footer { margin-top: 6mm; font-size: 8pt; color: #444; }
+@media screen {
+  body { background: #e5e7eb; padding: 8mm 0; }
+  .sheet {
+    width: 186mm;
+    min-height: 273mm;
+    margin: 0 auto 8mm;
+    padding: 12mm;
+    background: #fff;
+    box-shadow: 0 1mm 3mm rgba(0, 0, 0, 0.2);
+  }
+  .sheet.landscape { width: 277mm; min-height: 190mm; }
+}
+</style></head><body><section class="sheet"><h1 class="doc-title">発注書</h1><table class="doc-meta"><tbody><tr><th>発注番号</th><td>PO-2026-000123</td></tr><tr><th>発注日</th><td>2026年11月2日</td></tr><tr><th>納品希望日</th><td>2026年11月10日</td></tr><tr><th>支払予定日</th><td>2026年12月31日</td></tr></tbody></table><div class="doc-head"><div class="doc-to"><div class="doc-to"><p class="small">〒020-0001 岩手県盛岡市1-2-3</p><p class="name">かもめ製菓 御中</p></div><p>ご担当：山田 様</p><p class="doc-lead">下記のとおり発注いたします。</p><p class="doc-total">発注金額（税込） ¥5,099</p></div><div><div class="doc-from"><p class="name">テスト流通株式会社</p><p>登録番号：T1234567890123</p><p>〒022-0002 岩手県大船渡市大船渡町1-1</p><p>TEL：0192-00-0000</p><p>FAX：0192-00-0001</p><p>order@example.co.jp</p></div><p class="small">担当：仕入 太郎</p></div></div><table class="doc-table"><tbody><tr><th class="center">納入先</th><td><div>本社倉庫</div><div>〒022-0002</div><div>岩手県大船渡市大船渡町2-2</div><div>TEL：0192-00-0002</div></td></tr></tbody></table><table class="doc-table"><thead><tr><th>No.</th><th>商品コード</th><th>商品名</th><th>数量</th><th>単位</th><th>入数</th><th>単価（税抜）</th><th>金額（税抜）</th></tr></thead><tbody><tr><td class="center">1</td><td>IT000001</td><td>かもめの玉子 &lt;10個入&gt; ※<div class="small muted">賞味期限の長いもの</div></td><td class="num">3</td><td class="center">ケース</td><td class="num">12箱</td><td class="num">¥1,234.56</td><td class="num">¥3,703</td></tr><tr><td class="center">2</td><td>IT000002</td><td>紙袋（大）</td><td class="num">2</td><td class="center">束</td><td class="num">50枚</td><td class="num">¥500</td><td class="num">¥1,000</td></tr></tbody><tfoot><tr><th colspan="6" class="num">10%対象</th><td class="num">¥1,000</td><td class="num">消費税 ¥100</td></tr><tr><th colspan="6" class="num">8%対象（軽減税率）</th><td class="num">¥3,703</td><td class="num">消費税 ¥296</td></tr><tr><th colspan="7" class="num">小計（税抜）</th><td class="num">¥4,703</td></tr><tr><th colspan="7" class="num">消費税</th><td class="num">¥396</td></tr><tr><th colspan="7" class="num">合計（税込）</th><td class="num">¥5,099</td></tr></tfoot></table><p class="small">※は軽減税率の対象です。</p><div class="doc-note">午前中に納品してください</div></section></body></html>"
+`;

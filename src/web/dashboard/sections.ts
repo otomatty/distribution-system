@@ -10,10 +10,15 @@
  */
 import type { Role } from "../../domain/roles";
 import { platformSection } from "./platform";
+import { payablesSection, purchasingSection } from "./purchasing";
 import type { DashboardSection } from "./types";
 
 /** 表示する順。仕入・受注出荷・経理の欄は各区分が追加する */
-export const dashboardSections: readonly DashboardSection[] = [platformSection];
+export const dashboardSections: readonly DashboardSection[] = [
+  purchasingSection,
+  payablesSection,
+  platformSection,
+];
 
 /** 役割に合う欄。管理者はすべて */
 export function sectionsFor(roles: readonly Role[]): readonly DashboardSection[] {

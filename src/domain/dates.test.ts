@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addDays,
+  addMonths,
   closingPeriod,
   formatJapaneseDate,
   isBusinessDate,
@@ -95,5 +96,8 @@ describe("dates", () => {
     expect(monthsBetween("bad", "2026-10")).toEqual([]);
     expect(monthsBetween("2020-01", "2029-12", 3)).toHaveLength(3);
     expect(monthRange("2028-02")).toEqual({ from: "2028-02-01", to: "2028-02-29" });
+    expect(addMonths("2026-11", -5)).toBe("2026-06");
+    expect(addMonths("2026-03", -5)).toBe("2025-10");
+    expect(addMonths("2026-11", 2)).toBe("2027-01");
   });
 });

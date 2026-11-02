@@ -50,9 +50,9 @@ export function canEditOrder(status: PurchaseOrderStatus): boolean {
 }
 
 /** 発注書の送付方法。システムから送るのはメールだけ（FAX は PDF を社内の FAX 機で送り、手動の送付として記録する） */
-export type SendMethod = "email" | "none";
+export type OrderSendMethod = "email" | "none";
 
-export const SEND_METHOD_LABELS: Readonly<Record<SendMethod, string>> = {
+export const ORDER_SEND_METHOD_LABELS: Readonly<Record<OrderSendMethod, string>> = {
   email: "メール",
   none: "送付しない（FAX・手渡しなど）",
 };
@@ -64,7 +64,7 @@ export const SEND_METHOD_LABELS: Readonly<Record<SendMethod, string>> = {
 export function confirmOrder(
   status: PurchaseOrderStatus,
   lineCount: number,
-  sendMethod: SendMethod,
+  sendMethod: OrderSendMethod,
   recipient: string | null,
 ): Result<"ordered"> {
   if (status !== "draft") return err("invalid_state", "作成中の発注だけを確定できます");
@@ -219,10 +219,10 @@ export function cancelReceipt(
   status: PurchaseOrderStatus,
   includedInPaidInvoice: boolean,
 ): Result<"ordered"> {
-  if (status !== "ordered" && status !== "received")
-    return err("invalid_state", "この発注の入荷は取り消せません");
   if (includedInPaidInvoice)
     return err("invalid_state", "支払済みの請求書に含まれる入荷は取り消せません");
+  if (status !== "ordered" && status !== "received")
+    return err("invalid_state", "この発注の入荷は取り消せません");
   return ok("ordered");
 }
 
@@ -481,4 +481,28 @@ export function orderStatusAfterInvoicePaid(
 /** 支払を取り消したときの発注の状態（支払済み → 入荷済み） */
 export function orderStatusAfterPaymentCancelled(status: PurchaseOrderStatus): PurchaseOrderStatus {
   return status === "paid" ? "received" : status;
+}
+
+export interface PayableMonth {
+  readonly month: string;
+  /** その月の請求額（請求日の月） */
+  readonly invoiced: number;
+  /** その月の支払額（支払日の月） */
+  readonly paid: number;
+  /** 月末の買掛残高 */
+  readonly balance: number;
+}
+
+/** 月末の買掛残高 = 前月末の残高 + 当月の請求額 − 当月の支払額（仕入先ごと） */
+export function payableBalances(
+  opening: number,
+  months: readonly string[],
+  monthly: ReadonlyMap<string, { readonly invoiced: number; readonly paid: number }>,
+): PayableMonth[] {
+  let balance = opening;
+  return months.map((month) => {
+    const m = monthly.get(month) ?? { invoiced: 0, paid: 0 };
+    balance += m.invoiced - m.paid;
+    return { month, invoiced: m.invoiced, paid: m.paid, balance };
+  });
 }
