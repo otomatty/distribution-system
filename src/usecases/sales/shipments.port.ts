@@ -65,6 +65,8 @@ export interface UnbilledShipmentFilter {
   readonly customerId?: string | undefined;
   readonly shippedFrom?: string | undefined;
   readonly shippedTo?: string | undefined;
+  /** 指定した発送だけ（請求書の再発行で、元の請求書の発送を読み直す） */
+  readonly shipmentIds?: readonly string[] | undefined;
 }
 
 export interface ShipmentStore {

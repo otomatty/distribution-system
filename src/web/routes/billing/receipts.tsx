@@ -633,7 +633,7 @@ function DetailBody(props: {
                           hx-post={paths.allocationCancel(a.id)}
                           hx-target="#receipt-detail"
                           hx-swap="outerHTML"
-                          hx-confirm={`${a.invoiceNumber} への消込（${yen(a.amount + a.adjustment)}）を取り消します。よろしいですか？`}
+                          hx-confirm={`${a.invoiceNumber} への消込（${yen(a.settled)}）を取り消します。よろしいですか？`}
                         >
                           <FormKey />
                           <Version value={a.version} />

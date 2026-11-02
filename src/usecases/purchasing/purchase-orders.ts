@@ -7,10 +7,10 @@
 import { z } from "zod";
 
 import { isBusinessDate, paymentDueDate } from "../../domain/dates";
-import { lineAmount, parseYenToCenti } from "../../domain/money";
+import { lineAmount, parseYenToCenti, sumAmounts } from "../../domain/money";
 import {
   cancelOrder,
-  cancelReceipt,
+  receiptCancellable,
   canEditOrder,
   confirmOrder,
   orderAmounts,
@@ -555,8 +555,10 @@ export interface PurchaseOrderView {
     subtotal: number;
     tax: number;
   }[];
-  readonly receipts: readonly ReceiptRecord[];
-  readonly returns: readonly PurchaseReturnRecord[];
+  /** 入荷の履歴。subtotal は受入数 × 単価の合計（税抜・円） */
+  readonly receipts: readonly (ReceiptRecord & { readonly subtotal: number })[];
+  /** 仕入返品。subtotal は返品額の合計（税抜・円） */
+  readonly returns: readonly (PurchaseReturnRecord & { readonly subtotal: number })[];
   /** 発行した発注書（取消済みを含む、新しい順）と最新の発注書の送付履歴 */
   readonly documents: readonly DocumentSummary[];
   readonly sends: readonly DocumentSendRecord[];
@@ -617,7 +619,7 @@ export const getPurchaseOrder = defineQuery({
       order,
       lines,
       taxGroups,
-      receipts,
+      receipts: receipts.map((r) => Object.assign(r, { subtotal: sumAmounts(r.lines) })),
       actions: {
         edit: manage && editable,
         confirm: manage && editable,
@@ -633,10 +635,12 @@ export const getPurchaseOrder = defineQuery({
       },
       cancellableReceiptIds: can(roles, "receipts.manage")
         ? active
-            .filter((r) => cancelReceipt(order.status, r.supplierInvoiceStatus === "paid").ok)
+            .filter((r) => receiptCancellable(order.status, r.supplierInvoiceStatus === "paid").ok)
             .map((r) => r.id)
         : [],
-      returns: ctx.stores.purchaseReturns.listByOrder(id),
+      returns: ctx.stores.purchaseReturns
+        .listByOrder(id)
+        .map((r) => Object.assign(r, { subtotal: sumAmounts(r.lines) })),
       documents,
       sends: latest ? ctx.stores.documents.sends(latest.id) : [],
       invoices: ctx.stores.supplierInvoices.invoicesForOrder(id),

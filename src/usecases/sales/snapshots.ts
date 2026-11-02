@@ -2,6 +2,9 @@
  * 納品書の内容（スナップショット）。発送のときに発行時点の値を保存し、PDF 化と再ダウンロードに使う。
  * テンプレート（web/views/documents/delivery-note.tsx）は値を表示するだけで、金額を計算しない。
  * 形を変えるときは version を上げ、保存済みの古い形も読めるようにする（帳票は7年保存）。
+ *
+ * - version 2：発行日（issuedOn）を持つ（要件定義書 3.10「発行日は発行の操作で決める」）
+ * - version 1：発行日を持たない。当時は納品書の日付が発送日だったので、発行日 = 発送日として読む
  */
 import { z } from "zod";
 
@@ -14,11 +17,10 @@ import type { SalesOrderDetail } from "./orders.port";
 const taxCategory = z.enum(["standard", "reduced"]);
 const yenAmount = z.number().int();
 
-export const deliveryNoteSnapshotSchema = z.object({
-  version: z.literal(1),
+const deliveryNoteFields = z.object({
   /** 納品書番号（DN-2026-000001） */
   number: z.string(),
-  /** 発送日（取引年月日） */
+  /** 発送日（取引年月日・納品日） */
   shippedOn: z.string(),
   salesOrderNumber: z.string(),
   issuer: z.object({
@@ -81,12 +83,30 @@ export const deliveryNoteSnapshotSchema = z.object({
   memo: z.string().nullable(),
 });
 
-export type DeliveryNoteSnapshot = z.infer<typeof deliveryNoteSnapshotSchema>;
+const deliveryNoteV2 = deliveryNoteFields.extend({
+  version: z.literal(2),
+  /** 発行日（発送の操作で決める。初期値は当日、月締めの販売先は締め日） */
+  issuedOn: z.string(),
+});
+
+/** 発行日のない古い形（version 1）。発行日 = 発送日として読む */
+const deliveryNoteV1 = deliveryNoteFields
+  .extend({ version: z.literal(1) })
+  .transform((v) => ({ ...v, version: 2 as const, issuedOn: v.shippedOn }));
+
+/** 保存済みの納品書の内容。古い形（version 1）も今の形（version 2）にそろえて読む */
+export const deliveryNoteSnapshotSchema = z.union([deliveryNoteV2, deliveryNoteV1]);
+
+/** 今の形（発行するときに作る形。古い形も読むとこの形になる） */
+export type DeliveryNoteSnapshot = z.output<typeof deliveryNoteSnapshotSchema>;
+/** 保存済みの形（古い形を含む） */
+export type StoredDeliveryNoteSnapshot = z.input<typeof deliveryNoteSnapshotSchema>;
 
 /** 発送する受注から納品書の内容を作る。税率は発送日の時点のもの */
 export function buildDeliveryNoteSnapshot(input: {
   readonly number: string;
   readonly shippedOn: string;
+  readonly issuedOn: string;
   readonly order: SalesOrderDetail;
   readonly company: CompanySettings;
   readonly taxRates: readonly TaxRateRecord[];
@@ -98,9 +118,10 @@ export function buildDeliveryNoteSnapshot(input: {
   const mode: RoundingMode = company.roundingMode;
   const amounts = orderAmounts(order.lines, order.charges, rates, mode);
   return ok({
-    version: 1,
+    version: 2,
     number: input.number,
     shippedOn: input.shippedOn,
+    issuedOn: input.issuedOn,
     salesOrderNumber: order.number,
     issuer: {
       name: company.name,

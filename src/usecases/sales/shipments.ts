@@ -9,6 +9,8 @@ import { z } from "zod";
 import { err, ok, type Result } from "../../domain/result";
 import {
   cancelShipment,
+  defaultDeliveryNoteDate,
+  deliveryNoteIssueDate,
   planBulkShipment,
   shippingMatrix,
   shipSalesOrder,
@@ -46,23 +48,41 @@ export interface ShipResult {
   readonly documentId: string;
 }
 
+/** 販売先の締め日（締め日・支払月・支払日がそろっている月締めの販売先だけ。そうでなければ null） */
+function closingDayOf(ctx: Pick<QueryContext, "stores">, customerId: string): number | null {
+  const c = ctx.stores.partners.get(customerId);
+  if (!c || c.closingDay === null || c.paymentMonthOffset === null || c.paymentDay === null)
+    return null;
+  return c.closingDay;
+}
+
 /**
  * 受注を1件発送する（個別の発送と一括発送で共通）。
  * 引当を外し、在庫を減らし（足りなければ insufficient_stock）、納品書を採番して発行する。
+ * 納品書の発行日は、指定がなければ初期値（当日、月締めの販売先は発送日を含む締め期間の締め日）。
  */
 function shipOrder(
   ctx: UsecaseContext,
   order: SalesOrderDetail,
   expectedVersion: number,
   shippedOn: string,
+  requestedIssuedOn: string | null = null,
 ): Result<ShipResult> {
   const next = shipSalesOrder(order.status);
   if (!next.ok) return err(next.error.code, `${order.number}：${next.error.message}`);
+  const issuedOn = deliveryNoteIssueDate({
+    shippedOn,
+    today: ctx.clock.today(),
+    closingDay: closingDayOf(ctx, order.customerId),
+    requested: requestedIssuedOn,
+  });
+  if (!issuedOn.ok) return issuedOn;
   if (!ctx.stores.salesOrders.update(order.id, expectedVersion, { status: next.value }, meta(ctx)))
     return err("conflict", `${order.number}：${STALE_VERSION_MESSAGE}`);
   const snapshot = buildDeliveryNoteSnapshot({
     number: ctx.sequences.next("deliveryNote", shippedOn),
     shippedOn,
+    issuedOn: issuedOn.value,
     order,
     company: ctx.stores.settings.getCompany(),
     taxRates: ctx.stores.settings.listTaxRates(),
@@ -115,7 +135,13 @@ function shipOrder(
     entityId: order.id,
     action: "ship",
     before: { status: order.status },
-    after: { status: next.value, shipmentId, deliveryNoteNumber: number, shippedOn },
+    after: {
+      status: next.value,
+      shipmentId,
+      deliveryNoteNumber: number,
+      shippedOn,
+      deliveryNoteIssuedOn: issuedOn.value,
+    },
   });
   return ok({
     salesOrderId: order.id,
@@ -126,16 +152,36 @@ function shipOrder(
   });
 }
 
-/** 受注詳細からの個別の発送 */
+/** 受注詳細からの個別の発送。納品書の発行日を指定できる（空なら初期値） */
 export const shipSalesOrderCommand = defineCommand({
   permission: "shipments.manage",
-  input: z.object({ id: idSchema, version, shippedOn: businessDate }),
-  run(ctx, { id, version: v, shippedOn }) {
+  input: z.object({
+    id: idSchema,
+    version,
+    shippedOn: businessDate,
+    deliveryNoteIssuedOn: optionalBusinessDate,
+  }),
+  run(ctx, { id, version: v, shippedOn, deliveryNoteIssuedOn }) {
     const future = notFuture(ctx, shippedOn);
     if (future) return future;
     const order = ctx.stores.salesOrders.get(id);
     if (!order) return err("not_found", "受注が見つかりません");
-    return shipOrder(ctx, order, v, shippedOn);
+    return shipOrder(ctx, order, v, shippedOn, deliveryNoteIssuedOn);
+  },
+});
+
+/** 発送の画面の、納品書の発行日の初期値（発送日を変えるたびに計算し直す） */
+export const deliveryNoteDefaultDate = defineQuery({
+  permission: "view",
+  input: z.object({ salesOrderId: idSchema, shippedOn: businessDate }),
+  run(ctx, { salesOrderId, shippedOn }): string | null {
+    const order = ctx.stores.salesOrders.get(salesOrderId);
+    if (!order) return null;
+    return defaultDeliveryNoteDate({
+      shippedOn,
+      today: ctx.clock.today(),
+      closingDay: closingDayOf(ctx, order.customerId),
+    });
   },
 });
 

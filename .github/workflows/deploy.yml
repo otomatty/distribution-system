@@ -1,5 +1,6 @@
 # デプロイは CI からだけ行う（AGENTS.md 3章）。
 # main への push で検証環境へ自動でデプロイし、本番は承認（GitHub Environments の必須レビュー）の後にデプロイする。
+# Cloudflare の準備（docs/operations.md 1章）が済むまでは動かさない。リポジトリの変数 DEPLOY_ENABLED を true にすると有効になる。
 name: Deploy
 
 on:
@@ -16,6 +17,7 @@ permissions:
 
 jobs:
   staging:
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 15

@@ -11,7 +11,7 @@ import { reportsPaths } from "./reports";
 import { salesPaths } from "./sales";
 import { stockPaths } from "./stock";
 
-export { withQuery, type Query } from "./query";
+export type { Query } from "./query";
 
 export const paths = {
   ...corePaths,

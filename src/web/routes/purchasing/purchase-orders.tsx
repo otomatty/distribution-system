@@ -1358,7 +1358,7 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                       ))}
                       {r.cancelReason ? <div>取消の理由：{r.cancelReason}</div> : null}
                     </td>
-                    <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
+                    <td class="num">{yen(r.subtotal)}</td>
                     <td>
                       {r.supplierInvoiceId ? (
                         <a href={paths.supplierInvoice(r.supplierInvoiceId)}>
@@ -1415,7 +1415,7 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                       ))}
                       {r.memo ? <div>{r.memo}</div> : null}
                     </td>
-                    <td class="num">{yen(r.lines.reduce((s, l) => s + l.amount, 0))}</td>
+                    <td class="num">{yen(r.subtotal)}</td>
                   </tr>
                 ))}
               </tbody>
