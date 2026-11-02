@@ -192,3 +192,25 @@ export const supplierPayments = sqliteTable(
   },
   (t) => [index("supplier_payments_invoice").on(t.supplierInvoiceId)],
 );
+
+/**
+ * 仕入先請求書の添付 PDF（要件定義書 3.7 Should、7章 電子帳簿保存法）。
+ * 受け取った PDF は版ごとに1行で、消したり上書きしたりしない。差し替えは新しい版として追加し、最新の版を表示する。
+ * ファイルは R2 の supplier-invoices/<請求書 ID>/<添付 ID>.pdf（バケットロックの対象）。
+ */
+export const supplierInvoiceAttachments = sqliteTable(
+  "supplier_invoice_attachments",
+  {
+    id: id(),
+    supplierInvoiceId: text("supplier_invoice_id").notNull(),
+    r2Key: text("r2_key").notNull(),
+    /** 受け取ったときのファイル名 */
+    fileName: text("file_name").notNull(),
+    /** バイト数 */
+    size: integer("size").notNull(),
+    /** 内容の SHA-256（16進数）。保存後に改変されていないことを確かめるため */
+    sha256: text("sha256").notNull(),
+    ...auditColumns,
+  },
+  (t) => [index("supplier_invoice_attachments_invoice").on(t.supplierInvoiceId)],
+);
