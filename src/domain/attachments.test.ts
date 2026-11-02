@@ -49,6 +49,15 @@ describe("attachmentFileName", () => {
     expect(attachmentFileName("   ")).toBe("請求書.pdf");
   });
 
+  it("長い名前は拡張子を残して200文字に切る（文字の途中では切らない）", () => {
+    const long = attachmentFileName(`${"請".repeat(300)}.pdf`);
+    expect(Array.from(long)).toHaveLength(200);
+    expect(long.endsWith("請.pdf")).toBe(true);
+    const emoji = attachmentFileName("😀".repeat(250));
+    expect(Array.from(emoji)).toHaveLength(200);
+    expect(emoji).toMatch(/^😀+\.pdf$/u);
+  });
+
   it("どんな名前でも、区切り・制御文字を含まない200文字以内の .pdf になる", () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 400, unit: "binary" }), (name) => {

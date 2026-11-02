@@ -351,6 +351,23 @@ describe("商品の CSV 一括登録", () => {
     void user;
   });
 
+  it("取引終了のジャンルも、すでにそのジャンルの商品の更新では使える", async () => {
+    const supplierId = await createSupplier();
+    const supplier = (await systemQuery("partners.get", { id: supplierId }))?.name ?? "";
+    const genreName = uniqueName("終了ジャンル");
+    const genreId = await createGenre(genreName);
+    const existing = await createItem(supplierId, { genreId });
+    await systemCommand("genres.archive", { id: genreId, version: 1, archived: true });
+    const checked = await systemQuery("items.importCheck", {
+      csv: csvOf([
+        row(supplier, { 商品コード: existing.code, ジャンル: genreName }),
+        row(supplier, { ジャンル: genreName }),
+      ]),
+    });
+    expect(checked.rows[0]?.errors).toEqual([]);
+    expect(checked.rows[1]?.errors).toEqual(["ジャンル：取引終了のジャンルは選べません"]);
+  });
+
   it("自動の採番は、同じファイルで指定した商品コードと重ならない", async () => {
     const user = await createEmployee(["purchasing"]);
     const supplierId = await createSupplier();

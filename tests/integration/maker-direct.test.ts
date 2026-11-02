@@ -97,6 +97,44 @@ describe("メーカー直の受注からの発注（ユースケース）", () =
     ]);
   });
 
+  it("「発注時に仕入価格を入力する」商品は単価を空にする。仕入先ごとの明細は受注の明細の順", async () => {
+    const supplierId = await createSupplier();
+    const market = await systemCommand("items.create", {
+      name: "相場の菓子",
+      supplierId,
+      taxCategory: "reduced",
+      purchaseUnitName: "箱",
+      salesUnitName: "個",
+      unitsPerPurchaseUnit: 10,
+      purchasePriceCenti: 50_000,
+      salesPriceCenti: 8_000,
+      inputPriceOnOrder: true,
+    });
+    const fixed = await createSalesItem(supplierId);
+    const customer = await createCustomer();
+    const so = await createOrder({
+      customerId: customer.id,
+      makerDirect: true,
+      locationId: null,
+      lines: [
+        { itemId: market.id, quantity: 5, unitPriceCenti: 8_000 },
+        { itemId: fixed.id, quantity: 13, unitPriceCenti: 15_050 },
+      ],
+    });
+    const r = await systemQuery("purchaseOrders.makerDirectDraft", {
+      salesOrderId: so.id,
+      supplierId,
+    });
+    expect(r.draft?.deliveryRequestedOn).toBeNull();
+    expect(
+      r.draft?.lines.map((l) => [l.itemName, l.quantity, l.surplusUnits, l.unitPriceCenti]),
+    ).toEqual([
+      ["相場の菓子", 1, 5, null],
+      [fixed.name, 2, 11, 120_000],
+    ]);
+    expect(r.draft?.supplierName).toContain("テスト仕入先");
+  });
+
   it("作った発注は受注を覚え、受注の欄に出る。同じ仕入先の2枚目は作れず、取り消すと作り直せる", async () => {
     const setup = await makerDirectOrder();
     const po = await systemCommand("purchaseOrders.create", linkedInput(setup));
