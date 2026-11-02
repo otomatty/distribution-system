@@ -128,6 +128,7 @@ docs/requirements.md 要件定義書の写し
 | `bun run test`                      | 単体テストと結合テスト（Vitest）                                                            |
 | `bun run test:e2e`                  | E2E テスト（Playwright）                                                                    |
 | `bun run knip`                      | 使われていないコードと依存の検出                                                            |
+| `bun run secrets`                   | 秘密情報の混入チェック（secretlint）。`bun run check`、コミット時のフック、CI でも動く      |
 | `bun run db:generate`               | Drizzle のマイグレーションを生成                                                            |
 | `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定）                                                |
 | `bun run db:migrate:local`          | ログイン情報（D1）のマイグレーションを手元に適用                                            |

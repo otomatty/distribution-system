@@ -34,7 +34,7 @@ bun run dev                      # http://localhost:8787
 ## 検査
 
 ```sh
-bun run check      # 整形・lint・型・テスト・未使用コードの検出
+bun run check      # 秘密情報の混入・整形・lint・型・テスト・未使用コードの検出
 bun run test:e2e   # E2E テスト（Playwright）
 ```
 
