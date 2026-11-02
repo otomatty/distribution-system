@@ -161,7 +161,7 @@ async function main() {
       path: "/sales-orders/csv",
       form: { shipFrom: ago.from, shipTo: ago.from.replace(/-01$/, "-07") },
     },
-    { name: "CSV：在庫一覧", path: "/stock/export.csv" },
+    { name: "CSV：在庫一覧", path: "/stock/csv", form: {} },
     {
       name: "CSV：請求書一覧（発行日の1か月）",
       path: "/invoices/csv",
