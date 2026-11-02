@@ -463,11 +463,13 @@ export const getSalesOrder = defineQuery({
       charges: order.charges,
       withStock: open,
     });
+    const hasReturns = ctx.stores.salesReturns.hasActive(id);
     const shipments = ctx.stores.shipments
       .historyFor(id)
       .map((s): SalesOrderView["shipments"][number] =>
         Object.assign(s, {
-          cancellable: !s.cancelled && cancelShipment(order.status, s.invoiceId !== null).ok,
+          cancellable:
+            !s.cancelled && cancelShipment(order.status, s.invoiceId !== null, hasReturns).ok,
         }),
       );
     return {

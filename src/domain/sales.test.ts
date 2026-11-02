@@ -34,6 +34,7 @@ describe("sales order", () => {
     expect(cancelShipment("shipped", false)).toEqual({ ok: true, value: "received" });
     expect(cancelShipment("shipped", true).ok).toBe(false);
     expect(cancelShipment("received", false).ok).toBe(false);
+    expect(cancelShipment("shipped", false, true).ok).toBe(false);
   });
   it("分割", () => {
     const lines = [

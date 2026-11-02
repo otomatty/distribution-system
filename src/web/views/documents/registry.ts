@@ -20,7 +20,9 @@ import {
   type Orientation,
 } from "../../../domain/documents";
 import { err, ok, type Result } from "../../../domain/result";
+import { creditNoteTemplate } from "./credit-note";
 import { deliveryNoteTemplate } from "./delivery-note";
+import { invoiceTemplate } from "./invoice";
 import { PrintDocument } from "./layout";
 import { purchaseOrderTemplate } from "./purchase-order";
 import type { DocumentMeta, DocumentTemplate, RenderedSheet } from "./template";
@@ -36,6 +38,8 @@ export { defineTemplate } from "./template";
 export const documentTemplates: Partial<Record<DocumentType, DocumentTemplate>> = {
   delivery_note: deliveryNoteTemplate,
   purchase_order: purchaseOrderTemplate,
+  invoice: invoiceTemplate,
+  credit_note: creditNoteTemplate,
 };
 
 export interface DocumentSource {

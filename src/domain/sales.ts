@@ -32,14 +32,20 @@ export function cancelSalesOrder(status: SalesOrderStatus): Result<"cancelled"> 
     : err("invalid_state", "発送前の受注だけを取り消せます");
 }
 
-/** 発送の取消：請求書が未発行または取消済みのときだけ可能（実質的に入金前のみ）。 */
+/**
+ * 発送の取消：請求書が未発行または取消済みのときだけ可能（実質的に入金前のみ）。
+ * 返品伝票（取り消していないもの）があれば、在庫が二重に戻るので先に返品伝票を取り消す。
+ */
 export function cancelShipment(
   status: SalesOrderStatus,
   hasActiveInvoice: boolean,
+  hasActiveReturns = false,
 ): Result<"received"> {
   if (status !== "shipped") return err("invalid_state", "発送済みの受注だけ発送を取り消せます");
   if (hasActiveInvoice)
     return err("invalid_state", "請求書が発行されています。先に請求書を取り消してください");
+  if (hasActiveReturns)
+    return err("invalid_state", "返品伝票があります。先に返品伝票を取り消してください");
   return ok("received");
 }
 
