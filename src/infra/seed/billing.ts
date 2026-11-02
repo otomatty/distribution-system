@@ -1,9 +1,11 @@
 /**
- * テストデータの手順「請求」（取引の手順の後に、同じ期間を1日ずつ進める）：
+ * テストデータの請求の区分の1日（取引の手順の1日の最後に行う。operations.ts）：
  * 返品伝票 → 発送ごとの請求書（締め日のない販売先）→ 締め処理（締め日のある販売先）→ 返還請求書 →
- * 入金と消込 → 販売先廃棄。日曜は休み。書き込みはすべて請求の区分のユースケースを通す。
+ * 入金と消込 → 販売先廃棄。書き込みはすべて請求の区分のユースケースを通す。
  *
- * - 取引の手順で、発送の取消は発送の翌日に済んでいる。ここでは前日の発送を請求する（取り消した発送は載らない）
+ * - 取引の後に期間をまとめて請求すると、途中までは3年分の発送が未請求のまま残る（実際の運用にない状態で、
+ *   未請求の発送を探す照会が遅くなる）。そのため、取引と同じ日の中で毎日請求する
+ * - 発送の取消は発送の翌日の取引で済んでいる。ここでは前日の発送を請求する（取り消した発送は載らない）
  * - 返品伝票は発送の数日後に、ごく一部だけ記録する（在庫に戻すか廃棄か）。未請求の返品は次の請求書にマイナスで載る
  * - 入金：締め日のない販売先は曜日を決めて週に1回、翌週までに期限の来る請求書をまとめて払う。締め日のある販売先は
  *   期限の日に払う。ごく一部は一部だけ入金・振込手数料を差し引いて入金・期限を過ぎても未入金のままにする
@@ -379,21 +381,12 @@ function recordDisposals(session: SeedSession, world: World, day: SeedDay): void
   }
 }
 
-/** 請求の手順の chunk 番目（取引の手順と同じ日数ずつ）。戻り値は画面に出す期間 */
-export function runBilling(session: SeedSession, world: World, chunk: number): string {
-  const { scale, from, today } = session.period;
-  const first = chunk * scale.daysPerChunk;
-  const last = Math.min(scale.days, first + scale.daysPerChunk) - 1;
-  for (let index = first; index <= last; index += 1) {
-    const date = addDays(from, index);
-    if (weekday(date) === 0) continue;
-    const day: SeedDay = { date, index, isToday: date === today };
-    recordSalesReturns(session, day);
-    closeMonth(session, day);
-    issuePerShipment(session, day);
-    issueCreditNotes(session, day);
-    receivePayments(session, world, day);
-    recordDisposals(session, world, day);
-  }
-  return `${addDays(from, first)}〜${addDays(from, last)}`;
+/** 請求の区分の1日（日曜は呼ばれない） */
+export function billingDay(session: SeedSession, world: World, day: SeedDay): void {
+  recordSalesReturns(session, day);
+  closeMonth(session, day);
+  issuePerShipment(session, day);
+  issueCreditNotes(session, day);
+  receivePayments(session, world, day);
+  recordDisposals(session, world, day);
 }

@@ -1,10 +1,8 @@
 /**
  * テストデータの手順「取引」：期間の1日ずつ、業務の流れの順に操作する。
  * 1日の中の順番：入荷 → 第二倉庫への移動 → 発送 → 受注 → 受注の変更 → 発注 → 仕入返品 → 取消 →
- * 在庫操作 → 棚卸 → 仕入先請求書 → 支払。日曜は休み。
- *
- * 請求の区分（請求書・締め処理・入金と消込・返品伝票・販売先廃棄）は別の手順（billing.ts）で、
- * 取引の手順の後に同じ期間を1日ずつ進めて作る（発送とその取消は、請求書の発行より前に終わっているため）。
+ * 在庫操作 → 棚卸 → 仕入先請求書 → 支払 → 請求の区分（返品伝票・請求書・締め処理・返還請求書・
+ * 入金と消込・販売先廃棄。billing.ts）。日曜は休み。
  */
 import { and, eq } from "drizzle-orm";
 
@@ -13,6 +11,7 @@ import { updateEmployee } from "../../usecases/masters/employees";
 import { discontinueItem } from "../../usecases/masters/items";
 import { archivePartner } from "../../usecases/masters/partners";
 import * as schema from "../db/schema";
+import { billingDay } from "./billing";
 import { employeeEmail } from "./names";
 import {
   cancelMistakenReceipts,
@@ -44,6 +43,7 @@ const DAILY: readonly ((session: SeedSession, world: World, day: SeedDay) => voi
   stocktake,
   registerSupplierInvoices,
   (s, _w, d) => paySupplierInvoices(s, d),
+  billingDay,
 ];
 
 /** 期間の途中（55% の日）に、取引の終わった販売先・取扱終了の商品・退職した社員を記録する */

@@ -8,11 +8,10 @@
  * - 乱数の種は固定（scale.ts の SEED）。同じ基準日（今日）なら毎回同じデータになる
  * - 帳票は索引をすべて登録し、PDF は最近の数日分だけ作る（scale.renderDays）
  *
- * 手順を足すときは STEPS に追加する。請求の区分（請求書・締め処理・入金と消込・返品伝票・販売先廃棄）は、
- * 取引（operations）の後の billing の手順で、同じ期間を1日ずつ進めて作る（billing.ts）。
+ * 手順を足すときは STEPS に追加する。毎日の操作は operations.ts の DAILY に足す。請求の区分（返品伝票・
+ * 請求書・締め処理・返還請求書・入金と消込・販売先廃棄）は billing.ts で、取引の1日の最後に行う。
  */
 import { err, ok, type Result } from "../../domain/result";
-import { runBilling } from "./billing";
 import {
   allItemSpecs,
   allPartnerSpecs,
@@ -83,18 +82,10 @@ const STEPS: readonly SeedStep[] = [
   },
   {
     name: "operations",
-    label: "発注・入荷・受注・発送・在庫操作・仕入先請求書・支払",
+    label: "取引（発注・入荷・受注・発送・在庫操作・支払・請求・入金・返品・販売先廃棄）",
     chunks: ({ scale }) => Math.ceil(scale.days / scale.daysPerChunk),
     run(session, chunk) {
       return ok(runOperations(session, chunk));
-    },
-  },
-  {
-    name: "billing",
-    label: "返品伝票・請求書・締め処理・返還請求書・入金と消込・販売先廃棄",
-    chunks: ({ scale }) => Math.ceil(scale.days / scale.daysPerChunk),
-    run(session, chunk) {
-      return ok(runBilling(session, loadWorld(session), chunk));
     },
   },
 ];
