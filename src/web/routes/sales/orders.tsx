@@ -8,6 +8,7 @@ import { toBusinessDate } from "../../../domain/dates";
 import { parseYenToCenti } from "../../../domain/money";
 import type { DomainError } from "../../../domain/result";
 import { SALES_ORDER_STATUS_LABELS, type SalesOrderStatus } from "../../../domain/sales";
+import type { OrderReturns } from "../../../usecases/billing/returns";
 import type { MakerDirectPlan } from "../../../usecases/purchasing/maker-direct";
 import type { OrderEvaluation } from "../../../usecases/sales/evaluate";
 import type { SalesOrderView } from "../../../usecases/sales/orders";
@@ -19,6 +20,7 @@ import { hasPermission } from "../../middleware";
 import { paths, type Query } from "../../paths";
 import type { AppEnv } from "../../types";
 import { queryAs, runCommand, runQuery } from "../../usecase";
+import { SalesReturnsSection } from "../../views/billing";
 import {
   Alert,
   Badge,
@@ -677,8 +679,11 @@ salesOrderRoutes.post("/form/ship-date", async (c) => {
 
 function DetailBody(props: {
   view: SalesOrderView;
+  /** 返品伝票の欄（請求の区分の照会） */
+  returns: OrderReturns | null;
   canManage: boolean;
   canShip: boolean;
+  canReturn: boolean;
   notice?: string | undefined;
   error?: DomainError | undefined;
   shortages?: readonly ShortageDetail[] | undefined;
@@ -827,7 +832,13 @@ function DetailBody(props: {
                         <Badge kind="success">有効</Badge>
                       )}
                     </td>
-                    <td>{s.invoiceId ? <Badge kind="info">請求書に記載済み</Badge> : "未請求"}</td>
+                    <td>
+                      {s.invoiceId ? (
+                        <a href={paths.invoice(s.invoiceId)}>請求書に記載済み</a>
+                      ) : s.cancelled ? null : (
+                        <a href={paths.invoiceNew({ shipmentId: s.id })}>未請求</a>
+                      )}
+                    </td>
                     <td>
                       {s.deliveryNote ? (
                         <>
@@ -895,6 +906,9 @@ function DetailBody(props: {
           </div>
         )}
       </section>
+      {props.returns ? (
+        <SalesReturnsSection orderId={order.id} data={props.returns} canManage={props.canReturn} />
+      ) : null}
       {actions.cancel && props.canManage ? (
         <section class="card">
           <h2>受注の取消</h2>
@@ -947,6 +961,7 @@ async function detailBody(
 ) {
   const view = await runQuery(c, "salesOrders.get", { id });
   if (!view) return null;
+  const returns = await runQuery(c, "salesReturns.forOrder", { salesOrderId: id });
   const roles = c.get("actor").roles;
   const shortages =
     extra.error?.code === "insufficient_stock"
@@ -958,8 +973,10 @@ async function detailBody(
   return (
     <DetailBody
       view={view}
+      returns={returns}
       canManage={hasPermission(roles, "salesOrders.manage")}
       canShip={hasPermission(roles, "shipments.manage")}
+      canReturn={hasPermission(roles, "salesReturns.manage")}
       notice={extra.notice}
       error={extra.error}
       shortages={shortages}

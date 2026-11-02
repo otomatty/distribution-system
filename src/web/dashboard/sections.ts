@@ -9,6 +9,7 @@
  * load が失敗しても、ほかの欄は表示する（失敗した欄にはその旨を出す）。
  */
 import type { Role } from "../../domain/roles";
+import { billingSection } from "./billing";
 import { platformSection } from "./platform";
 import { payablesSection, purchasingSection } from "./purchasing";
 import { salesSection } from "./sales";
@@ -19,6 +20,7 @@ export const dashboardSections: readonly DashboardSection[] = [
   purchasingSection,
   salesSection,
   payablesSection,
+  billingSection,
   platformSection,
 ];
 

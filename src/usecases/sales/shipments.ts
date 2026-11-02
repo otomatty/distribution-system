@@ -149,7 +149,11 @@ export const cancelShipmentCommand = defineCommand({
     if (shipment.cancelled) return err("invalid_state", "この発送はすでに取り消されています");
     const order = ctx.stores.salesOrders.get(shipment.salesOrderId);
     if (!order) return err("not_found", "受注が見つかりません");
-    const next = cancelShipment(order.status, shipment.invoiceId !== null);
+    const next = cancelShipment(
+      order.status,
+      shipment.invoiceId !== null,
+      ctx.stores.salesReturns.hasActive(order.id),
+    );
     if (!next.ok) return next;
     if (!ctx.stores.shipments.cancel(shipmentId, v, reason, meta(ctx)))
       return err("conflict", STALE_VERSION_MESSAGE);
