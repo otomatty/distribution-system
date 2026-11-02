@@ -117,7 +117,10 @@ function storeFilter(
   return { ...rest, itemIds: [...alerts] };
 }
 
-/** 在庫一覧（商品×保管場所の現在庫・引当数・出荷可能数・入荷予定数・発注点割れ） */
+/**
+ * 在庫一覧（商品×保管場所の現在庫・引当数・出荷可能数・入荷予定数・発注点割れ）。
+ * CSV も同じ照会をページごとに呼んで作る（web/csv-exports.ts の stock。2,000件を超えると非同期）
+ */
 export const listStock = defineQuery({
   permission: "view",
   input: pageInput.extend(listFilterInput),
@@ -127,18 +130,6 @@ export const listStock = defineQuery({
     if (!f) return { rows: [], total: 0, page, pageSize };
     const result = ctx.stores.stock.listBalances(f, page, pageSize);
     return { ...result, rows: decorate(ctx.stores, result.rows, alerts) };
-  },
-});
-
-/** CSV 出力用：在庫一覧と同じ条件のすべての行（最大 20,000 行） */
-export const exportStock = defineQuery({
-  permission: "view",
-  input: z.object(listFilterInput),
-  run(ctx, filter): StockListItem[] {
-    const alerts = new Set(reorderAlerts(ctx.stores).map((a) => a.itemId));
-    const f = storeFilter(filter, alerts);
-    if (!f) return [];
-    return decorate(ctx.stores, ctx.stores.stock.allBalances(f, 20_000), alerts);
   },
 });
 

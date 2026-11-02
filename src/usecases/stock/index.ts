@@ -2,7 +2,6 @@
 import { createStockOperation, getStockOperation, listStockOperations } from "./operations";
 import {
   describeShortages,
-  exportStock,
   getItemStock,
   getStockLevels,
   listLedger,
@@ -18,7 +17,6 @@ export const stockCommands = {
 
 export const stockQueries = {
   "stock.list": listStock,
-  "stock.export": exportStock,
   "stock.item": getItemStock,
   "stock.ledger": listLedger,
   "stock.levels": getStockLevels,
