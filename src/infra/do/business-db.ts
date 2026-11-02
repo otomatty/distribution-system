@@ -748,7 +748,7 @@ export class BusinessDb extends DurableObject<Env> {
     });
     return {
       db: this.db,
-      command: (def, input, actorEmail, at, renderDocuments) => {
+      command: (def, input, actorEmail, at, renderDocuments, key) => {
         const actor = actorFor(actorEmail);
         if (!actor) return err("unauthenticated", `有効な社員 ${actorEmail} が登録されていません`);
         if (!can(actor.roles, def.permission))
@@ -758,14 +758,22 @@ export class BusinessDb extends DurableObject<Env> {
           return err("validation", "入力内容を確認してください", {
             fields: zodFields(parsed.error),
           });
-        const jobs: string[] = [];
         const name = commandNames.get(def) ?? "seed";
+        // 受付番号が処理済みなら実行しない（投入をやり直しても二重に作らない）。1回分の投入は1つの
+        // トランザクションで、終わった回は seed:done で飛ばすので、ふつうはここに来ない
+        const done = this.db
+          .select({ command: schema.idempotencyKeys.command })
+          .from(schema.idempotencyKeys)
+          .where(eq(schema.idempotencyKeys.key, key))
+          .get();
+        if (done) return err("duplicate", `受付番号 ${key}（${done.command}）は処理済みです`);
+        const jobs: string[] = [];
         const r = this.transact(
           def,
           name,
           parsed.data,
           actor,
-          null,
+          key,
           options(at, renderDocuments),
           jobs,
         );

@@ -19,7 +19,8 @@ export interface SeedHost {
   readonly db: Db;
   /**
    * 社員（メールアドレス。"system" はシステム、"admin" は最初の管理者）として、at の時刻にコマンドを実行する。
-   * renderDocuments が false なら、発行した帳票の PDF 化を予約しない
+   * renderDocuments が false なら、発行した帳票の PDF 化を予約しない。
+   * key は受付番号（冪等キー）。処理済みの番号なら、実行せずに前回の結果を返す
    */
   command<S extends z.ZodType, O>(
     def: CommandDef<S, O>,
@@ -27,6 +28,7 @@ export interface SeedHost {
     actor: string,
     at: Date,
     renderDocuments: boolean,
+    key: string,
   ): Result<O>;
   /** システムとして、at の時刻に照会する */
   query<S extends z.ZodType, O>(def: QueryDef<S, O>, input: z.input<S>, at: Date): Result<O>;
@@ -103,9 +105,14 @@ export class SeedSession {
   rejected = 0;
   readonly rejections: string[] = [];
 
+  /**
+   * keyPrefix は受付番号の先頭（`seed:<規模>:<手順>:<回>`）。コマンドの受付番号は、その後ろに
+   * 1回の中で何番目のコマンドかを付ける（乱数の種が固定なので、同じデータなら毎回同じ番号になる）
+   */
   constructor(
     readonly host: SeedHost,
     readonly period: SeedPeriod,
+    readonly keyPrefix: string,
   ) {}
 
   private readonly seen = new Set<string>();
@@ -139,7 +146,8 @@ export class SeedSession {
   ): O | undefined {
     this.commands += 1;
     const render = toBusinessDate(at) >= this.period.renderFrom;
-    const r = this.host.command(def, input, actorEmail(actor), at, render);
+    const key = `${this.keyPrefix}:${this.commands}`;
+    const r = this.host.command(def, input, actorEmail(actor), at, render, key);
     if (r.ok) return r.value;
     this.rejected += 1;
     if (this.rejections.length < 20) {

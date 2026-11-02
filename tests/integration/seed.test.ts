@@ -294,6 +294,16 @@ describe("テストデータの投入（tiny）", () => {
         .filter((r) => r.creditNoteNumber !== null).length,
       payments: db.select().from(schema.customerPayments).all().length,
       disposals: db.select().from(schema.disposals).all().length,
+      linkedPurchaseOrders: db
+        .select()
+        .from(schema.purchaseOrders)
+        .all()
+        .filter((p) => p.salesOrderId !== null).length,
+      keys: db
+        .select({ key: schema.idempotencyKeys.key })
+        .from(schema.idempotencyKeys)
+        .all()
+        .map((k) => k.key),
     }));
     expect([...shape.poStatuses].toSorted()).toEqual(
       ["cancelled", "draft", "ordered", "paid", "received"].toSorted(),
@@ -323,6 +333,12 @@ describe("テストデータの投入（tiny）", () => {
     expect(shape.creditNotes).toBeGreaterThan(0);
     expect(shape.payments).toBeGreaterThan(0);
     expect(shape.disposals).toBeGreaterThan(0);
+    // メーカー直の受注ごとに、受注に結びつけた発注がある
+    expect(shape.linkedPurchaseOrders).toBe(shape.makerDirect);
+    // コマンドはすべて、決まった受付番号（seed:<規模>:<手順>:<回>:<何番目>）で記録する
+    expect(shape.keys).toHaveLength(first.commands);
+    expect(shape.keys).toContain("seed:tiny:settings:0:1");
+    expect(shape.keys.every((k) => /^seed:tiny:[a-zA-Z]+:\d+:\d+$/.test(k))).toBe(true);
 
     // 済んだ回をやり直しても（応答が届かなかったときなど）、前回の結果を返すだけで二重に投入しない
     const before = await fingerprint();

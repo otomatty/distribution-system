@@ -111,7 +111,7 @@ export function runSeed(
   if (!step) return err("not_found", `手順「${request.step}」はありません`);
   if (request.chunk >= step.chunks(period))
     return err("validation", `手順「${step.name}」は ${step.chunks(period)} 回までです`);
-  const session = new SeedSession(host, period);
+  const session = new SeedSession(host, period, `seed:${scale.name}:${step.name}:${request.chunk}`);
   const done = step.run(session, request.chunk);
   if (!done.ok) return done;
   return ok({
