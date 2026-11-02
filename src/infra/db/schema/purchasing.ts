@@ -41,6 +41,8 @@ export const purchaseOrders = sqliteTable(
     uniqueIndex("purchase_orders_number").on(t.number),
     index("purchase_orders_status").on(t.status, t.orderedOn),
     index("purchase_orders_supplier").on(t.supplierId),
+    // メーカー直の受注から作った発注を、受注詳細と発注の作成で引く
+    index("purchase_orders_sales_order").on(t.salesOrderId),
   ],
 );
 

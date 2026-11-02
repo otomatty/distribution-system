@@ -1,0 +1,1 @@
+CREATE INDEX `purchase_orders_sales_order` ON `purchase_orders` (`sales_order_id`);
