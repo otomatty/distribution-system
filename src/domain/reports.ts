@@ -43,20 +43,16 @@ export const REPORT_AXIS_LABELS: Readonly<Record<ReportAxis, string>> = {
   item: "商品",
 };
 
+const VIEW_PARTS: Readonly<Record<ReportView, { measure: ReportMeasure; axis: ReportAxis }>> = {
+  sales_customer: { measure: "sales", axis: "customer" },
+  sales_item: { measure: "sales", axis: "item" },
+  sales_supplier: { measure: "sales", axis: "supplier" },
+  purchases_supplier: { measure: "purchases", axis: "supplier" },
+  purchases_item: { measure: "purchases", axis: "item" },
+};
+
 export function reportViewParts(view: ReportView): { measure: ReportMeasure; axis: ReportAxis } {
-  switch (view) {
-    case "sales_customer":
-      return { measure: "sales", axis: "customer" };
-    case "sales_item":
-      return { measure: "sales", axis: "item" };
-    case "sales_supplier":
-      return { measure: "sales", axis: "supplier" };
-    case "purchases_supplier":
-      return { measure: "purchases", axis: "supplier" };
-    case "purchases_item":
-      return { measure: "purchases", axis: "item" };
-  }
-  return { measure: "sales", axis: "customer" };
+  return VIEW_PARTS[view];
 }
 
 /** 送料などを含めるか（商品に割り振れないので、販売先別だけ） */
@@ -178,14 +174,8 @@ export function addLineAggregates(
  */
 export function sumLineAmounts(agg: LineAmountAggregate, mode: RoundingMode): number {
   const floor = (agg.centi - agg.remainder) / 100;
-  switch (mode) {
-    case "floor":
-      return floor;
-    case "ceil":
-      return floor + agg.fractional;
-    case "round":
-      return floor + agg.halfOrMore;
-  }
+  if (mode === "ceil") return floor + agg.fractional;
+  if (mode === "round") return floor + agg.halfOrMore;
   return floor;
 }
 

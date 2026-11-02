@@ -81,15 +81,14 @@ export interface MonthlyReport {
   readonly grandTotal: number;
 }
 
+/** 売上の明細の金額（明細ごとに丸めた合計）と返品（マイナス）。送料などは行の区分によって別に足す */
 function salesEntries(
   lines: readonly LineAggregateRow[],
-  charges: readonly AmountRow[],
   returns: readonly AmountRow[],
   mode: RoundingMode,
 ): ReportEntry[] {
   return [
     ...lines.map((l) => ({ key: l.key ?? "", month: l.month, amount: sumLineAmounts(l, mode) })),
-    ...charges.map((c) => ({ key: c.key ?? "", month: c.month, amount: c.amount })),
     ...returns.map((r) => ({ key: r.key ?? "", month: r.month, amount: -r.amount })),
   ];
 }
@@ -124,7 +123,7 @@ function compute(ctx: Pick<QueryContext, "clock" | "stores">, f: Filter): Result
   const lines = store.shippedLines(range, salesAxis);
   const chargesByCustomer = salesAxis === "customer";
   const charges = store.shippedCharges(range, chargesByCustomer);
-  const sales = salesEntries(lines, [], store.salesReturns(range, salesAxis), mode);
+  const sales = salesEntries(lines, store.salesReturns(range, salesAxis), mode);
   const salesMonthly = monthlyTotals(months, [
     ...sales,
     ...charges.map((c) => ({ key: "", month: c.month, amount: c.amount })),
