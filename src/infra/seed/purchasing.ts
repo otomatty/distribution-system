@@ -54,6 +54,8 @@ export function placeOrder(
   lines: readonly PurchaseLine[],
   clock: DayClock,
   key: string,
+  /** メーカー直の受注から作るとき、その受注（発注と受注を相互に表示する） */
+  salesOrderId: string | null = null,
 ): string | undefined {
   const r = session.random("po", day.date, supplier.name, key);
   const buyer = r.pick(BUYERS);
@@ -71,6 +73,7 @@ export function placeOrder(
       employeeId: employeeId(world, buyer),
       deliveryRequestedOn: addDays(day.date, lead),
       paymentDueOn: null,
+      salesOrderId,
       memo: r.chance(0.05) ? "先方の在庫を確認済み" : null,
       lines: lines.map((l) => ({
         itemId: l.item.id,

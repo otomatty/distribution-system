@@ -160,6 +160,7 @@ function takeOrder(
     })),
     clock,
     created.number,
+    created.id,
   );
 }
 
