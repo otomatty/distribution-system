@@ -380,6 +380,13 @@ export function cancelOrders(session: SeedSession, day: SeedDay): void {
       .all();
   for (const po of select("ordered", addDays(day.date, -1))) {
     if (!session.random("po-cancel", po.number).chance(0.01)) continue;
+    // 入荷が始まった発注は取り消せない（リードタイムが1日なら、もう届いていることがある）
+    const received = db
+      .select({ id: schema.receipts.id })
+      .from(schema.receipts)
+      .where(and(eq(schema.receipts.purchaseOrderId, po.id), eq(schema.receipts.cancelled, false)))
+      .get();
+    if (received) continue;
     session.run(
       cancelPurchaseOrder,
       { id: po.id, version: po.version, reason: "仕入先の欠品のため取消" },
@@ -403,7 +410,7 @@ export function cancelOrders(session: SeedSession, day: SeedDay): void {
 }
 
 /**
- * 仕入先請求書：締め日のある仕入先は締め日の3日後に、締め期間までの未請求の入荷と仕入返品で登録する。
+ * 仕入先請求書：締め日のある仕入先は締め日の3日後（日曜なら翌日）に、締め期間までの未請求の入荷と仕入返品で登録する。
  * 締め日のない仕入先は、毎週月曜に3日以上前の未請求の入荷で登録する。たまに送料と差額がある。
  */
 export function registerSupplierInvoices(session: SeedSession, world: World, day: SeedDay): void {
@@ -413,7 +420,8 @@ export function registerSupplierInvoices(session: SeedSession, world: World, day
     let to: string;
     if (s.terms) {
       const period = latestClosedPeriod(day.date, s.terms.closingDay);
-      if (addDays(period.to, 3) > day.date) continue;
+      // 締め日の3日後に登録する（日曜に当たれば翌日。それより後の日は調べない）
+      if (addDays(period.to, 3) > day.date || addDays(period.to, 5) < day.date) continue;
       to = period.to;
     } else {
       if (weekday(day.date) !== 1) continue;
