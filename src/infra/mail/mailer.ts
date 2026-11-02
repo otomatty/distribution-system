@@ -1,9 +1,11 @@
 /**
  * メールの送信（要件定義書 7章 帳票のメール送付）。送信の部分は差し替えられる作りにする。
- * - 本番・検証：Cloudflare Email Service（バインディング EMAIL）
- * - 開発・テスト（EMAIL がない）：送らずにログに出す（宛先は伏せる）
- * Email Service に問題が出たら、Mailer を実装した Resend の送信に差し替える。
+ * 環境変数 MAIL_PROVIDER で選ぶ（切り替えの手順は docs/operations.md 1章）。
+ * - email_service（既定）：Cloudflare Email Service（バインディング EMAIL）。EMAIL がない開発・テストでは、送らずにログに出す（宛先は伏せる）
+ * - resend：Email Service に問題が出たときの予備。Resend の REST API に fetch で送る（API キーは Secrets の RESEND_API_KEY）
  */
+import { z } from "zod";
+
 import { InfraError } from "../errors";
 import { log } from "../observability/log";
 
@@ -22,6 +24,11 @@ export interface MailMessage {
   readonly subject: string;
   readonly text: string;
   readonly attachments: readonly MailAttachment[];
+  /**
+   * 同じメールを二重に送らないための番号（送付履歴の ID など）。Resend は24時間、同じ番号の送信を1回にする。
+   * Email Service には渡さない
+   */
+  readonly idempotencyKey?: string;
 }
 
 export interface Mailer {
@@ -125,6 +132,170 @@ const logMailer: Mailer = {
   },
 };
 
-export function mailerFor(env: Env): Mailer {
-  return env.EMAIL ? emailServiceMailer(env.EMAIL, env.MAIL_FROM) : logMailer;
+// ---- Resend（予備） ------------------------------------------------------------
+
+const RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+const CONFIG_ERROR = {
+  message: "メールの送信の設定が正しくありません（管理者に連絡してください）",
+  permanent: true,
+};
+
+/** Resend のエラー（name）→ 利用者向けの文言と、再試行するか。知らないものは HTTP の状態で分ける */
+const RESEND_ERRORS: Readonly<Record<string, { message: string; permanent: boolean }>> = {
+  validation_error: { message: "宛先や内容の形式が正しくありません", permanent: true },
+  missing_required_field: { message: "宛先・送り主・件名のどれかがありません", permanent: true },
+  invalid_parameter: { message: "宛先や内容の形式が正しくありません", permanent: true },
+  invalid_attachment: { message: "添付ファイルを送れませんでした", permanent: true },
+  invalid_from_address: {
+    message: "送信元のアドレスが正しくありません（管理者に連絡してください）",
+    permanent: true,
+  },
+  missing_api_key: CONFIG_ERROR,
+  invalid_api_key: CONFIG_ERROR,
+  restricted_api_key: CONFIG_ERROR,
+  rate_limit_exceeded: { message: "送信が混み合っています", permanent: false },
+  daily_quota_exceeded: {
+    message: "1日の送信数の上限に達しました。明日以降に再送してください",
+    permanent: false,
+  },
+  monthly_quota_exceeded: {
+    message: "1か月の送信数の上限に達しました（管理者に連絡してください）",
+    permanent: true,
+  },
+  concurrent_idempotent_requests: { message: "同じメールを送信中です", permanent: false },
+  invalid_idempotent_request: {
+    message: "同じ送付で内容の違うメールを送ろうとしました（再送してください）",
+    permanent: true,
+  },
+  application_error: { message: "メールの送信サービスが一時的に使えません", permanent: false },
+  internal_server_error: { message: "メールの送信サービスが一時的に使えません", permanent: false },
+};
+
+const resendErrorBody = z.object({ name: z.string().optional(), message: z.string().optional() });
+const resendSuccessBody = z.object({ id: z.string() });
+
+async function readJson(res: Response): Promise<unknown> {
+  try {
+    const body: unknown = await res.json();
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+export function toResendError(status: number, body: unknown): InfraError {
+  const parsed = resendErrorBody.safeParse(body);
+  const name = parsed.success ? parsed.data.name?.toLowerCase() : undefined;
+  const detail = {
+    status,
+    name: name ?? null,
+    error: parsed.success ? (parsed.data.message ?? null) : null,
+  };
+  const known = name === undefined ? undefined : RESEND_ERRORS[name];
+  if (known) return new InfraError(`${known.message}（Resend: ${name}）`, known.permanent, detail);
+  if (status === 401 || status === 403) return new InfraError(CONFIG_ERROR.message, true, detail);
+  if (status === 429 || status >= 500)
+    return new InfraError("メールの送信サービスが一時的に使えません", false, detail);
+  return new InfraError("メールの送信を断られました。宛先と内容を確認してください", true, detail);
+}
+
+/** 添付の中身（Resend は Base64 の文字列で受け取る）。Workers の btoa を使う（Node.js の Buffer は使わない） */
+export function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/** 送り主（"自社名" <アドレス>）。表示名の改行や区切りの文字は空白にする */
+function fromHeader(name: string, address: string): string {
+  const display = name.replaceAll(/[\r\n"\\<>]/g, " ").trim();
+  return display === "" ? address : `"${display}" <${address}>`;
+}
+
+function resendMailer(apiKey: string, fromAddress: string, fetcher: typeof fetch): Mailer {
+  return {
+    async send(m) {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      };
+      if (m.idempotencyKey) headers["Idempotency-Key"] = m.idempotencyKey.slice(0, 256);
+      let res: Response;
+      try {
+        res = await fetcher(RESEND_ENDPOINT, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            from: fromHeader(m.fromName, fromAddress),
+            to: [...m.to],
+            ...(m.replyTo ? { reply_to: m.replyTo } : {}),
+            subject: m.subject,
+            text: m.text,
+            attachments: m.attachments.map((a) => ({
+              filename: a.fileName,
+              content: toBase64(a.content),
+              content_type: a.contentType,
+            })),
+          }),
+        });
+      } catch (e) {
+        // 通信の失敗は再試行する
+        throw new InfraError("メールを送信できませんでした", false, {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      const body = await readJson(res);
+      if (!res.ok) throw toResendError(res.status, body);
+      const sent = resendSuccessBody.safeParse(body);
+      return { messageId: sent.success ? sent.data.id : null };
+    },
+  };
+}
+
+// ---- 送信の部分の選択 ------------------------------------------------------------
+
+/** メールの設定（環境変数・Secrets）。境界で検証してから使う */
+const mailConfig = z
+  .object({
+    MAIL_PROVIDER: z.enum(["email_service", "resend"]).default("email_service"),
+    MAIL_FROM: z.email(),
+    RESEND_API_KEY: z.string().trim().min(1).optional(),
+  })
+  .refine((c) => c.MAIL_PROVIDER !== "resend" || c.RESEND_API_KEY !== undefined, {
+    path: ["RESEND_API_KEY"],
+    message: "MAIL_PROVIDER が resend のときは Secrets に RESEND_API_KEY が必要です",
+  });
+
+export interface MailerOptions {
+  /** Resend に送る fetch（テストで差し替える） */
+  readonly fetch?: typeof fetch;
+}
+
+/**
+ * 環境に合わせた送信の部分を返す。設定が正しくなければ、再試行しない失敗（InfraError）にする
+ * （送付履歴に「設定が正しくありません」と残り、設定を直した後に画面から再送できる）
+ */
+export function mailerFor(env: Env, options: MailerOptions = {}): Mailer {
+  const config = mailConfig.safeParse({
+    MAIL_PROVIDER: env.MAIL_PROVIDER || undefined,
+    MAIL_FROM: env.MAIL_FROM,
+    RESEND_API_KEY: env.RESEND_API_KEY || undefined,
+  });
+  if (!config.success) {
+    throw new InfraError(CONFIG_ERROR.message, true, {
+      issues: config.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    });
+  }
+  const c = config.data;
+  if (c.MAIL_PROVIDER === "resend" && c.RESEND_API_KEY !== undefined) {
+    return resendMailer(
+      c.RESEND_API_KEY,
+      c.MAIL_FROM,
+      options.fetch ?? ((input, init) => fetch(input, init)),
+    );
+  }
+  return env.EMAIL ? emailServiceMailer(env.EMAIL, c.MAIL_FROM) : logMailer;
 }

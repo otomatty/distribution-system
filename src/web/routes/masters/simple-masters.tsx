@@ -42,7 +42,7 @@ interface Spec {
       notice?: string | undefined;
     }) => string;
     readonly create: () => string;
-    readonly detail: (id: string) => string;
+    readonly detail: (id: string, query?: { notice?: string | undefined }) => string;
     readonly archive: (id: string) => string;
   };
 }
@@ -252,7 +252,7 @@ export function simpleMasterRoutes(spec: Spec): Hono<AppEnv> {
     const version = int(form, "version");
     const fields = { name: str(form, "name"), displayOrder: int(form, "displayOrder") };
     const result = await runCommand(c, spec.names.update, { id, version, fields }, formKey(form));
-    if (result.ok) return redirectTo(c, `${spec.paths.detail(id)}?notice=updated`);
+    if (result.ok) return redirectTo(c, spec.paths.detail(id, { notice: "updated" }));
     return c.html(
       <MasterForm
         action={spec.paths.detail(id)}
@@ -277,10 +277,7 @@ export function simpleMasterRoutes(spec: Spec): Hono<AppEnv> {
       formKey(form),
     );
     if (result.ok)
-      return redirectTo(
-        c,
-        `${spec.paths.detail(id)}?notice=${archived ? "archived" : "unarchived"}`,
-      );
+      return redirectTo(c, spec.paths.detail(id, { notice: archived ? "archived" : "unarchived" }));
     return c.html(
       <Layout title="変更できません" actor={c.get("actor")} current={current}>
         <Alert kind="error">{result.error.message}</Alert>

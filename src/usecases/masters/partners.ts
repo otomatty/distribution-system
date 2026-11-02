@@ -196,8 +196,8 @@ export const archivePartner = defineCommand({
 
 export const deletePartner = defineCommand({
   permission: "partners.manage",
-  input: z.object({ id: idSchema }),
-  run(ctx, { id }) {
+  input: z.object({ id: idSchema, version }),
+  run(ctx, { id, version: v }) {
     const before = ctx.stores.partners.get(id);
     if (!before) return err("not_found", "取引先が見つかりません");
     if (ctx.stores.partners.isReferenced(id)) {
@@ -206,7 +206,7 @@ export const deletePartner = defineCommand({
         "取引や商品で使われている取引先は削除できません。「取引終了」にしてください",
       );
     }
-    ctx.stores.partners.delete(id);
+    if (!ctx.stores.partners.delete(id, v)) return err("conflict", STALE_VERSION_MESSAGE);
     ctx.audit.record({ entityType: "partner", entityId: id, action: "delete", before });
     return ok({ id });
   },

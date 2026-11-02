@@ -20,7 +20,7 @@ const snapshot: PurchaseOrderSnapshot = {
     email: "order@example.co.jp",
   },
   supplier: {
-    name: "かもめ製菓",
+    name: "架空製菓",
     honorific: "御中",
     contactName: "山田",
     postalCode: "0200001",
@@ -40,7 +40,7 @@ const snapshot: PurchaseOrderSnapshot = {
     {
       no: 1,
       itemCode: "IT000001",
-      itemName: "かもめの玉子 <10個入>",
+      itemName: "テスト銘菓 うみねこ <10個入>",
       jan: "4901234567894",
       quantity: 3,
       purchaseUnitName: "ケース",
@@ -96,10 +96,10 @@ describe("発注書のテンプレート", () => {
     expect(html).toContain("テスト流通株式会社");
     expect(html).toContain("登録番号：T1234567890123");
     expect(html).toContain("2026年11月2日");
-    expect(html).toContain("かもめ製菓 御中");
+    expect(html).toContain("架空製菓 御中");
     expect(html).toContain("ご担当：山田 様");
     // 値はエスケープされる
-    expect(html).toContain("かもめの玉子 &lt;10個入&gt; ※");
+    expect(html).toContain("テスト銘菓 うみねこ &lt;10個入&gt; ※");
     expect(html).toContain("※は軽減税率の対象です");
     expect(html).toContain("10%対象");
     expect(html).toContain("8%対象（軽減税率）");

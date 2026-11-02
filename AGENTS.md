@@ -138,11 +138,14 @@ docs/requirements.md 要件定義書の写し
 | `bun run test`                      | 単体テストと結合テスト（Vitest）                                                            |
 | `bun run test:e2e`                  | E2E テスト（Playwright）                                                                    |
 | `bun run knip`                      | 使われていないコードと依存の検出                                                            |
+| `bun run secrets`                   | 秘密情報の混入チェック（secretlint）。`bun run check`、コミット時のフック、CI でも動く      |
 | `bun run db:generate`               | Drizzle のマイグレーションを生成                                                            |
 | `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定。`-- --scale=full` で本番の約5倍）               |
 | `bun run perf`                      | テストデータを入れた wrangler dev で、主な画面の速さを測る（docs/performance.md）           |
 | `bun run db:migrate:local`          | ログイン情報（D1）のマイグレーションを手元に適用                                            |
 | `bun run cf-typegen`                | `wrangler.jsonc` からバインディングの型を生成                                               |
+
+開発用ログインは `ENVIRONMENT` が `development` か `test` のときだけ有効です。`wrangler.jsonc` の既定の値（`unconfigured`）では有効にならないので、`--env` を付けずに配備しても開きません。手元の開発は `bun run dev`（`--var ENVIRONMENT:development`）と `.dev.vars`、テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で値を明示的に渡します。
 
 E2E テストの Chromium は `bunx playwright install chromium` で入れます。別の場所にある Chromium を使う場合は、環境変数 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` にパスを指定してください。
 

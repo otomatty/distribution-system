@@ -1,4 +1,5 @@
-/** 共通の仕組み（帳票・送付・処理状況・CSV・バックアップ・ダッシュボード）のユースケース。追加したら下の一覧に1行ずつ登録する */
+/** 共通の仕組み（帳票・送付・処理状況・CSV・バックアップ・ダッシュボード・操作履歴）のユースケース。追加したら下の一覧に1行ずつ登録する */
+import { searchAuditLogs } from "./audit-logs";
 import {
   documentAttention,
   getDocument,
@@ -9,6 +10,7 @@ import {
   sendDocument,
 } from "./documents";
 import { enqueueBulkDocuments, enqueueCsvExport, getJob, jobAttention, listJobs } from "./jobs";
+import { previewRestore } from "./restore";
 
 export const platformCommands = {
   "documents.send": sendDocument,
@@ -26,4 +28,6 @@ export const platformQueries = {
   "jobs.list": listJobs,
   "jobs.get": getJob,
   "jobs.attention": jobAttention,
+  "auditLogs.search": searchAuditLogs,
+  "restore.preview": previewRestore,
 } as const;

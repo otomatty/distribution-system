@@ -408,7 +408,7 @@ partnerRoutes.post("/new", async (c) => {
   const form = await readForm(c);
   const input = partnerInputFromForm(form);
   const result = await runCommand(c, "partners.create", input, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.partner(result.value.id)}?notice=created`);
+  if (result.ok) return redirectTo(c, paths.partner(result.value.id, { notice: "created" }));
   return c.html(
     <PartnerForm
       action={paths.partnerNew()}
@@ -502,6 +502,7 @@ partnerRoutes.get("/:id", async (c) => {
               hx-confirm={`「${p.name}」を削除します。取引で使われている場合は削除できません。よろしいですか？`}
             >
               <FormKey />
+              <Version value={p.version} />
               <button type="submit" class="btn btn-danger">
                 削除
               </button>
@@ -614,7 +615,7 @@ partnerRoutes.post("/:id/terms", async (c) => {
     { id, version: int(form, "version"), terms },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, `${paths.partner(id)}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.partner(id, { notice: "updated" }));
   const partner = await runQuery(c, "partners.get", { id });
   if (!partner) return c.notFound();
   return c.html(
@@ -652,7 +653,7 @@ partnerRoutes.post("/:id/edit", async (c) => {
   const fields = partnerInputFromForm(form);
   const version = int(form, "version");
   const result = await runCommand(c, "partners.update", { id, version, fields }, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.partner(id)}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.partner(id, { notice: "updated" }));
   return c.html(
     <PartnerForm
       action={paths.partnerEdit(id)}
@@ -678,15 +679,20 @@ partnerRoutes.post("/:id/archive", async (c) => {
     formKey(form),
   );
   if (result.ok)
-    return redirectTo(c, `${paths.partner(id)}?notice=${archived ? "archived" : "unarchived"}`);
+    return redirectTo(c, paths.partner(id, { notice: archived ? "archived" : "unarchived" }));
   return c.text(result.error.message, 409);
 });
 
 partnerRoutes.post("/:id/delete", async (c) => {
   const id = c.req.param("id");
   const form = await readForm(c);
-  const result = await runCommand(c, "partners.delete", { id }, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.partners()}?notice=deleted`);
+  const result = await runCommand(
+    c,
+    "partners.delete",
+    { id, version: int(form, "version") },
+    formKey(form),
+  );
+  if (result.ok) return redirectTo(c, paths.partners({ notice: "deleted" }));
   return c.html(
     <Layout title="削除できません" actor={c.get("actor")} current={paths.partners()}>
       <Alert kind="error">{result.error.message}</Alert>

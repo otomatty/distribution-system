@@ -167,8 +167,13 @@ export function partnerStore(db: Db): PartnerStore {
       ];
       return checks.some((c) => c !== undefined);
     },
-    delete(id) {
-      db.delete(partners).where(eq(partners.id, id)).run();
+    delete(id, expectedVersion) {
+      const rows = db
+        .delete(partners)
+        .where(and(eq(partners.id, id), eq(partners.version, expectedVersion)))
+        .returning({ id: partners.id })
+        .all();
+      return rows.length === 1;
     },
   };
 }

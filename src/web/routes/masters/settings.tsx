@@ -246,7 +246,7 @@ settingsRoutes.post("/company", async (c) => {
   const form = await readForm(c);
   const input = companyInputFromForm(form);
   const result = await runCommand(c, "settings.updateCompany", input, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.settings()}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.settings({ notice: "updated" }));
   return c.html(
     <CompanyForm
       values={input}
@@ -271,7 +271,7 @@ settingsRoutes.post("/tax-rates", async (c) => {
     effectiveFrom: str(form, "effectiveFrom"),
   };
   const result = await runCommand(c, "settings.addTaxRate", input, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.settings()}?notice=taxRateAdded`);
+  if (result.ok) return redirectTo(c, paths.settings({ notice: "taxRateAdded" }));
   return c.html(
     <TaxRateForm
       values={{

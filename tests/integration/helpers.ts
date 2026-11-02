@@ -29,17 +29,21 @@ export async function createEmployee(roles: Role[], name = "テスト社員"): P
   return email;
 }
 
+/**
+ * システムの操作者でユースケースを呼ぶ（テストの準備）。受付番号を指定しなければ、
+ * 画面を通らない内部の処理として受付番号なしで実行する（BusinessDb.internalCommand）
+ */
 export async function systemCommand<N extends CommandName>(
   name: N,
   input: CommandInput<N>,
   key: string | null = null,
 ): Promise<CommandOutput<N>> {
-  const r = (await businessDb(env).command(
-    name,
-    input,
-    { kind: "system" },
-    key,
-  )) as Result<unknown>;
+  const db = businessDb(env);
+  const r = (
+    key === null
+      ? await db.internalCommand(name, input, { kind: "system" })
+      : await db.command(name, input, { kind: "system" }, key)
+  ) as Result<unknown>;
   if (!r.ok)
     throw new Error(`${name} failed: ${r.error.message} ${JSON.stringify(r.error.fields ?? [])}`);
   return r.value as CommandOutput<N>;

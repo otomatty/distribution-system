@@ -10,6 +10,10 @@
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "tests/**/*.ts"],
   "ignore": ["src/worker-configuration.d.ts", "src/infra/db/migrations/*.generated.ts"],
-  "ignoreDependencies": ["htmx.org", "oxlint-tsgolint"],
+  "ignoreDependencies": [
+    "htmx.org",
+    "oxlint-tsgolint",
+    "@secretlint/secretlint-rule-preset-recommend"
+  ],
   "ignoreExportsUsedInFile": true
 }

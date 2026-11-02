@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f97f3ecf-f336-4839-9629-f3a0863f5f1e",
-  "prevId": "2b46f26a-239f-404b-a8bc-eb07a807bbd2",
+  "id": "d3337709-93c1-4635-a512-e3ddb7863682",
+  "prevId": "21999580-a13d-4db2-b52a-e01a16dfcfb6",
   "tables": {
     "company_settings": {
       "name": "company_settings",
@@ -2348,6 +2348,15 @@
             "received_on"
           ],
           "isUnique": false
+        },
+        "customer_payments_customer_amount": {
+          "name": "customer_payments_customer_amount",
+          "columns": [
+            "customer_id",
+            "cancelled",
+            "amount"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -2929,6 +2938,15 @@
           "name": "payment_allocations_invoice",
           "columns": [
             "invoice_id"
+          ],
+          "isUnique": false
+        },
+        "payment_allocations_payment_amount": {
+          "name": "payment_allocations_payment_amount",
+          "columns": [
+            "payment_id",
+            "cancelled",
+            "amount"
           ],
           "isUnique": false
         }
@@ -4044,6 +4062,22 @@
             "occurred_at"
           ],
           "isUnique": false
+        },
+        "audit_logs_employee": {
+          "name": "audit_logs_employee",
+          "columns": [
+            "employee_id",
+            "occurred_at"
+          ],
+          "isUnique": false
+        },
+        "audit_logs_action": {
+          "name": "audit_logs_action",
+          "columns": [
+            "action",
+            "occurred_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -4307,6 +4341,13 @@
           "columns": [
             "document_type",
             "entity_id"
+          ],
+          "isUnique": false
+        },
+        "documents_status": {
+          "name": "documents_status",
+          "columns": [
+            "status"
           ],
           "isUnique": false
         }

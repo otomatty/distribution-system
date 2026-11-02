@@ -16,7 +16,7 @@ const snapshot: DeliveryNoteSnapshot = {
   issuedOn: "2026-10-31",
   salesOrderNumber: "SO-2026-000045",
   issuer: {
-    name: "大船渡食品流通株式会社",
+    name: "架空食品流通株式会社",
     registrationNumber: "T1234567890123",
     postalCode: "0220002",
     address: "岩手県大船渡市大船渡町1-2-3",
@@ -25,7 +25,7 @@ const snapshot: DeliveryNoteSnapshot = {
     email: null,
   },
   customer: {
-    name: "さかり商店 <本店>",
+    name: "テスト商店 <本店>",
     honorific: "御中",
     postalCode: "0220003",
     address: "岩手県大船渡市盛町4-5",
@@ -34,7 +34,7 @@ const snapshot: DeliveryNoteSnapshot = {
   lines: [
     {
       itemCode: "IT000001",
-      name: "かもめの玉子 10個入",
+      name: "テスト銘菓 うみねこ 10個入",
       quantity: 3,
       unitName: "箱",
       unitPriceCenti: 15_050,
@@ -90,12 +90,12 @@ describe("納品書のテンプレート", () => {
 
   it("インボイスの記載事項を載せる（発行者と登録番号・取引年月日・取引内容と軽減税率の対象・税率ごとの合計と消費税額・宛名）", async () => {
     const html = unwrap(await renderDocumentsHtml([{ meta, snapshot }])).html;
-    expect(html).toContain("大船渡食品流通株式会社");
+    expect(html).toContain("架空食品流通株式会社");
     expect(html).toContain("登録番号：T1234567890123");
     // 取引年月日（納品日）と発行日
     expect(html).toContain("<th>納品日</th><td>2026年10月28日</td>");
     expect(html).toContain("<th>発行日</th><td>2026年10月31日</td>");
-    expect(html).toContain("かもめの玉子 10個入 ※");
+    expect(html).toContain("テスト銘菓 うみねこ 10個入 ※");
     expect(html).toContain("※は軽減税率（8%）の対象です");
     expect(html).toContain("標準税率（10%）対象");
     expect(html).toContain("軽減税率（8%）対象");
@@ -104,7 +104,7 @@ describe("納品書のテンプレート", () => {
     expect(html).toContain("消費税 ¥36");
     expect(html).toContain("合計金額（税込） ¥2,027");
     // 宛名は敬称つきで、値はエスケープする
-    expect(html).toContain("さかり商店 &lt;本店&gt; 御中");
+    expect(html).toContain("テスト商店 &lt;本店&gt; 御中");
     expect(html).toContain("ご担当：佐藤 様");
     expect(html).toContain("¥150.50");
   });

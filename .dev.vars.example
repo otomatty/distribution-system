@@ -1,4 +1,10 @@
-# ローカル開発用の秘密情報。.dev.vars にコピーして値を入れる（.dev.vars はコミットしない）
+# ローカル開発用の設定と秘密情報。.dev.vars にコピーして値を入れる（.dev.vars はコミットしない）
+#
+# 開発用ログイン（/dev/login）を有効にする。wrangler.jsonc の既定の値は開発用ログインが有効にならない値なので、
+# 手元では明示的に development にする（bun run dev は --var でも渡す）。検証・本番の設定には書かない
+ENVIRONMENT=development
+
+# Better Auth の秘密の値（手元では適当な長い文字列でよい）と、Google ログインの OAuth クライアント（開発用ログインだけなら空でもよい）
 BETTER_AUTH_SECRET=change-me-to-a-long-random-string
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=

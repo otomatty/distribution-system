@@ -242,16 +242,32 @@ describe("商品マスタの画面", () => {
     expect(on.headers.get("Location")).toBe(`/items/${item.id}?notice=resumed`);
 
     const unused = await createItem(supplierId);
-    const del = await as(user).hx(`/items/${unused.id}/delete`, { _key: newKey() });
+    const unusedDetail = await (await as(user).get(`/items/${unused.id}`)).text();
+    expect(unusedDetail).toMatch(
+      /action="\/items\/[0-9A-Z]{26}\/delete"[\s\S]*?name="version" value="1"/,
+    );
+    // 開いた後にほかの人が更新していたら、古い版番号での削除は競合にする
+    await systemCommand("items.discontinue", { id: unused.id, version: 1, discontinued: false });
+    const staleDelete = await as(user).hx(`/items/${unused.id}/delete`, {
+      version: "1",
+      _key: newKey(),
+    });
+    expect(staleDelete.status).toBe(409);
+    expect(await staleDelete.text()).toContain("ほかの人が先に更新しました");
+    expect(await systemQuery("items.get", { id: unused.id })).not.toBeNull();
+    const del = await as(user).hx(`/items/${unused.id}/delete`, { version: "2", _key: newKey() });
     expect(del.headers.get("HX-Redirect")).toBe("/items?notice=deleted");
     expect(await systemQuery("items.get", { id: unused.id })).toBeNull();
 
     const locationId = await createLocation();
     await addInitialStock(locationId, [{ itemId: item.id, quantity: 3 }]);
-    const used = await as(user).hx(`/items/${item.id}/delete`, { _key: newKey() });
+    const used = await as(user).hx(`/items/${item.id}/delete`, { version: "3", _key: newKey() });
     expect(used.status).toBe(409);
     expect(await used.text()).toContain("取引や在庫で使われた商品は削除できません");
-    const usedPlain = await as(user).post(`/items/${item.id}/delete`, { _key: newKey() });
+    const usedPlain = await as(user).post(`/items/${item.id}/delete`, {
+      version: "3",
+      _key: newKey(),
+    });
     expect(await usedPlain.text()).toContain("取扱終了");
     const missing = await as(user).post("/items/NOPE/discontinue", {
       version: "1",
@@ -259,7 +275,10 @@ describe("商品マスタの画面", () => {
       _key: newKey(),
     });
     expect(missing.status).toBe(409);
-    const missingDelete = await as(user).hx("/items/NOPE/delete", { _key: newKey() });
+    const missingDelete = await as(user).hx("/items/NOPE/delete", {
+      version: "1",
+      _key: newKey(),
+    });
     expect(await missingDelete.text()).toContain("商品が見つかりません");
   });
 });

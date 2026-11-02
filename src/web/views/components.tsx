@@ -89,7 +89,7 @@ export function Field(
 type InputProps = {
   name: string;
   value?: string | number | null | undefined;
-  type?: "text" | "email" | "date" | "number" | "tel" | "search" | "month";
+  type?: "text" | "email" | "date" | "datetime-local" | "number" | "tel" | "search" | "month";
   error?: string | undefined;
   placeholder?: string;
   required?: boolean;

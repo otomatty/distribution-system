@@ -11,6 +11,13 @@ export type ActorRef =
   | { readonly kind: "system" }
   | { readonly kind: "employee"; readonly employeeId: string };
 
+/** 画面を通らない内部の処理の操作者（受付番号なしで操作を実行できる。BusinessDb.internalCommand） */
+export type InternalActorRef = Extract<ActorRef, { readonly kind: "system" | "employee" }>;
+
+export function isInternalActorRef(ref: { readonly kind: string }): boolean {
+  return ref.kind === "system" || ref.kind === "employee";
+}
+
 export function isDevAuthAllowed(environment: string): boolean {
   return environment === "development" || environment === "test";
 }

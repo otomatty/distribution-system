@@ -198,7 +198,7 @@ employeeRoutes.post("/new", async (c) => {
   const form = await readForm(c);
   const input = { email: str(form, "email"), name: str(form, "name"), roles: rolesFromForm(form) };
   const result = await runCommand(c, "employees.create", input, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.employees()}?notice=created`);
+  if (result.ok) return redirectTo(c, paths.employees({ notice: "created" }));
   return c.html(
     <NewEmployeeForm values={input} errors={toFormErrors(result.error)} error={result.error} />,
   );
@@ -239,7 +239,7 @@ employeeRoutes.post("/:id", async (c) => {
   };
   const version = int(form, "version");
   const result = await runCommand(c, "employees.update", { id, version, ...values }, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.employee(id)}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.employee(id, { notice: "updated" }));
   return c.html(
     <EditEmployeeForm
       employee={employee}

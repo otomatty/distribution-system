@@ -22,6 +22,32 @@ function toUtcDate(date: string): Date {
   return new Date(`${date}T00:00:00Z`);
 }
 
+/**
+ * 業務日（日本時間）が始まる時刻を、UTC の ISO 文字列で返す。
+ * 日時（UTC）で保存したもの（操作履歴など）を業務日の範囲で絞り込むときに使う。
+ */
+export function startOfBusinessDay(date: string): string {
+  return new Date(toUtcDate(date).getTime() - JST_OFFSET_MS).toISOString();
+}
+
+const JST_DATE_TIME_RE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+/** 日本時間の「YYYY-MM-DDTHH:mm(:ss)」（区切りは空白でもよい）を時刻にする。正しくなければ undefined */
+export function parseJstDateTime(text: string): Date | undefined {
+  const m = JST_DATE_TIME_RE.exec(text.trim());
+  if (!m) return undefined;
+  const [, date = "", hh = "", mm = "", ss = "00"] = m;
+  if (!isBusinessDate(date)) return undefined;
+  const [h, min, s] = [Number(hh), Number(mm), Number(ss)];
+  if (h > 23 || min > 59 || s > 59) return undefined;
+  return new Date(toUtcDate(date).getTime() + ((h * 60 + min) * 60 + s) * 1000 - JST_OFFSET_MS);
+}
+
+/** 時刻を日本時間の「YYYY-MM-DD HH:mm:ss」にする（秒まで。確認のために入力してもらう形） */
+export function formatJstDateTime(instant: Date): string {
+  return new Date(instant.getTime() + JST_OFFSET_MS).toISOString().slice(0, 19).replace("T", " ");
+}
+
 export function addDays(date: string, days: number): string {
   const d = toUtcDate(date);
   d.setUTCDate(d.getUTCDate() + days);

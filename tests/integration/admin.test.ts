@@ -80,11 +80,10 @@ describe("社員管理の画面", () => {
     });
     expect(await stale.text()).toContain("ほかの人が先に更新しました");
     expect((await as(admin).get("/admin/employees/NOPE")).status).toBe(404);
-    const missing = await businessDb(env).command(
+    const missing = await businessDb(env).internalCommand(
       "employees.update",
       { id: "NOPE", version: 1, name: "x", roles: ["sales"], active: true },
       { kind: "system" },
-      null,
     );
     expect(missing.ok ? null : missing.error.code).toBe("not_found");
     expect(
@@ -154,11 +153,10 @@ describe("設定の画面", () => {
     });
     expect(await stale.text()).toContain("ほかの人が先に更新しました");
     // 登録番号を省いた入力（空として扱う）
-    const r = await businessDb(env).command(
+    const r = await businessDb(env).internalCommand(
       "settings.updateCompany",
       { version: after.company.version, name: "株式会社テスト", roundingMode: "floor" },
       { kind: "system" },
-      null,
     );
     expect(r.ok).toBe(true);
     expect((await systemQuery("settings.get", {})).company.registrationNumber).toBeNull();

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2b46f26a-239f-404b-a8bc-eb07a807bbd2",
+  "id": "21999580-a13d-4db2-b52a-e01a16dfcfb6",
   "prevId": "0577b027-5650-43c5-b718-ede521ec1e16",
   "tables": {
     "company_settings": {
@@ -3234,13 +3234,6 @@
             "customer_id"
           ],
           "isUnique": false
-        },
-        "sales_orders_split_from": {
-          "name": "sales_orders_split_from",
-          "columns": [
-            "split_from_id"
-          ],
-          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -4002,6 +3995,22 @@
         "audit_logs_occurred": {
           "name": "audit_logs_occurred",
           "columns": [
+            "occurred_at"
+          ],
+          "isUnique": false
+        },
+        "audit_logs_employee": {
+          "name": "audit_logs_employee",
+          "columns": [
+            "employee_id",
+            "occurred_at"
+          ],
+          "isUnique": false
+        },
+        "audit_logs_action": {
+          "name": "audit_logs_action",
+          "columns": [
+            "action",
             "occurred_at"
           ],
           "isUnique": false

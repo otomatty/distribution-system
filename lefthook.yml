@@ -8,6 +8,9 @@ pre-commit:
     - name: lint
       glob: "*.{ts,tsx,js,mjs}"
       run: bunx oxlint --type-aware {staged_files}
+    # 秘密情報の混入チェック（要件定義書 9章）。コミットするファイルだけを見る
+    - name: secrets
+      run: bunx secretlint --no-glob {staged_files}
 
 pre-push:
   jobs:

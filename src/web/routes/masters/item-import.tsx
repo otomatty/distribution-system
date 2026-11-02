@@ -331,12 +331,11 @@ itemImportRoutes.post(
   }),
   async (c) => {
     const body = await c.req.parseBody();
-    const key = fieldText(body, "_key");
     const result = await runCommand(
       c,
       "items.import",
       { csv: fieldText(body, "csv"), planToken: fieldText(body, "planToken") },
-      key === "" ? null : key,
+      fieldText(body, "_key"),
     );
     if (!result.ok)
       return page(

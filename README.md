@@ -16,7 +16,7 @@
 | ファイル   | R2（帳票 PDF、CSV、バックアップ）                      |
 | 非同期処理 | Queues、Cron Triggers                                  |
 | 帳票       | Browser Rendering で PDF 化                            |
-| メール     | Cloudflare Email Service                               |
+| メール     | Cloudflare Email Service（予備は Resend）              |
 
 ## 手元での開発
 
@@ -24,17 +24,18 @@
 
 ```sh
 bun install
-cp .dev.vars.example .dev.vars   # 値を入れる（開発用ログインだけなら空でもよい）
+cp .dev.vars.example .dev.vars   # 値を入れる（開発用ログインだけなら Google の値は空でもよい）
 bun run dev                      # http://localhost:8787
 ```
 
-`/dev/login` から、登録済みの社員のメールアドレスでログインできます（開発環境とテストだけで有効）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。
+`/dev/login` から、登録済みの社員のメールアドレスでログインできます（`ENVIRONMENT` が `development` か `test` のときだけ有効）。
+`wrangler.jsonc` の既定の `ENVIRONMENT` は開発用ログインが有効にならない値（`unconfigured`）なので、`bun run dev` と `.dev.vars` で `development` を渡しています（テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で渡す）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。テストデータは下の `bun run db:seed` で入れます。
 
 ### テストデータ
 
 ```sh
 bun run db:seed                    # 本番と同じくらいのマスタと、約3か月分の取引（毎日の開発用、30秒ほど）
-bun run db:seed -- --scale=full    # 本番の約5倍（商品 2,500・取引先 1,000・受注 約11万件・発注 約4万件の3年分。速度の確認用）
+bun run db:seed -- --scale=full    # 本番の約5倍（商品 2,500・取引先 1,000・受注 約12万件・発注 約5万件の3年分。速度の確認用、1時間ほど）
 bun run db:seed -- --reset         # 業務データを消してから入れ直す（データがあると投入しない）
 ```
 
@@ -48,7 +49,7 @@ bun run db:seed -- --reset         # 業務データを消してから入れ直�
 ## 検査
 
 ```sh
-bun run check      # 整形・lint・型・テスト・未使用コードの検出
+bun run check      # 秘密情報の混入・整形・lint・型・テスト・未使用コードの検出
 bun run test:e2e   # E2E テスト（Playwright）
 ```
 
@@ -58,7 +59,7 @@ bun run test:e2e   # E2E テスト（Playwright）
 
 初回の準備：
 
-1. Cloudflare で D1（`AUTH_DB`）、R2（`FILES`、7年のバケットロック）、Queues（`JOBS`）を作り、`wrangler.jsonc` の ID を書き換える
+1. Cloudflare で D1（`AUTH_DB`）、R2（`FILES`、7年のバケットロック）、Queues（`JOBS`）を「アジア太平洋」の配置（`--location apac`）で作り、`wrangler.jsonc` の仮の `database_id`（すべて 0）を本物の ID に書き換える（手順は [docs/operations.md](docs/operations.md) の 1章）
 2. 秘密情報を登録する：`wrangler secret put BETTER_AUTH_SECRET` / `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`（`--env staging` と `--env production` のそれぞれ）
 3. Google Cloud で OAuth クライアント（社内向けの同意画面）を作り、リダイレクト URI に `https://<ドメイン>/api/auth/callback/google` を登録する
 4. GitHub の Environments に `staging` と `production`（必須レビューつき）を作り、`CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` を登録する

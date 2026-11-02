@@ -1,1 +1,0 @@
-CREATE INDEX `sales_orders_split_from` ON `sales_orders` (`split_from_id`);

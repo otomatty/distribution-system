@@ -122,19 +122,27 @@ function fingerprint() {
 }
 
 describe("テストデータの投入：本番では使えない", () => {
-  it.each(["production", "staging"])("ENVIRONMENT が %s なら /dev/seed は 404", async (name) => {
-    const res = await seedCall({ action: "verify" }, { ...env, ENVIRONMENT: name });
-    expect(res.status).toBe(404);
-  });
+  it.each(["production", "staging", "unconfigured", ""])(
+    "ENVIRONMENT が「%s」なら /dev/seed は 404",
+    async (name) => {
+      const res = await seedCall({ action: "verify" }, { ...env, ENVIRONMENT: name });
+      expect(res.status).toBe(404);
+    },
+  );
 
-  it("ENVIRONMENT が production なら、業務 DB の seed も拒否する（データは消えない）", async () => {
+  it("ENVIRONMENT が development・test 以外なら、業務 DB の seed も拒否する（データは消えない）", async () => {
     const result = await runInDurableObject(businessDb(env), async (_instance, state) => {
-      const production = new BusinessDb(state, { ...env, ENVIRONMENT: "production" });
-      return Promise.all([
-        production.seed({ action: "reset" }),
-        production.seed({ action: "plan", scale: "tiny" }),
-      ]);
+      const others = ["production", "unconfigured"].map(
+        (name) => new BusinessDb(state, { ...env, ENVIRONMENT: name }),
+      );
+      return Promise.all(
+        others.flatMap((db) => [
+          db.seed({ action: "reset" }),
+          db.seed({ action: "plan", scale: "tiny" }),
+        ]),
+      );
     });
+    expect(result).toHaveLength(4);
     for (const r of result) {
       expect(r).toEqual({
         ok: false,
