@@ -2,6 +2,8 @@
  * 入金の登録・消込（要件定義書 3.11、5章 入金の登録・消込）。
  * 入金（入金日・入金額・方法・メモ）を記録し、その販売先の未入金・一部入金の請求書に消し込む。
  * 差額は振込手数料・値引き・その他として処理できる。入金の一覧・詳細（後からの消込、消込の取消、入金の取消）。
+ * 返還請求書の返還額（請求書で差し引けない返品を精算したもの）も入金（相殺）として一覧・詳細に「返還請求書の返還額」と出し、
+ * 請求書に消し込むか、残りを返金済みにする（返金の取消もできる）。入金の登録画面では、販売先の返還額の残りを知らせる。
  */
 import { Hono, type Context } from "hono";
 import type { Child } from "hono/jsx";
@@ -10,7 +12,7 @@ import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "../../../domain/billi
 import { toBusinessDate } from "../../../domain/dates";
 import type { DomainError } from "../../../domain/result";
 import { ALLOCATION_ADJUSTMENT_LABELS, type AllocationAdjustmentKind } from "../../../domain/sales";
-import type { OpenInvoice, PaymentView } from "../../../usecases/billing/payments";
+import type { OpenInvoice, PaymentListItem, PaymentView } from "../../../usecases/billing/payments";
 import { exportCsv } from "../../csv-exports";
 import { choice, formKey, readForm, str, strs, type FormData_ } from "../../form";
 import { isHtmx, redirectTo } from "../../http";
@@ -49,7 +51,16 @@ const RECEIPT_NOTICES: Readonly<Record<string, string>> = {
   allocated: "請求書に消し込みました",
   allocation_cancelled: "消込を取り消しました。請求書の残高を戻しました",
   cancelled: "入金を取り消しました。消込もまとめて取り消しました",
+  refunded: "返還額の残りを返金済みにしました",
+  refund_cancelled: "返金を取り消しました。返金した額は返還額の残りに戻りました",
 };
+
+/** 返還請求書の返還額の印（一覧・詳細・入金の登録画面で同じ文言） */
+const CREDIT_LABEL = "返還請求書の返還額";
+
+function CreditBadge() {
+  return <Badge kind="info">{CREDIT_LABEL}</Badge>;
+}
 
 const METHODS: readonly PaymentMethod[] = ["transfer", "cash", "offset", "other"];
 const METHOD_OPTIONS: Option[] = METHODS.map((m) => ({
@@ -83,6 +94,7 @@ function filterFrom(get: (name: string) => string) {
     receivedFrom: text("receivedFrom"),
     receivedTo: text("receivedTo"),
     unallocated: get("unallocated") === "1",
+    credit: get("credit") === "1",
     includeCancelled: get("includeCancelled") === "1",
   };
 }
@@ -93,6 +105,7 @@ function filterQuery(f: Filter): Query {
   return {
     ...f,
     unallocated: f.unallocated ? 1 : undefined,
+    credit: f.credit ? 1 : undefined,
     includeCancelled: f.includeCancelled ? 1 : undefined,
   };
 }
@@ -149,6 +162,7 @@ receiptRoutes.get("/", async (c) => {
           label="未消込の残高がある入金だけ"
           checked={filter.unallocated}
         />
+        <Checkbox name="credit" value="1" label={`${CREDIT_LABEL}だけ`} checked={filter.credit} />
         <Checkbox
           name="includeCancelled"
           value="1"
@@ -196,7 +210,15 @@ receiptRoutes.get("/", async (c) => {
                       ) : null}
                     </td>
                     <td>{p.customerName}</td>
-                    <td>{paymentMethodLabel(p.method)}</td>
+                    <td>
+                      {paymentMethodLabel(p.method)}
+                      {p.salesReturnId ? (
+                        <>
+                          {" "}
+                          <CreditBadge />
+                        </>
+                      ) : null}
+                    </td>
                     <td class="num">{yen(p.amount)}</td>
                     <td class="num">{yen(p.allocatedAmount)}</td>
                     <td class="num">
@@ -269,30 +291,70 @@ function allocationsInput(form: FormData_) {
   });
 }
 
+/**
+ * 販売先の返還請求書の返還額のうち、残り（請求書に充てていない・返金していない額）のあるもの。
+ * 入金の登録画面で、入金を記録しなくても返還額から請求書に消し込めることを知らせる
+ */
+function CustomerCredits(props: { credits: readonly PaymentListItem[] }) {
+  if (props.credits.length === 0) return null;
+  return (
+    <Alert kind="info">
+      <p>
+        <CreditBadge />{" "}
+        この販売先には、請求書に充てられる返還請求書の返還額があります。返還額の画面から請求書に消し込めます。
+      </p>
+      <ul class="credit-list">
+        {props.credits.map((p) => (
+          <li>
+            {p.receivedOn}　{p.salesReturnNumber ? `返品伝票 ${p.salesReturnNumber}　` : ""}残り{" "}
+            <strong>{yen(p.unallocated)}</strong>（返還額 {yen(p.amount)}）{" "}
+            <a href={paths.customerReceipt(p.id)}>返還額から消し込む・返金済みにする</a>
+          </li>
+        ))}
+      </ul>
+    </Alert>
+  );
+}
+
 /** 消込の対象の請求書と、充てる額・差額の入力（行の並びは支払期限の早い順） */
 function AllocationTable(props: {
   invoices: readonly OpenInvoice[];
   values?: ReadonlyMap<string, AllocationDraft> | undefined;
   errors?: FormErrors;
   customerChosen: boolean;
+  /** 販売先の返還額の残り（入金の登録画面だけ） */
+  credits?: readonly PaymentListItem[] | undefined;
+}) {
+  return (
+    <div id="allocation-table">
+      {props.credits ? <CustomerCredits credits={props.credits} /> : null}
+      <AllocationRows
+        invoices={props.invoices}
+        values={props.values}
+        errors={props.errors}
+        customerChosen={props.customerChosen}
+      />
+    </div>
+  );
+}
+
+function AllocationRows(props: {
+  invoices: readonly OpenInvoice[];
+  values?: ReadonlyMap<string, AllocationDraft> | undefined;
+  errors?: FormErrors | undefined;
+  customerChosen: boolean;
 }) {
   const errors = props.errors ?? {};
   if (!props.customerChosen)
-    return (
-      <div id="allocation-table">
-        <p class="muted">販売先を選ぶと、消し込める請求書を表示します。</p>
-      </div>
-    );
+    return <p class="muted">販売先を選ぶと、消し込める請求書を表示します。</p>;
   if (props.invoices.length === 0)
     return (
-      <div id="allocation-table">
-        <p class="muted">
-          消し込める（未入金・一部入金の）請求書はありません。入金は未消込として記録し、後で消し込めます。
-        </p>
-      </div>
+      <p class="muted">
+        消し込める（未入金・一部入金の）請求書はありません。入金は未消込として記録し、後で消し込めます。
+      </p>
     );
   return (
-    <div id="allocation-table" class="table-wrap">
+    <div class="table-wrap">
       <table class="table">
         <thead>
           <tr>
@@ -385,6 +447,7 @@ function NewForm(props: {
   values: PaymentValues;
   customers: readonly Option[];
   invoices: readonly OpenInvoice[];
+  credits: readonly PaymentListItem[];
   drafts?: ReadonlyMap<string, AllocationDraft> | undefined;
   error?: DomainError | undefined;
   errors?: FormErrors;
@@ -452,6 +515,7 @@ function NewForm(props: {
         values={props.drafts}
         errors={errors}
         customerChosen={props.values.customerId !== ""}
+        credits={props.credits}
       />
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
@@ -473,6 +537,19 @@ async function openInvoices(c: Context<AppEnv>, customerId: string): Promise<Ope
   return r.ok ? r.value : [];
 }
 
+/** 販売先の、残りのある返還請求書の返還額 */
+async function openCredits(c: Context<AppEnv>, customerId: string): Promise<PaymentListItem[]> {
+  if (!customerId) return [];
+  const r = await queryAs(c.env, c.get("actorRef"), "customerPayments.list", {
+    customerId,
+    unallocated: true,
+    credit: true,
+    page: 1,
+    pageSize: 50,
+  });
+  return r.ok ? [...r.value.rows] : [];
+}
+
 function newPage(c: Context<AppEnv>, body: Child, status: 200 | 409 = 200) {
   return c.html(
     <Layout title="入金の記録" actor={c.get("actor")} current={paths.customerReceipts()}>
@@ -487,9 +564,10 @@ receiptRoutes.get("/new", async (c) => {
   if (!hasPermission(c.get("actor").roles, "payments.manage"))
     return newPage(c, <Alert kind="warning">入金を記録する権限がありません。</Alert>);
   const customerId = c.req.query("customerId") ?? "";
-  const [customers, invoices] = await Promise.all([
+  const [customers, invoices, credits] = await Promise.all([
     customerOptions(c),
     openInvoices(c, customerId),
+    openCredits(c, customerId),
   ]);
   return newPage(
     c,
@@ -503,17 +581,19 @@ receiptRoutes.get("/new", async (c) => {
       }}
       customers={customers}
       invoices={invoices}
+      credits={credits}
     />,
   );
 });
 
 receiptRoutes.get("/new/invoices", async (c) => {
   const customerId = c.req.query("customerId") ?? "";
+  const [invoices, credits] = await Promise.all([
+    openInvoices(c, customerId),
+    openCredits(c, customerId),
+  ]);
   return c.html(
-    <AllocationTable
-      invoices={await openInvoices(c, customerId)}
-      customerChosen={customerId !== ""}
-    />,
+    <AllocationTable invoices={invoices} customerChosen={customerId !== ""} credits={credits} />,
   );
 });
 
@@ -541,15 +621,17 @@ receiptRoutes.post("/new", async (c) => {
   );
   if (result.ok)
     return redirectTo(c, paths.customerReceipt(result.value.id, { notice: "created" }));
-  const [customers, invoices] = await Promise.all([
+  const [customers, invoices, credits] = await Promise.all([
     customerOptions(c),
     openInvoices(c, values.customerId),
+    openCredits(c, values.customerId),
   ]);
   const body = (
     <NewForm
       values={values}
       customers={customers}
       invoices={invoices}
+      credits={credits}
       drafts={allocationDrafts(form)}
       error={result.error}
       errors={toFormErrors(result.error)}
@@ -568,23 +650,46 @@ function DetailBody(props: {
   error?: DomainError | undefined;
   drafts?: ReadonlyMap<string, AllocationDraft> | undefined;
 }) {
-  const { payment, allocations } = props.view;
+  const { payment, allocations, refunds } = props.view;
   const errors = props.error ? toFormErrors(props.error) : {};
+  const credit = payment.salesReturnId !== null;
+  const today = toBusinessDate(new Date());
   return (
     <div id="receipt-detail">
-      <PageHeader title={`入金 ${payment.receivedOn} ${payment.customerName}`}>
-        <p>{payment.cancelled ? <Badge>取消</Badge> : null}</p>
+      <PageHeader
+        title={`${credit ? CREDIT_LABEL : "入金"} ${payment.receivedOn} ${payment.customerName}`}
+      >
+        <p>
+          {credit ? <CreditBadge /> : null} {payment.cancelled ? <Badge>取消</Badge> : null}
+        </p>
       </PageHeader>
       {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
       <ErrorSummary error={props.error} />
+      {credit ? (
+        <Alert kind="info">
+          請求書で差し引けない返品を返還請求書で精算した返還額です。未消込の間は売掛残高を減らします。
+          請求書に消し込むか、販売先に返したら残りを返金済みにしてください（返金した額は売掛残高を減らしません）。
+        </Alert>
+      ) : null}
       <section class="card">
         <DescriptionList
           items={[
             ["販売先", payment.customerName],
-            ["入金日", payment.receivedOn],
-            ["入金額", yen(payment.amount)],
+            [credit ? "発行日" : "入金日", payment.receivedOn],
+            [credit ? "返還額（税込）" : "入金額", yen(payment.amount)],
             ["方法", paymentMethodLabel(payment.method)],
+            ...(payment.salesReturnId
+              ? ([
+                  [
+                    "返品伝票",
+                    <a href={paths.salesReturn(payment.salesReturnId)}>
+                      {payment.salesReturnNumber ?? "返品伝票を開く"}
+                    </a>,
+                  ],
+                ] as const)
+              : []),
             ["消込済み", yen(props.view.allocatedAmount)],
+            ...(credit ? ([["返金済み", yen(props.view.refundedAmount)]] as const) : []),
             ["未消込", yen(props.view.unallocated)],
             ["メモ", payment.memo ? <span class="pre">{payment.memo}</span> : null],
             ["記録", `${dateTime(payment.createdAt)} ${payment.createdByName ?? ""}`],
@@ -679,7 +784,129 @@ function DetailBody(props: {
           </form>
         </section>
       ) : null}
-      {props.canManage && !payment.cancelled ? (
+      {credit ? (
+        <section class="card">
+          <h2>返金</h2>
+          {refunds.length === 0 ? (
+            <p class="muted">返金していません。</p>
+          ) : (
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>返金日</th>
+                    <th class="num">返金額</th>
+                    <th>メモ</th>
+                    <th>記録</th>
+                    <th>
+                      <span class="sr-only">操作</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {refunds.map((r) => (
+                    <tr class={r.cancelled ? "row-muted" : undefined}>
+                      <td class="nowrap">{r.refundedOn}</td>
+                      <td class="num">{yen(r.amount)}</td>
+                      <td class="small">{r.memo ?? ""}</td>
+                      <td class="small">
+                        {dateTime(r.createdAt)}
+                        <div class="muted">{r.createdByName ?? ""}</div>
+                      </td>
+                      <td>
+                        {r.cancelled ? (
+                          <>
+                            <Badge>取消</Badge>
+                            <div class="muted small">{r.cancelReason ?? ""}</div>
+                          </>
+                        ) : props.canManage ? (
+                          <details class="disclosure">
+                            <summary class="btn btn-secondary btn-sm">返金を取り消す</summary>
+                            <form
+                              method="post"
+                              action={paths.refundCancel(r.id)}
+                              hx-post={paths.refundCancel(r.id)}
+                              hx-target="#receipt-detail"
+                              hx-swap="outerHTML"
+                              hx-confirm={`${r.refundedOn} の返金（${yen(r.amount)}）を取り消します。返金した額は返還額の残りに戻ります。よろしいですか？`}
+                            >
+                              <FormKey />
+                              <Version value={r.version} />
+                              <Field label="取り消す理由" name={`refund-reason-${r.id}`} required>
+                                <textarea
+                                  id={`f-refund-reason-${r.id}`}
+                                  name="reason"
+                                  rows={2}
+                                  maxlength={500}
+                                ></textarea>
+                              </Field>
+                              <button type="submit" class="btn btn-danger">
+                                返金を取り消す
+                              </button>
+                            </form>
+                          </details>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {props.canManage && props.view.refundable ? (
+            <form
+              method="post"
+              action={paths.customerReceiptRefund(payment.id)}
+              hx-post={paths.customerReceiptRefund(payment.id)}
+              hx-target="#receipt-detail"
+              hx-swap="outerHTML"
+              hx-confirm={`返還額の残り ${yen(props.view.unallocated)} を返金済みにします。よろしいですか？`}
+              class="form"
+            >
+              <h3>残り（{yen(props.view.unallocated)}）を返金済みにする</h3>
+              <FormKey />
+              <Version value={payment.version} />
+              <div class="grid-2">
+                <Field label="返金日" name="refundedOn" required error={errors["refundedOn"]}>
+                  <Input
+                    name="refundedOn"
+                    type="date"
+                    value={today}
+                    min={payment.receivedOn}
+                    max={today}
+                    error={errors["refundedOn"]}
+                  />
+                </Field>
+                <Field label="メモ" name="refundMemo" hint="振込先・方法など">
+                  <textarea id="f-refundMemo" name="memo" rows={2} maxlength={500}></textarea>
+                </Field>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                  残りを返金済みにする
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </section>
+      ) : null}
+      {credit && !payment.cancelled ? (
+        <section class="card">
+          <h2>返還額の取消</h2>
+          <p class="muted">
+            返還額は、返品伝票の画面で返還請求書を取り消すと取り消されます（消込・返金があるうちは取り消せません）。
+            {payment.salesReturnId ? (
+              <>
+                {" "}
+                <a href={paths.salesReturnCreditNote(payment.salesReturnId)}>
+                  返品伝票の返還請求書へ
+                </a>
+              </>
+            ) : null}
+          </p>
+        </section>
+      ) : null}
+      {props.canManage && !payment.cancelled && props.view.cancellable ? (
         <section class="card">
           <h2>入金の取消</h2>
           <form
@@ -788,6 +1015,39 @@ receiptRoutes.post("/:id/allocate", async (c) => {
     formKey(form),
   );
   return afterAction(c, id, result, "allocated", allocationDrafts(form));
+});
+
+receiptRoutes.post("/refunds/:id/cancel", async (c) => {
+  const form = await readForm(c);
+  const result = await runCommand(
+    c,
+    "customerRefunds.cancel",
+    {
+      refundId: c.req.param("id"),
+      version: Number(str(form, "version")) || 0,
+      reason: str(form, "reason"),
+    },
+    formKey(form),
+  );
+  if (result.ok) return afterAction(c, result.value.paymentId, result, "refund_cancelled");
+  return c.text(result.error.message, result.error.code === "forbidden" ? 403 : 409);
+});
+
+receiptRoutes.post("/:id/refund", async (c) => {
+  const id = c.req.param("id");
+  const form = await readForm(c);
+  const result = await runCommand(
+    c,
+    "customerPayments.refund",
+    {
+      paymentId: id,
+      version: Number(str(form, "version")) || 0,
+      refundedOn: str(form, "refundedOn"),
+      memo: str(form, "memo"),
+    },
+    formKey(form),
+  );
+  return afterAction(c, id, result, "refunded");
 });
 
 receiptRoutes.post("/:id/cancel", async (c) => {

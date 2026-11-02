@@ -1088,7 +1088,15 @@ function DetailBody(props: {
                 {inv.allocations.map((a) => (
                   <tr class={a.cancelled ? "row-muted" : undefined}>
                     <td class="nowrap">{a.receivedOn}</td>
-                    <td>{paymentMethodLabel(a.method)}</td>
+                    <td>
+                      {paymentMethodLabel(a.method)}
+                      {a.salesReturnId ? (
+                        <>
+                          {" "}
+                          <Badge kind="info">返還請求書の返還額</Badge>
+                        </>
+                      ) : null}
+                    </td>
                     <td class="num">{yen(a.amount)}</td>
                     <td class="num">{a.adjustment > 0 ? yen(a.adjustment) : ""}</td>
                     <td>

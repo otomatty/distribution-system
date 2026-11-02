@@ -1,12 +1,17 @@
 /**
  * テストデータの請求の区分の1日（取引の手順の1日の最後に行う。operations.ts）：
- * 返品伝票 → 発送ごとの請求書（締め日のない販売先）→ 締め処理（締め日のある販売先）→ 返還請求書 →
- * 入金と消込 → 販売先廃棄。書き込みはすべて請求の区分のユースケースを通す。
+ * 返品伝票 → 請求書で差し引けない返品の返還請求書 → 締め処理（締め日のある販売先）→ 発送ごとの請求書（締め日のない販売先）→
+ * 返還請求書（請求済みの返品）→ 入金と消込（返還額の消込を含む）→ 返還額の返金 → 販売先廃棄。
+ * 書き込みはすべて請求の区分のユースケースを通す。
  *
  * - 取引の後に期間をまとめて請求すると、途中までは3年分の発送が未請求のまま残る（実際の運用にない状態で、
  *   未請求の発送を探す照会が遅くなる）。そのため、取引と同じ日の中で毎日請求する
  * - 発送の取消は発送の翌日の取引で済んでいる。ここでは前日の発送を請求する（取り消した発送は載らない）
  * - 返品伝票は発送の数日後に、ごく一部だけ記録する（在庫に戻すか廃棄か）。未請求の返品は次の請求書にマイナスで載る
+ * - 請求書で差し引けない返品：記録した日の返品の一部（先方が差し引きでなく返還を求めた）と、30日たっても請求書に
+ *   載らない返品（その販売先への発送がない、返品が請求を上回るなど）は、返還請求書を発行して精算する。返還額は、
+ *   その販売先の入金のときに請求書へ先に充てる。返金を求めた販売先（一部）には7日後に、ほかは14日たっても充てる請求書が
+ *   なければ一部を、残りを返金済みにする
  * - 入金：締め日のない販売先は曜日を決めて週に1回、翌週までに期限の来る請求書をまとめて払う。締め日のある販売先は
  *   期限の日に払う。ごく一部は一部だけ入金・振込手数料を差し引いて入金・期限を過ぎても未入金のままにする
  * - 今日は締め処理をしない（ダッシュボードの「締め処理待ちの販売先」に出す）
@@ -21,8 +26,16 @@ import {
   issueInvoiceCommand,
   listClosingCandidates,
 } from "../../usecases/billing/invoices";
-import { allocateCustomerPayment, createCustomerPayment } from "../../usecases/billing/payments";
-import { createSalesReturn, issueCreditNote } from "../../usecases/billing/returns";
+import {
+  allocateCustomerPayment,
+  createCustomerPayment,
+  refundCustomerCredit,
+} from "../../usecases/billing/payments";
+import {
+  createSalesReturn,
+  issueCreditNote,
+  issueUnbilledCreditNote,
+} from "../../usecases/billing/returns";
 import * as schema from "../db/schema";
 import { inList } from "../db/sql-helpers";
 import { salesOrderLines } from "./reads";
@@ -77,6 +90,197 @@ function recordSalesReturns(session: SeedSession, day: SeedDay): void {
       "sales2",
       clock.next(),
       `返品伝票（${s.number}）`,
+    );
+  }
+}
+
+/** 請求書に載せず返還請求書で精算する日数（返品日からこの日数たっても請求書に載らない返品を精算する） */
+const STRANDED_RETURN_DAYS = 30;
+/** 返金を求めた販売先には、返還請求書の発行からこの日数で返金する */
+const REFUND_REQUESTED_DAYS = 7;
+/** 返還額を充てる請求書がないまま、この日数たったら返金を考える */
+const REFUND_AFTER_DAYS = 14;
+
+/**
+ * 請求書で差し引けない返品の返還請求書：今日記録した返品の一部（先方が返還を求めた）と、
+ * 30日たっても請求書に載らない返品を、返還請求書で精算する（返還額は入金（相殺）になる）
+ */
+function settleUnbilledReturns(session: SeedSession, day: SeedDay): void {
+  const db = session.db;
+  const returns = db
+    .select({
+      id: schema.salesReturns.id,
+      number: schema.salesReturns.number,
+      version: schema.salesReturns.version,
+      returnedOn: schema.salesReturns.returnedOn,
+    })
+    .from(schema.salesReturns)
+    .leftJoin(
+      schema.customerPayments,
+      and(
+        eq(schema.customerPayments.salesReturnId, schema.salesReturns.id),
+        eq(schema.customerPayments.cancelled, false),
+      ),
+    )
+    .where(
+      and(
+        isNull(schema.salesReturns.invoiceId),
+        eq(schema.salesReturns.cancelled, false),
+        isNull(schema.salesReturns.creditNoteNumber),
+        isNull(schema.customerPayments.id),
+        lte(schema.salesReturns.returnedOn, day.date),
+      ),
+    )
+    .orderBy(asc(schema.salesReturns.number))
+    .all();
+  const clock = new DayClock(day.date, 12);
+  for (const r of returns) {
+    const requested =
+      r.returnedOn === day.date && session.random("unbilled-credit", r.number).chance(0.35);
+    const stranded = r.returnedOn <= addDays(day.date, -STRANDED_RETURN_DAYS);
+    if (!requested && !stranded) continue;
+    session.run(
+      issueUnbilledCreditNote,
+      { salesReturnId: r.id, version: r.version, issuedOn: day.date },
+      "accounting2",
+      clock.next(),
+      `請求書で差し引けない返品の返還請求書（${r.number}）`,
+    );
+  }
+}
+
+interface OpenCredit {
+  readonly id: string;
+  readonly version: number;
+  readonly customerId: string;
+  readonly receivedOn: string;
+  readonly returnNumber: string;
+  remaining: number;
+}
+
+/** 残り（請求書に充てていない・返金していない額）のある返還額。返品伝票の番号の順 */
+function openCredits(session: SeedSession, customerIds?: readonly string[]): OpenCredit[] {
+  if (customerIds?.length === 0) return [];
+  const conds = [
+    isNotNull(schema.customerPayments.salesReturnId),
+    eq(schema.customerPayments.cancelled, false),
+  ];
+  if (customerIds) conds.push(inList(schema.customerPayments.customerId, customerIds));
+  return session.db
+    .select({
+      id: schema.customerPayments.id,
+      version: schema.customerPayments.version,
+      customerId: schema.customerPayments.customerId,
+      receivedOn: schema.customerPayments.receivedOn,
+      returnNumber: schema.salesReturns.number,
+      remaining: sql<number>`${schema.customerPayments.amount}
+        - coalesce((SELECT sum(a.amount) FROM payment_allocations a WHERE a.payment_id = customer_payments.id AND a.cancelled = 0), 0)
+        - coalesce((SELECT sum(r.amount) FROM customer_refunds r WHERE r.payment_id = customer_payments.id AND r.cancelled = 0), 0)`,
+    })
+    .from(schema.customerPayments)
+    .innerJoin(
+      schema.salesReturns,
+      eq(schema.salesReturns.id, schema.customerPayments.salesReturnId),
+    )
+    .where(and(...conds))
+    .orderBy(asc(schema.salesReturns.number))
+    .all()
+    .filter((c) => c.remaining > 0);
+}
+
+function invoiceVersion(session: SeedSession, id: string): number {
+  return (
+    session.db
+      .select({ version: schema.invoices.version })
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, id))
+      .get()?.version ?? 1
+  );
+}
+
+/**
+ * 販売先の返還額を、払う請求書に先に充てる（返還額の入金から消し込む）。充てた額だけ、振り込む額を減らす
+ */
+function applyCredits(
+  session: SeedSession,
+  credits: readonly OpenCredit[],
+  list: { invoice: OpenInvoice; amount: number }[],
+  clock: DayClock,
+  name: string,
+): void {
+  for (const credit of credits) {
+    const allocations: {
+      invoiceId: string;
+      version: number;
+      amount: number;
+      adjustment: number;
+      adjustmentKind: null;
+    }[] = [];
+    for (const b of list) {
+      if (credit.remaining <= 0) break;
+      if (b.amount <= 0) continue;
+      const use = Math.min(credit.remaining, b.amount);
+      allocations.push({
+        invoiceId: b.invoice.id,
+        version: invoiceVersion(session, b.invoice.id),
+        amount: use,
+        adjustment: 0,
+        adjustmentKind: null,
+      });
+      b.amount -= use;
+      credit.remaining -= use;
+    }
+    if (allocations.length === 0) continue;
+    session.run(
+      allocateCustomerPayment,
+      { paymentId: credit.id, version: credit.version, allocations },
+      "accounting1",
+      clock.next(),
+      `返還額の消込（${name}、${credit.returnNumber}）`,
+    );
+  }
+}
+
+/**
+ * 返還額の返金：返金を求めた販売先（返還額の一部）には7日後に、ほかは14日たっても充てる請求書（未入金・一部入金）が
+ * なければ一部を、残りを返金済みにする。それ以外は、後の請求書に充てるまで未消込の入金として売掛残高を減らす
+ */
+function refundCredits(session: SeedSession, day: SeedDay): void {
+  const db = session.db;
+  const due = openCredits(session).filter(
+    (c) => c.receivedOn <= addDays(day.date, -REFUND_REQUESTED_DAYS),
+  );
+  if (due.length === 0) return;
+  const open = new Set(
+    db
+      .select({ customerId: schema.invoices.customerId })
+      .from(schema.invoices)
+      .where(
+        and(
+          inList(schema.invoices.status, ["unpaid", "partial"]),
+          inList(schema.invoices.customerId, [...new Set(due.map((c) => c.customerId))]),
+        ),
+      )
+      .all()
+      .map((r) => r.customerId),
+  );
+  const clock = new DayClock(day.date, 16);
+  for (const c of due) {
+    const r = session.random("credit-refund", c.returnNumber);
+    const requested = r.chance(0.35);
+    const idle = c.receivedOn <= addDays(day.date, -REFUND_AFTER_DAYS) && !open.has(c.customerId);
+    if (!requested && !(idle && r.chance(0.6))) continue;
+    session.run(
+      refundCustomerCredit,
+      {
+        paymentId: c.id,
+        version: c.version,
+        refundedOn: day.date,
+        memo: "返還額を指定の口座へ振込で返金",
+      },
+      "accounting1",
+      clock.next(),
+      `返還額の返金（${c.returnNumber}）`,
     );
   }
 }
@@ -279,7 +483,17 @@ function receivePayments(session: SeedSession, world: World, day: SeedDay): void
     byCustomer.set(invoice.customerId, list);
   }
   const clock = new DayClock(day.date, 10);
-  for (const [customerId, list] of byCustomer) {
+  const credits = openCredits(session, [...byCustomer.keys()]);
+  for (const [customerId, all] of byCustomer) {
+    // 返還額があれば先に請求書へ充て、残りを振り込んでもらう
+    applyCredits(
+      session,
+      credits.filter((c) => c.customerId === customerId),
+      all,
+      clock,
+      names.get(customerId) ?? customerId,
+    );
+    const list = all.filter((b) => b.amount > 0);
     for (let i = 0; i < list.length; i += 200) {
       const batch = list.slice(i, i + 200);
       const r = session.random("payment", names.get(customerId) ?? "", day.date, i);
@@ -287,6 +501,7 @@ function receivePayments(session: SeedSession, world: World, day: SeedDay): void
       // ごく一部は振込手数料を差し引いて振り込まれる（最後の請求書の差額にする）
       const fee = last && last.amount > 2000 && r.chance(0.04) ? r.pick(BANK_FEES) : 0;
       const total = batch.reduce((s, b) => s + b.amount, 0) - fee;
+      if (total <= 0) continue;
       const at = clock.next();
       const created = session.run(
         createCustomerPayment,
@@ -312,7 +527,8 @@ function receivePayments(session: SeedSession, world: World, day: SeedDay): void
             const isLast = b === last;
             return {
               invoiceId: b.invoice.id,
-              version: b.invoice.version,
+              // 返還額を充てた請求書は版番号が上がっている
+              version: invoiceVersion(session, b.invoice.id),
               amount: isLast ? b.amount - fee : b.amount,
               adjustment: isLast ? fee : 0,
               adjustmentKind: isLast && fee > 0 ? ("bank_fee" as const) : null,
@@ -389,9 +605,11 @@ function recordDisposals(session: SeedSession, world: World, day: SeedDay): void
 /** 請求の区分の1日（日曜は呼ばれない） */
 export function billingDay(session: SeedSession, world: World, day: SeedDay): void {
   recordSalesReturns(session, day);
+  settleUnbilledReturns(session, day);
   closeMonth(session, day);
   issuePerShipment(session, day);
   issueCreditNotes(session, day);
   receivePayments(session, world, day);
+  refundCredits(session, day);
   recordDisposals(session, world, day);
 }

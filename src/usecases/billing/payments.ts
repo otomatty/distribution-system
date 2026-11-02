@@ -5,6 +5,9 @@
  * - 請求残高を超えては消し込めない。入金が請求より多い場合、残りは入金の未消込残高として残り、後で消し込める
  * - 消込の取消で、請求書は入金済み → 一部入金・未入金に戻る
  * - 入金の取消は、その入金の有効な消込もまとめて取り消す（理由は操作履歴に残す）
+ * - 返還請求書の返還額（請求書で差し引けない返品を返還請求書で精算したもの。returns.ts）も入金（方法「相殺」）として持ち、
+ *   普通の入金と同じように請求書に消し込める。残りは返金済みにでき（返金日・メモ）、返金は取り消せる。
+ *   返金した分は未消込残高から除くので、売掛残高を減らさない。返還額は入金の取消では取り消さない（返還請求書の取消で取り消す）
  */
 import { z } from "zod";
 
@@ -12,11 +15,14 @@ import {
   allocationTotal,
   applyAllocation,
   cancelPayment,
+  cancelRefund,
   invoiceOutstanding,
   isOverdue,
   paymentUnallocated,
   planAllocations,
+  planRefund,
   receivable,
+  refundableAmount,
   releaseAllocation,
   type Receivable,
 } from "../../domain/billing";
@@ -46,6 +52,7 @@ import type {
   CustomerPaymentListRow,
   CustomerPaymentRecord,
   ReceivableRow,
+  RefundRecord,
 } from "./payments.port";
 
 function meta(ctx: UsecaseContext) {
@@ -160,6 +167,7 @@ export const createCustomerPayment = defineCommand({
         amount: input.amount,
         method: input.method,
         memo: input.memo,
+        salesReturnId: null,
       },
       meta(ctx),
     );
@@ -194,6 +202,14 @@ function activeAllocations(
   return ctx.stores.customerPayments.allocations(paymentId).filter((a) => !a.cancelled);
 }
 
+/** 入金（返還請求書の返還額）の有効な返金の合計 */
+function refundedOf(ctx: Pick<QueryContext, "stores">, paymentId: string): number {
+  return ctx.stores.customerPayments
+    .refunds(paymentId)
+    .filter((r) => !r.cancelled)
+    .reduce((s, r) => s + r.amount, 0);
+}
+
 /** 記録済みの入金の未消込残高を、請求書に消し込む */
 export const allocateCustomerPayment = defineCommand({
   permission: "payments.manage",
@@ -210,10 +226,11 @@ export const allocateCustomerPayment = defineCommand({
       return err("validation", "消し込む金額を入力してください");
     if (!ctx.stores.customerPayments.touch(paymentId, v, meta(ctx))) return conflict();
     const already = activeAllocations(ctx, paymentId).map((a) => a.amount);
+    // 返金済みにした返還額は、請求書に充てられない
     const allocated = allocate(
       ctx,
       payment,
-      already.reduce((s, a) => s + a, 0),
+      already.reduce((s, a) => s + a, 0) + refundedOf(ctx, paymentId),
       allocations,
     );
     if (!allocated.ok) return allocated;
@@ -269,7 +286,10 @@ export const cancelAllocationCommand = defineCommand({
   },
 });
 
-/** 入金の取消。有効な消込もまとめて取り消す（請求書は一部入金・未入金に戻る） */
+/**
+ * 入金の取消。有効な消込もまとめて取り消す（請求書は一部入金・未入金に戻る）。
+ * 返還請求書の返還額は取り消せない（返品伝票の画面で返還請求書を取り消す）
+ */
 export const cancelCustomerPayment = defineCommand({
   permission: "payments.manage",
   input: z.object({ paymentId: idSchema, version, reason: requiredText(500) }),
@@ -295,10 +315,80 @@ export const cancelCustomerPayment = defineCommand({
   },
 });
 
+/**
+ * 返還請求書の返還額の残り（請求書に充てていない額）すべてを、返金済みにする（返金日・メモ）。
+ * 返金した額は未消込残高から除くので、売掛残高を減らさなくなる
+ */
+export const refundCustomerCredit = defineCommand({
+  permission: "payments.manage",
+  input: z.object({
+    paymentId: idSchema,
+    version,
+    refundedOn: businessDate,
+    memo: optionalText(500),
+  }),
+  run(ctx, { paymentId, version: v, refundedOn, memo }) {
+    const payment = ctx.stores.customerPayments.get(paymentId);
+    if (!payment) return err("not_found", "入金が見つかりません");
+    const allocated = activeAllocations(ctx, paymentId).reduce((s, a) => s + a.amount, 0);
+    const refunded = refundedOf(ctx, paymentId);
+    const amount = planRefund({ ...payment, allocated, refunded }, refundedOn, ctx.clock.today());
+    if (!amount.ok) return amount;
+    const m = meta(ctx);
+    if (!ctx.stores.customerPayments.touch(paymentId, v, m)) return conflict();
+    const id = ctx.ids.next();
+    ctx.stores.customerPayments.insertRefund(
+      {
+        id,
+        paymentId,
+        customerId: payment.customerId,
+        refundedOn,
+        amount: amount.value,
+        memo,
+      },
+      m,
+    );
+    ctx.audit.record({
+      entityType: "customer_payment",
+      entityId: paymentId,
+      action: "refund",
+      before: { unallocated: amount.value },
+      after: { refundId: id, refundedOn, amount: amount.value, memo, unallocated: 0 },
+    });
+    return ok({ id, paymentId, amount: amount.value });
+  },
+});
+
+/** 返金の取消（理由が必須）。返金した額は、返還額の残りに戻る（請求書に充てるか、返金済みにし直せる） */
+export const cancelCustomerRefund = defineCommand({
+  permission: "payments.manage",
+  input: z.object({ refundId: idSchema, version, reason: requiredText(500) }),
+  run(ctx, { refundId, version: v, reason }) {
+    const refund = ctx.stores.customerPayments.getRefund(refundId);
+    if (!refund) return err("not_found", "返金が見つかりません");
+    const next = cancelRefund(refund);
+    if (!next.ok) return next;
+    const payment = ctx.stores.customerPayments.get(refund.paymentId);
+    if (!payment) return err("not_found", "入金が見つかりません");
+    const m = meta(ctx);
+    if (!ctx.stores.customerPayments.cancelRefund(refundId, v, reason, m)) return conflict();
+    // 入金の版番号を上げる（同じトランザクションで読んだ版番号なので、競合することはない）
+    ctx.stores.customerPayments.touch(payment.id, payment.version, m);
+    ctx.audit.record({
+      entityType: "customer_payment",
+      entityId: payment.id,
+      action: "cancel_refund",
+      before: { refundId, cancelled: false, amount: refund.amount },
+      after: { refundId, cancelled: true, reason },
+    });
+    return ok({ id: refundId, paymentId: payment.id });
+  },
+});
+
 // ---- 照会 -----------------------------------------------------------------------
 
 export interface PaymentListItem extends CustomerPaymentListRow {
-  /** 未消込残高 */
+  /** 未消込残高（返還額は返金した分を除く） */
   readonly unallocated: number;
 }
 
@@ -310,6 +400,8 @@ export const listCustomerPayments = defineQuery({
     receivedFrom: optionalBusinessDate,
     receivedTo: optionalBusinessDate,
     unallocated: z.boolean().default(false),
+    /** 返還請求書の返還額だけ */
+    credit: z.boolean().default(false),
     includeCancelled: z.boolean().default(false),
   }),
   run(ctx, input): Page<PaymentListItem> {
@@ -319,6 +411,7 @@ export const listCustomerPayments = defineQuery({
         receivedFrom: input.receivedFrom ?? undefined,
         receivedTo: input.receivedTo ?? undefined,
         unallocatedOnly: input.unallocated,
+        creditOnly: input.credit,
         includeCancelled: input.includeCancelled,
       },
       input.page,
@@ -328,7 +421,9 @@ export const listCustomerPayments = defineQuery({
       ...result,
       rows: result.rows.map((r) =>
         Object.assign(r, {
-          unallocated: r.cancelled ? 0 : paymentUnallocated(r.amount, [r.allocatedAmount]),
+          unallocated: r.cancelled
+            ? 0
+            : paymentUnallocated(r.amount, [r.allocatedAmount], r.refundedAmount),
         }),
       ),
     };
@@ -366,9 +461,16 @@ export interface PaymentView {
   /** 消込。settled は請求書に充てた額（入金から充てた額 + 差額） */
   readonly allocations: readonly (AllocationRecord & { readonly settled: number })[];
   readonly allocatedAmount: number;
+  /** 返金（返還請求書の返還額だけ。取り消したものも含む） */
+  readonly refunds: readonly RefundRecord[];
+  readonly refundedAmount: number;
   readonly unallocated: number;
   /** 残りを消し込める請求書（取り消した入金・未消込残高のない入金では空） */
   readonly openInvoices: readonly OpenInvoice[];
+  /** 返還請求書の返還額で、残りを返金済みにできる（状態。権限は画面で判定する） */
+  readonly refundable: boolean;
+  /** 入金の取消ができる（返還額は返還請求書の取消で取り消す） */
+  readonly cancellable: boolean;
 }
 
 export const getCustomerPayment = defineQuery({
@@ -379,13 +481,26 @@ export const getCustomerPayment = defineQuery({
     if (!payment) return null;
     const allocations = ctx.stores.customerPayments.allocations(id);
     const amounts = allocations.filter((a) => !a.cancelled).map((a) => a.amount);
-    const unallocated = payment.cancelled ? 0 : paymentUnallocated(payment.amount, amounts);
+    const refunds = ctx.stores.customerPayments.refunds(id);
+    const refundedAmount = refunds.filter((r) => !r.cancelled).reduce((s, r) => s + r.amount, 0);
+    const unallocated = payment.cancelled
+      ? 0
+      : paymentUnallocated(payment.amount, amounts, refundedAmount);
+    const allocatedAmount = amounts.reduce((s, a) => s + a, 0);
     return {
       payment,
       allocations: allocations.map((a) => Object.assign(a, { settled: allocationTotal(a) })),
-      allocatedAmount: amounts.reduce((s, a) => s + a, 0),
+      allocatedAmount,
+      refunds,
+      refundedAmount,
       unallocated,
       openInvoices: payment.cancelled ? [] : openInvoices(ctx, payment.customerId),
+      refundable: refundableAmount({
+        ...payment,
+        allocated: allocatedAmount,
+        refunded: refundedAmount,
+      }).ok,
+      cancellable: cancelPayment(payment).ok,
     };
   },
 });

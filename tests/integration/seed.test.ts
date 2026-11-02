@@ -301,6 +301,19 @@ describe("テストデータの投入（tiny）", () => {
         .all()
         .filter((r) => r.creditNoteNumber !== null).length,
       payments: db.select().from(schema.customerPayments).all().length,
+      // 請求書で差し引けない返品を返還請求書で精算した返品伝票と、その返還額（相殺の入金）
+      credits: db
+        .select({
+          method: schema.customerPayments.method,
+          invoiceId: schema.salesReturns.invoiceId,
+          creditNoteNumber: schema.salesReturns.creditNoteNumber,
+        })
+        .from(schema.customerPayments)
+        .innerJoin(
+          schema.salesReturns,
+          eq(schema.salesReturns.id, schema.customerPayments.salesReturnId),
+        )
+        .all(),
       disposals: db.select().from(schema.disposals).all().length,
       linkedPurchaseOrders: db
         .select()
@@ -339,6 +352,14 @@ describe("テストデータの投入（tiny）", () => {
     expect(new Set(shape.returnLines.map((l) => l.restock)).size).toBe(2);
     expect(shape.returns.some((r) => r.invoiceId !== null)).toBe(true);
     expect(shape.creditNotes).toBeGreaterThan(0);
+    // 請求書で差し引けない返品の返還請求書：返品伝票は請求書に載らず、返還額は相殺の入金
+    expect(shape.credits.length).toBeGreaterThan(0);
+    for (const c of shape.credits)
+      expect(c).toMatchObject({
+        method: "offset",
+        invoiceId: null,
+        creditNoteNumber: expect.any(String),
+      });
     expect(shape.payments).toBeGreaterThan(0);
     expect(shape.disposals).toBeGreaterThan(0);
     // メーカー直の受注ごとに、受注に結びつけた発注がある
