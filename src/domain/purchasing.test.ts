@@ -31,6 +31,7 @@ import {
   stockQuantity,
   SUPPLIER_INVOICE_STATUS_LABELS,
   validateReceivedOn,
+  validateReturnedOn,
   supplierInvoiceAmount,
   supplierInvoiceRemaining,
   type PurchaseOrderLineState,
@@ -391,6 +392,21 @@ describe("仕入返品", () => {
     const blank = unwrapErr(cancelPurchaseReturn(false, null, "  "));
     expect(blank.code).toBe("validation");
     expect(blank.fields?.[0]?.field).toBe("reason");
+  });
+  it("返品日は、返品する商品の入荷日（明細が複数なら最も遅いもの）以降", () => {
+    expect(validateReturnedOn("2026-10-10", ["2026-10-10"]).ok).toBe(true);
+    expect(validateReturnedOn("2026-10-20", ["2026-10-10", "2026-10-15", null]).ok).toBe(true);
+    // 受入のない明細だけなら、返品できる数で止める（ここでは止めない）
+    expect(validateReturnedOn("2026-01-01", [null]).ok).toBe(true);
+    expect(validateReturnedOn("2026-01-01", []).ok).toBe(true);
+    expect(
+      unwrapErr(validateReturnedOn("2026-10-12", ["2026-10-10", "2026-10-15"])).fields,
+    ).toEqual([
+      {
+        field: "returnedOn",
+        message: "返品日は、返品する商品の入荷日（2026-10-15）以降にしてください",
+      },
+    ]);
   });
   it("仕入返品した数を下回る入荷の取消はできない", () => {
     expect(

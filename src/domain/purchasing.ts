@@ -388,6 +388,24 @@ export function purchaseReturnAmount(
   return roundRatio(unitPriceCenti * units, 100 * unitsPerPurchaseUnit, mode);
 }
 
+/**
+ * 仕入返品の返品日は、返品する商品を受け入れた入荷の入荷日より前にできない（受け入れる前の商品は返せない）。
+ * firstAcceptedOn は返品する明細ごとの、取り消していない入荷のうち受入のある最も早い入荷日（受入がなければ null。
+ * 受入のない明細は recordPurchaseReturn の返品できる数で止める）。明細が複数なら、最も遅いもの以降にする
+ */
+export function validateReturnedOn(
+  returnedOn: string,
+  firstAcceptedOn: readonly (string | null)[],
+): Result<void> {
+  const latest = firstAcceptedOn.reduce<string | null>(
+    (max, d) => (d !== null && (max === null || d > max) ? d : max),
+    null,
+  );
+  if (latest === null || returnedOn >= latest) return ok(undefined);
+  const message = `返品日は、返品する商品の入荷日（${latest}）以降にしてください`;
+  return err("validation", message, { fields: [{ field: "returnedOn", message }] });
+}
+
 export interface PurchaseReturnInput {
   readonly lineId: string;
   /** 返品する数（販売単位）。0 の行は無視する */

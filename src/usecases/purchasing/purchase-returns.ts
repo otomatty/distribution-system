@@ -1,11 +1,16 @@
 /**
  * 仕入返品（要件定義書 3.6）：入荷後に見つかった不良品などを仕入先に返し、在庫から減らす。
  * 返品額は仕入先請求書の計算額から差し引く。数は販売単位で、受入数 × 入数 − これまでの返品 まで。
+ * 返品日は今日より後にも、返品する商品の入荷日より前にもできない。
  * 取消は入荷の取消と同じ条件（支払（一部を含む）を記録した請求書に入っていなければ取り消せる。理由が必須）。
  */
 import { z } from "zod";
 
-import { cancelPurchaseReturn, recordPurchaseReturn } from "../../domain/purchasing";
+import {
+  cancelPurchaseReturn,
+  recordPurchaseReturn,
+  validateReturnedOn,
+} from "../../domain/purchasing";
 import { err, ok } from "../../domain/result";
 import { defineCommand, STALE_VERSION_MESSAGE } from "../core";
 import {
@@ -45,7 +50,15 @@ export const createPurchaseReturn = defineCommand({
       checkNotFuture(ctx, input.returnedOn, "returnedOn") ??
       checkLocation(ctx, input.locationId, "locationId");
     if (problem) return problem;
-    const accepted = countBy(ctx.stores.receipts.acceptedByLine(po.id), (a) => a.accepted);
+    const acceptedRows = ctx.stores.receipts.acceptedByLine(po.id);
+    // 返品日は、返品する商品を受け入れた入荷の入荷日以降
+    const firstAccepted = new Map(acceptedRows.map((a) => [a.lineId, a.firstAcceptedOn]));
+    const dated = validateReturnedOn(
+      input.returnedOn,
+      input.lines.filter((l) => l.units > 0).map((l) => firstAccepted.get(l.lineId) ?? null),
+    );
+    if (!dated.ok) return dated;
+    const accepted = countBy(acceptedRows, (a) => a.accepted);
     const returned = countBy(ctx.stores.purchaseReturns.returnedByLine(po.id), (r) => r.units);
     const mode = ctx.stores.settings.getCompany().roundingMode;
     const result = recordPurchaseReturn(
