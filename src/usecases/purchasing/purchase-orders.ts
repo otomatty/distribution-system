@@ -10,7 +10,7 @@ import { isBusinessDate, paymentDueDate } from "../../domain/dates";
 import { lineAmount, parseYenToCenti } from "../../domain/money";
 import {
   cancelOrder,
-  cancelReceipt,
+  receiptCancellable,
   canEditOrder,
   confirmOrder,
   orderAmounts,
@@ -633,7 +633,7 @@ export const getPurchaseOrder = defineQuery({
       },
       cancellableReceiptIds: can(roles, "receipts.manage")
         ? active
-            .filter((r) => cancelReceipt(order.status, r.supplierInvoiceStatus === "paid").ok)
+            .filter((r) => receiptCancellable(order.status, r.supplierInvoiceStatus === "paid").ok)
             .map((r) => r.id)
         : [],
       returns: ctx.stores.purchaseReturns.listByOrder(id),

@@ -9,6 +9,7 @@ import { TAX_CATEGORY_LABELS } from "../../../domain/money";
 import type { DomainError } from "../../../domain/result";
 import type {
   InvoiceCandidates,
+  SupplierInvoiceListItem,
   SupplierInvoiceView,
 } from "../../../usecases/purchasing/supplier-invoices";
 import { exportCsv } from "../../csv-exports";
@@ -20,6 +21,7 @@ import type { AppEnv } from "../../types";
 import { runCommand, runQuery } from "../../usecase";
 import {
   Alert,
+  Badge,
   DescriptionList,
   EmptyState,
   ErrorSummary,
@@ -152,7 +154,7 @@ supplierInvoiceRoutes.get("/", async (c) => {
 });
 
 export function InvoiceTable(props: {
-  rows: readonly SupplierInvoiceView["invoice"][];
+  rows: readonly SupplierInvoiceListItem[];
   selectable?: boolean;
 }) {
   return (
@@ -196,7 +198,14 @@ export function InvoiceTable(props: {
               <td>
                 <SupplierInvoiceStatusBadge status={i.status} />
               </td>
-              <td class="num">{yen(i.invoicedAmount)}</td>
+              <td class="num">
+                {yen(i.invoicedAmount)}
+                {i.settlement && i.status === "unpaid" ? (
+                  <div>
+                    <Badge kind="info">精算（相殺・返金）</Badge>
+                  </div>
+                ) : null}
+              </td>
               <td class={i.difference === 0 ? "num" : "num text-danger"}>
                 {i.difference === 0 ? "" : yen(i.difference)}
               </td>
@@ -644,6 +653,7 @@ function PayForm(props: {
     memo: "",
   };
   const e = props.error ? toFormErrors(props.error) : {};
+  const settlement = props.view.settlement;
   return (
     <form
       id="si-pay"
@@ -654,15 +664,26 @@ function PayForm(props: {
       hx-swap="outerHTML"
       class="form card"
     >
-      <h2>支払を記録</h2>
+      <h2>{settlement ? "精算を記録（相殺・返金）" : "支払を記録"}</h2>
+      {settlement ? (
+        <p class="hint">
+          請求額が {yen(i.invoicedAmount)}{" "}
+          のため、お金は払いません。請求額と同じ額で精算します（マイナスは、相殺するか返金を受ける額です）。
+        </p>
+      ) : null}
       <ErrorSummary error={props.error} />
       <FormKey />
       <Version value={i.version} />
       <div class="grid-3">
-        <Field label="支払日" name="paidOn" required error={e["paidOn"]}>
+        <Field label={settlement ? "精算日" : "支払日"} name="paidOn" required error={e["paidOn"]}>
           <Input name="paidOn" type="date" value={v.paidOn} />
         </Field>
-        <Field label="支払額（円）" name="amount" required error={e["amount"]}>
+        <Field
+          label={settlement ? "精算額（円・請求額と同じ額）" : "支払額（円）"}
+          name="amount"
+          required
+          error={e["amount"]}
+        >
           <Input name="amount" value={v.amount} inputmode="numeric" />
         </Field>
         <Field label="メモ" name="memo" error={e["memo"]}>
@@ -671,7 +692,7 @@ function PayForm(props: {
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-          支払済みにする
+          {settlement ? "精算する（相殺・返金）" : "支払済みにする"}
         </button>
       </div>
     </form>
