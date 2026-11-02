@@ -3,12 +3,12 @@
  *
  * 1. scheduleRestore：戻す時刻のブックマークを取り、次に開いたときにその状態に戻すよう予約する
  *    （ctx.storage.getBookmarkForTime → ctx.storage.onNextSessionRestoreBookmark）。
- *    依頼の記録を R2（restores/<ID>.json）・操作履歴・ログに残す
- * 2. BusinessDb.restartForRestore：Durable Object を作り直す（ctx.abort）。次に開いたときに戻る
- * 3. completeRestore：戻った業務 DB に、戻したことを操作履歴として残す
+ *    依頼の記録を R2（restores/<ID>.json）・操作履歴・ログに残し、そのまま Durable Object を作り直す（ctx.abort）。
+ *    予約と作り直しの間をあけない（予約したまま動き続けると、いつか作り直されたときに、その間の操作が消えるため）
+ * 2. completeRestore：戻った業務 DB に、戻したことを操作履歴として残す
  *
  * 業務 DB を戻すと、戻した時刻より後の操作履歴も消える。そのため依頼の記録は R2 とログにも残す（戻しても消えない）。
- * 1 で書いた操作履歴が 3 の時点で消えていれば、戻ったことが分かる（戻した時刻はそれより前なので）。
+ * 1 で書いた操作履歴が 2 の時点で消えていれば、戻ったことが分かる（戻した時刻はそれより前なので）。
  *
  * Durable Object の Point-in-Time Recovery は手元（wrangler dev・vitest）では使えないので、
  * storage の API は PointInTimeRecovery の後ろに置き、テストでは差し替える（実際の復元は検証環境で試す）。
@@ -32,7 +32,7 @@ export interface PointInTimeRecovery {
   bookmarkForTime(at: Date): Promise<string>;
   /** 次に開いたときに bookmark の状態に戻すよう予約する。戻す直前の状態のブックマーク（取り消し用）を返す */
   restoreOnNextSession(bookmark: string): Promise<string>;
-  /** Durable Object を作り直す。呼んだ要求は例外で終わる */
+  /** Durable Object を作り直す（ctx.abort）。呼んだ要求は例外で終わり、次に開いたときに予約した状態に戻る */
   restart(reason: string): void;
 }
 
@@ -164,7 +164,8 @@ function auditStatuses(db: Db, id: string): string[] {
 }
 
 /**
- * 戻す時刻のブックマークを取り、次に開いたときに戻すよう予約して、依頼を記録する。
+ * 戻す時刻のブックマークを取り、次に開いたときに戻すよう予約して、依頼を記録し、Durable Object を作り直す。
+ * 本番では作り直すので、呼んだ要求は例外で終わる（結果は completeRestore で確かめる）。
  * 同じ ID の依頼がすでにあれば、何もせずにその記録を返す（二重送信）
  */
 export async function scheduleRestore(
@@ -234,6 +235,7 @@ export async function scheduleRestore(
     );
   }
   log("warn", "point-in-time restore scheduled", { ...record });
+  deps.recovery.restart(`point-in-time restore ${record.id}`);
   return ok(record);
 }
 

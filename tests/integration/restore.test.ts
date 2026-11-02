@@ -130,7 +130,6 @@ describe("業務 DB の復元：権限と確認", () => {
     const db = businessDb(env);
     const input = { targetAt: formatJstDateTime(minutesAgo(5)), confirmation: "", reason: "x" };
     expect(unwrapErr(await db.restoreToPointInTime(ref, input, newKey())).code).toBe("forbidden");
-    expect(unwrapErr(await db.restartForRestore(ref, newKey())).code).toBe("forbidden");
     expect(unwrapErr(await db.completeRestore(ref, newKey())).code).toBe("forbidden");
     expect(unwrapErr(await db.restoreHistory(ref)).code).toBe("forbidden");
     expect(unwrapErr(await db.restoreRecord(ref, newKey())).code).toBe("forbidden");
@@ -220,9 +219,7 @@ describe("業務 DB の復元：権限と確認", () => {
     expect(await res.text()).toContain("この環境では特定の時点への復元を使えません");
     expect(await getRestore(env.FILES, key)).toBeNull();
     expect(await restoreAudits(key)).toEqual([]);
-    // 予約のない復元は作り直さない
     const ref: ActorRef = { kind: "dev", email: admin };
-    expect(unwrapErr(await businessDb(env).restartForRestore(ref, key)).code).toBe("not_found");
     expect(unwrapErr(await businessDb(env).completeRestore(ref, key)).code).toBe("not_found");
     expect(unwrap(await businessDb(env).restoreRecord(ref, key))).toBeNull();
     expect((await as(admin).get(`/admin/restore/${key}`)).status).toBe(404);
@@ -230,7 +227,7 @@ describe("業務 DB の復元：権限と確認", () => {
 });
 
 describe("業務 DB の復元：予約と記録（Point-in-Time Recovery を差し替える）", () => {
-  it("戻す時刻のブックマークで予約し、R2・操作履歴に依頼を残す。同じ番号の再送信は予約し直さない", async () => {
+  it("戻す時刻のブックマークで予約し、R2・操作履歴に依頼を残してから作り直す。同じ番号の再送信は予約し直さない", async () => {
     const id = newKey();
     const target = minutesAgo(10);
     const fake = fakeRecovery();
@@ -251,9 +248,11 @@ describe("業務 DB の復元：予約と記録（Point-in-Time Recovery を差�
       undoBookmark: `undo-of-bm-${target.getTime()}`,
       completedAt: null,
     });
+    // 予約と作り直しの間をあけない（記録を残した直後に作り直す）
     expect(fake.calls).toEqual([
       `forTime:${target.toISOString()}`,
       `restore:bm-${target.getTime()}`,
+      `restart:point-in-time restore ${id}`,
     ]);
     expect(await getRestore(env.FILES, id)).toEqual(record);
     const audits = await restoreAudits(id);
@@ -370,6 +369,7 @@ describe("業務 DB の復元：予約と記録（Point-in-Time Recovery を差�
       ),
     );
     expect(notRecorded.message).toContain("復元を取り消しました");
+    expect(fake.calls.some((c) => c.startsWith("restart:"))).toBe(false);
     expect(fake.calls.filter((c) => c.startsWith("restore:"))).toEqual([
       expect.stringMatching(/^restore:bm-/),
       expect.stringMatching(/^restore:undo-of-bm-/),

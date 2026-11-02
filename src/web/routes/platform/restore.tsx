@@ -3,8 +3,8 @@
  * 管理者だけが使う。手順・本番の追加の鍵・検証環境での試し方は docs/operations.md 3章。
  *
  * 1. 戻す日時を選ぶと、戻すと失われる操作（操作履歴）を出す（照会 restore.preview）
- * 2. 確認のために戻す日時を入力し、理由を書いて送ると、業務 DB が復元を予約し（restoreToPointInTime）、
- *    Durable Object を作り直してから（restartForRestore）、戻ったことを記録する（completeRestore）
+ * 2. 確認のために戻す日時を入力し、理由を書いて送ると、業務 DB が復元を予約して作り直し（restoreToPointInTime）、
+ *    作り直した後の業務 DB に戻ったことを記録する（completeRestore）
  */
 import { Hono, type Context } from "hono";
 
@@ -13,7 +13,7 @@ import { isProductionLike, restoreLockError } from "../../../domain/restore";
 import type { DomainError } from "../../../domain/result";
 import { businessDb } from "../../../infra/do/client";
 import type { RestoreRecord } from "../../../infra/do/restore";
-import { log } from "../../../infra/observability/log";
+import { errorFields, log } from "../../../infra/observability/log";
 import type { RestorePreview } from "../../../usecases/platform/restore";
 import { formKey, readForm, str } from "../../form";
 import { requirePermission } from "../../middleware";
@@ -38,6 +38,8 @@ import { dateTime } from "../../views/format";
 import { Layout } from "../../views/layout";
 
 export const restoreRoutes = new Hono<AppEnv>();
+
+type BusinessDbStub = ReturnType<typeof businessDb>;
 
 restoreRoutes.use("*", requirePermission("platform.admin"));
 
@@ -259,12 +261,19 @@ restoreRoutes.post("/", async (c) => {
   const values = { confirmation: str(form, "confirmation"), reason: str(form, "reason") };
   const requestId = formKey(form);
   const actorRef = c.get("actorRef");
-  const scheduled = await businessDb(c.env).restoreToPointInTime(
-    actorRef,
-    { targetAt, ...values },
-    requestId,
-  );
-  if (!scheduled.ok) {
+  let scheduled: Awaited<ReturnType<BusinessDbStub["restoreToPointInTime"]>> | null = null;
+  try {
+    scheduled = await businessDb(c.env).restoreToPointInTime(
+      actorRef,
+      { targetAt, ...values },
+      requestId,
+    );
+  } catch (e) {
+    // 予約の後に Durable Object を作り直すと、この呼び出しは例外で終わる（想定どおり）。
+    // 想定外の失敗と見分けるため、下の completeRestore で記録があるかを確かめる
+    log("info", "business db restarted for restore", { restoreId: requestId, ...errorFields(e) });
+  }
+  if (scheduled && !scheduled.ok) {
     const preview = await previewFor(c, targetAt);
     const code = scheduled.error.code;
     const status = code === "validation" ? 422 : code === "forbidden" ? 403 : 409;
@@ -274,16 +283,13 @@ restoreRoutes.post("/", async (c) => {
       status,
     );
   }
-  // Durable Object を作り直す。作り直すと、この呼び出しは例外で終わる（終わらなければ記録だけが残る）
-  try {
-    const restarted = await businessDb(c.env).restartForRestore(actorRef, scheduled.value.id);
-    if (!restarted.ok) log("warn", "restore restart refused", { error: restarted.error.message });
-  } catch {
-    // 作り直したことによる例外（想定どおり）
-  }
   // 作り直した後の業務 DB（新しい接続）で、戻ったことを記録する
-  await businessDb(c.env).completeRestore(actorRef, scheduled.value.id);
-  return c.redirect(paths.restoreRecord(scheduled.value.id), 303);
+  const progress = await businessDb(c.env).completeRestore(actorRef, requestId);
+  if (!progress.ok) {
+    // 記録がない：予約の前に想定外の失敗をした（何も変えていない）
+    throw new Error(`restore was not scheduled: ${progress.error.message}`);
+  }
+  return c.redirect(paths.restoreRecord(requestId), 303);
 });
 
 restoreRoutes.get("/:id", async (c) => {

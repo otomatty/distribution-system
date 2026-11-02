@@ -172,7 +172,8 @@ Durable Object の SQLite は、過去30日の任意の時点に戻せます。�
 1. `ctx.storage.getBookmarkForTime(時刻)` で戻す時刻のブックマークを取り、`ctx.storage.onNextSessionRestoreBookmark(ブックマーク)` で、
    次に開いたときにその状態に戻すよう予約する（戻り値は取り消し用のブックマーク）
 2. 依頼の記録を R2 の `restores/<復元の ID>.json`（戻しても消えない）、Workers のログ（`point-in-time restore scheduled`）、操作履歴に残す
-3. `ctx.abort()` で Durable Object を作り直す。次の要求で開き直したときに、予約した時点の状態に戻る
+3. 同じ呼び出しの中で、すぐに `ctx.abort()` で Durable Object を作り直す。次の要求で開き直したときに、予約した時点の状態に戻る
+   （予約したまま動き続けると、いつか作り直されたときにその間の操作が消えるので、予約と作り直しの間はあけない）
 4. 戻った業務 DB に、戻したこと（依頼した人・理由・戻した時刻・取り消し用のブックマーク）を操作履歴として残す
    （2 で書いた操作履歴が消えていれば戻ったと判断する。戻した時刻はそれより前なので）
 

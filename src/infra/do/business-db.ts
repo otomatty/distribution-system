@@ -478,7 +478,8 @@ export class BusinessDb extends DurableObject<Env> {
   }
 
   /**
-   * 業務 DB を指定した時刻の状態に戻すよう予約する（戻るのは restartForRestore で作り直した後）。
+   * 業務 DB を指定した時刻の状態に戻す。予約して記録した後、そのまま Durable Object を作り直すので、
+   * 本番ではこの呼び出しは例外で終わる（戻ったかどうかは completeRestore で確かめる）。
    * 権限と時刻は照会 restore.preview で確かめ、確認の入力（戻す日時）と本番の鍵（RESTORE_UNLOCK_UNTIL）も確かめる。
    * requestId は画面のフォームの受付番号（同じ番号の再送信は、前の依頼の記録を返す）
    */
@@ -514,24 +515,6 @@ export class BusinessDb extends DurableObject<Env> {
       reason: parsed.data.reason,
       actor: actor.value,
     });
-  }
-
-  /**
-   * 予約した復元のために Durable Object を作り直す（ctx.abort）。成功すると、この呼び出しは例外で終わる。
-   * 次に開いたときに、予約した時点の状態に戻る
-   */
-  async restartForRestore(actorRef: ActorRef, requestId: string): Promise<Result<true>> {
-    const actor = this.platformAdmin(actorRef);
-    if (!actor.ok) return actor;
-    const record = await getRestore(this.env.FILES, requestId);
-    if (!record) return err("not_found", "復元の記録が見つかりません");
-    if (record.status !== "scheduled") return err("invalid_state", "この復元は終わっています");
-    log("warn", "restarting business db for point-in-time restore", {
-      restoreId: record.id,
-      by: actor.value.employeeId,
-    });
-    this.recovery.restart(`point-in-time restore ${record.id}`);
-    return { ok: true, value: true };
   }
 
   /** 戻った業務 DB に、戻したことを操作履歴として残す。まだ戻っていなければ pending を返す */
