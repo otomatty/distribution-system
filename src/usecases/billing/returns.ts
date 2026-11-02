@@ -176,7 +176,7 @@ export const cancelSalesReturnCommand = defineCommand({
     if (!ret) return err("not_found", "返品伝票が見つかりません");
     const next = cancelSalesReturn(ret);
     if (!next.ok) return next;
-    if (!ctx.stores.salesReturns.cancel(id, v, meta(ctx)))
+    if (!ctx.stores.salesReturns.cancel(id, v, reason, meta(ctx)))
       return err("conflict", STALE_VERSION_MESSAGE);
     const back = reverseStock(ctx, {
       sourceType: "sales_return",

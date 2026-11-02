@@ -232,24 +232,50 @@ describe("消込と入金の取消", () => {
     const a2 = (await paymentView(p2.id)).allocations[0]!;
     const sales = await createEmployee(["sales"]);
     expect(
-      await as(sales, "paymentAllocations.cancel", { allocationId: a2.id, version: a2.version }),
+      await as(sales, "paymentAllocations.cancel", {
+        allocationId: a2.id,
+        version: a2.version,
+        reason: "誤り",
+      }),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
     expect(
       await systemCommandResult("paymentAllocations.cancel", {
         allocationId: a2.id,
         version: a2.version + 1,
+        reason: "誤り",
       }),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
-    await systemCommand("paymentAllocations.cancel", { allocationId: a2.id, version: a2.version });
+    // 消込の取消も理由が必須（入金・請求書の画面に出す）
+    expect(
+      await systemCommandResult("paymentAllocations.cancel", {
+        allocationId: a2.id,
+        version: a2.version,
+        reason: " ",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "validation" } });
+    await systemCommand("paymentAllocations.cancel", {
+      allocationId: a2.id,
+      version: a2.version,
+      reason: "別の請求書に消し込む",
+    });
     expect((await invoiceView(first.id)).invoice).toMatchObject({
       status: "partial",
       allocated: 1000,
     });
     expect((await paymentView(p2.id)).unallocated).toBe(1027);
+    expect((await paymentView(p2.id)).allocations[0]).toMatchObject({
+      cancelled: true,
+      cancelReason: "別の請求書に消し込む",
+      cancelledAt: expect.any(String),
+    });
+    expect(
+      (await invoiceView(first.id)).invoice.allocations.find((a) => a.id === a2.id)?.cancelReason,
+    ).toBe("別の請求書に消し込む");
     expect(
       await systemCommandResult("paymentAllocations.cancel", {
         allocationId: a2.id,
         version: a2.version + 1,
+        reason: "もう一度",
       }),
     ).toMatchObject({ ok: false, error: { code: "invalid_state" } });
 
@@ -271,7 +297,13 @@ describe("消込と入金の取消", () => {
     expect((await invoiceView(first.id)).invoice).toMatchObject({ status: "unpaid", allocated: 0 });
     const after = await paymentView(p1.id);
     expect(after).toMatchObject({ unallocated: 0, openInvoices: [] });
-    expect(after.payment.cancelled).toBe(true);
+    // 取消の理由・日時・操作者を入金に記録し、まとめて取り消した消込には入金の取消の理由を残す
+    expect(after.payment).toMatchObject({
+      cancelled: true,
+      cancelReason: "二重に記録した",
+      cancelledAt: expect.any(String),
+    });
+    expect(after.allocations[0]?.cancelReason).toBe("入金の取消：二重に記録した");
     expect(
       await systemCommandResult("customerPayments.cancel", {
         paymentId: p1.id,

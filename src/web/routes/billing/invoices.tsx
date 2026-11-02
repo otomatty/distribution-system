@@ -32,6 +32,7 @@ import {
 import {
   Alert,
   Badge,
+  CancelledNote,
   Checkbox,
   DescriptionList,
   EmptyState,
@@ -1100,6 +1101,7 @@ function DetailBody(props: {
                         <>
                           {" "}
                           <Badge>取消</Badge>
+                          <CancelledNote reason={a.cancelReason} />
                         </>
                       ) : null}
                     </td>

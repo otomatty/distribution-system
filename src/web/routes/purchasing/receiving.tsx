@@ -19,6 +19,7 @@ import { runCommand, runQuery } from "../../usecase";
 import {
   Alert,
   Badge,
+  CancelledNote,
   Checkbox,
   EmptyState,
   ErrorSummary,
@@ -333,6 +334,7 @@ function ReceivePage(props: {
                         {l.closedRemaining ? "・残りを打ち切り" : ""}
                       </div>
                     ))}
+                    {r.cancelled ? <CancelledNote reason={r.cancelReason} /> : null}
                   </td>
                   <td>
                     {cancellable.has(r.id) ? (

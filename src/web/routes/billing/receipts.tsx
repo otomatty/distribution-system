@@ -22,6 +22,7 @@ import { InvoiceStatusBadge, paymentMethodLabel } from "../../views/billing";
 import {
   Alert,
   Badge,
+  CancelledNote,
   Checkbox,
   DescriptionList,
   EmptyState,
@@ -202,7 +203,16 @@ receiptRoutes.get("/", async (c) => {
                     <td class="num">
                       {p.unallocated > 0 ? <strong>{yen(p.unallocated)}</strong> : yen(0)}
                     </td>
-                    <td class="small">{p.memo ?? ""}</td>
+                    <td class="small">
+                      {p.memo ?? ""}
+                      {p.cancelled ? (
+                        <CancelledNote
+                          reason={p.cancelReason}
+                          at={p.cancelledAt}
+                          by={p.cancelledByName}
+                        />
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -588,6 +598,17 @@ function DetailBody(props: {
             ["未消込", yen(props.view.unallocated)],
             ["メモ", payment.memo ? <span class="pre">{payment.memo}</span> : null],
             ["記録", `${dateTime(payment.createdAt)} ${payment.createdByName ?? ""}`],
+            ...(payment.cancelled
+              ? ([
+                  ["取消の理由", payment.cancelReason ?? "（理由の記録なし）"],
+                  [
+                    "取消",
+                    payment.cancelledAt
+                      ? `${dateTime(payment.cancelledAt)} ${payment.cancelledByName ?? ""}`
+                      : null,
+                  ],
+                ] as const)
+              : []),
           ]}
         />
       </section>
@@ -625,22 +646,41 @@ function DetailBody(props: {
                     <td class="small">{dateTime(a.createdAt)}</td>
                     <td>
                       {a.cancelled ? (
-                        <Badge>取消</Badge>
+                        <>
+                          <Badge>取消</Badge>
+                          <CancelledNote reason={a.cancelReason} at={a.cancelledAt} />
+                        </>
                       ) : props.canManage ? (
-                        <form
-                          method="post"
-                          action={paths.allocationCancel(a.id)}
-                          hx-post={paths.allocationCancel(a.id)}
-                          hx-target="#receipt-detail"
-                          hx-swap="outerHTML"
-                          hx-confirm={`${a.invoiceNumber} への消込（${yen(a.settled)}）を取り消します。よろしいですか？`}
-                        >
-                          <FormKey />
-                          <Version value={a.version} />
-                          <button type="submit" class="btn btn-secondary btn-sm">
-                            消込を取り消す
-                          </button>
-                        </form>
+                        <details>
+                          <summary class="btn btn-secondary btn-sm">消込を取り消す</summary>
+                          <form
+                            method="post"
+                            action={paths.allocationCancel(a.id)}
+                            hx-post={paths.allocationCancel(a.id)}
+                            hx-target="#receipt-detail"
+                            hx-swap="outerHTML"
+                            hx-confirm={`${a.invoiceNumber} への消込（${yen(a.settled)}）を取り消します。よろしいですか？`}
+                            class="form"
+                          >
+                            <FormKey />
+                            <Version value={a.version} />
+                            <input type="hidden" name="paymentId" value={a.paymentId} />
+                            <Field
+                              label={`${a.invoiceNumber} への消込の取消の理由`}
+                              name={`allocation-reason-${a.id}`}
+                              required
+                            >
+                              <textarea
+                                id={`f-allocation-reason-${a.id}`}
+                                name="reason"
+                                rows={2}
+                              ></textarea>
+                            </Field>
+                            <button type="submit" class="btn btn-danger btn-sm">
+                              消込を取り消す
+                            </button>
+                          </form>
+                        </details>
                       ) : null}
                     </td>
                   </tr>
@@ -767,10 +807,27 @@ receiptRoutes.post("/allocations/:id/cancel", async (c) => {
   const result = await runCommand(
     c,
     "paymentAllocations.cancel",
-    { allocationId: c.req.param("id"), version: Number(str(form, "version")) || 0 },
+    {
+      allocationId: c.req.param("id"),
+      version: Number(str(form, "version")) || 0,
+      reason: str(form, "reason"),
+    },
     formKey(form),
   );
   if (result.ok) return afterAction(c, result.value.paymentId, result, "allocation_cancelled");
+  // 理由がないなど、取り消せなかった理由を入金の画面に出す（入金の ID はフォームで送る）
+  const paymentId = str(form, "paymentId");
+  if (paymentId !== "" && result.error.code !== "forbidden") {
+    const noReason = toFormErrors(result.error)["reason"] !== undefined;
+    return afterAction(
+      c,
+      paymentId,
+      noReason
+        ? { ok: false, error: { ...result.error, message: "消込の取消の理由を入力してください" } }
+        : result,
+      "allocation_cancelled",
+    );
+  }
   return c.text(result.error.message, result.error.code === "forbidden" ? 403 : 409);
 });
 

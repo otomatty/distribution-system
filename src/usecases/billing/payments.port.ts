@@ -13,6 +13,10 @@ export interface CustomerPaymentRecord {
   readonly method: PaymentMethod;
   readonly memo: string | null;
   readonly cancelled: boolean;
+  /** 取消の理由・日時（UTC）・操作者（取り消していなければ null） */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledByName: string | null;
   readonly version: number;
   readonly createdAt: string;
   readonly createdByName: string | null;
@@ -31,6 +35,9 @@ export interface AllocationRecord {
   readonly adjustment: number;
   readonly adjustmentKind: AllocationAdjustmentKind | null;
   readonly cancelled: boolean;
+  /** 取消の理由と日時（UTC）。入金の取消でまとめて取り消した消込は「入金の取消：（入金の取消の理由）」 */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
   readonly version: number;
   readonly createdAt: string;
 }
@@ -65,14 +72,21 @@ export interface CustomerPaymentStore {
   insert(
     record: Omit<
       CustomerPaymentRecord,
-      "cancelled" | "version" | "createdAt" | "createdByName" | "customerName"
+      | "cancelled"
+      | "cancelReason"
+      | "cancelledAt"
+      | "cancelledByName"
+      | "version"
+      | "createdAt"
+      | "createdByName"
+      | "customerName"
     >,
     meta: WriteMeta,
   ): void;
   /** 版番号が一致したときだけ版番号を上げる（消込を足す・外すとき）。更新できたら true */
   touch(id: string, expectedVersion: number, meta: WriteMeta): boolean;
-  /** 版番号が一致したときだけ取消済みにする。更新できたら true */
-  cancel(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ取消済みにする（理由・日時・操作者を記録する）。更新できたら true */
+  cancel(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 入金の消込（新しい順。取り消したものも含む） */
   allocations(paymentId: string): AllocationRecord[];
   getAllocation(id: string): AllocationRecord | undefined;
@@ -87,8 +101,8 @@ export interface CustomerPaymentStore {
     }[],
     meta: WriteMeta,
   ): void;
-  /** 版番号が一致したときだけ消込を取消済みにする。更新できたら true */
-  cancelAllocation(id: string, expectedVersion: number, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ消込を取消済みにする（理由・日時・操作者を記録する）。更新できたら true */
+  cancelAllocation(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /**
    * 販売先ごとの売掛の集計（未入金・一部入金の請求書と、取り消していない入金）。
    * 未入金・一部入金の請求書か、未消込の入金がある販売先だけ。読み仮名の順

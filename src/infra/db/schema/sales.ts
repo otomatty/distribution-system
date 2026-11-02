@@ -161,6 +161,10 @@ export const salesReturns = sqliteTable(
     creditNoteNumber: text("credit_note_number"),
     creditNotePdfKey: text("credit_note_pdf_key"),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（伝票と一覧に出す） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     ...auditColumns,
   },
@@ -197,6 +201,10 @@ export const customerPayments = sqliteTable(
     amount: integer("amount").notNull(),
     method: text("method", { enum: ["transfer", "cash", "offset", "other"] }).notNull(),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（伝票と一覧に出す） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     ...auditColumns,
   },
@@ -217,6 +225,10 @@ export const paymentAllocations = sqliteTable(
     adjustment: integer("adjustment").notNull().default(0),
     adjustmentKind: text("adjustment_kind", { enum: ["bank_fee", "discount", "other"] }),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者。入金の取消でまとめて取り消した消込は、入金の取消の理由 */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     ...auditColumns,
   },
   (t) => [

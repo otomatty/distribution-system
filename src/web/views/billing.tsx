@@ -17,7 +17,7 @@ import type {
 } from "../../usecases/billing/invoices.port";
 import type { OrderReturns } from "../../usecases/billing/returns";
 import { paths } from "../paths";
-import { Badge } from "./components";
+import { Badge, CancelledNote } from "./components";
 import { centiYen, qty, yen } from "./format";
 import { TaxCategoryLabel, TotalsFoot } from "./sales";
 
@@ -179,6 +179,13 @@ export function SalesReturnsSection(props: {
                           `${l.itemName} ${qty(l.quantity)}${l.unitName}（${l.restock ? `在庫に戻す：${l.locationName ?? ""}` : "廃棄"}）`,
                       )
                       .join("、")}
+                    {r.cancelled ? (
+                      <CancelledNote
+                        reason={r.cancelReason}
+                        at={r.cancelledAt}
+                        by={r.cancelledByName}
+                      />
+                    ) : null}
                   </td>
                   <td>
                     {r.invoiceId ? (

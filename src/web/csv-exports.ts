@@ -239,6 +239,7 @@ export const csvExports = {
       { header: "消込済み", value: (p) => p.allocatedAmount },
       { header: "未消込", value: (p) => p.unallocated },
       { header: "取消", value: (p) => (p.cancelled ? "取消" : "") },
+      { header: "取消の理由", value: (p) => p.cancelReason },
       { header: "メモ", value: (p) => p.memo },
       { header: "記録日時", value: (p) => dateTime(p.createdAt) },
     ],

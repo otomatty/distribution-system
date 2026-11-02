@@ -1361,7 +1361,7 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
                           {l.closedRemaining ? "・残りを打ち切り" : ""}
                         </div>
                       ))}
-                      {r.cancelReason ? <div>取消の理由：{r.cancelReason}</div> : null}
+                      {r.cancelled ? <CancelledNote reason={r.cancelReason} /> : null}
                     </td>
                     <td class="num">{yen(r.subtotal)}</td>
                     <td>

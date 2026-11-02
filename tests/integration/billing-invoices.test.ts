@@ -437,6 +437,7 @@ describe("請求書の取消と再発行", () => {
     await systemCommand("paymentAllocations.cancel", {
       allocationId: allocation.id,
       version: allocation.version,
+      reason: "消込の誤り",
     });
     const unpaid = await invoiceView(issued.id);
     expect(unpaid.invoice).toMatchObject({ status: "unpaid", allocated: 0 });
