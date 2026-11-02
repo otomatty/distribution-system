@@ -389,9 +389,20 @@ export function invoiceStore(db: Db): InvoiceStore {
         .map((r) => r.id);
     },
     closingCustomers(customerId) {
-      const oldest = sql<
-        string | null
-      >`(SELECT MIN(s.shipped_on) FROM ${shipments} s INNER JOIN ${salesOrders} o ON o.id = s.sales_order_id WHERE o.customer_id = "partners"."id" AND s.cancelled = 0 AND s.invoice_id IS NULL)`;
+      // 最も古い未請求の発送の日は、未請求の発送を1回だけ集計して販売先ごとに求める
+      // （販売先ごとの副問い合わせでは、販売先の数 × 未請求の発送を読み、本番の5倍の量で数秒かかる。docs/performance.md）
+      const unbilledConds: SQL[] = [eq(shipments.cancelled, false), isNull(shipments.invoiceId)];
+      if (customerId) unbilledConds.push(eq(salesOrders.customerId, customerId));
+      const unbilled = db
+        .select({
+          customerId: sql<string>`${salesOrders.customerId}`.as("unbilled_customer_id"),
+          oldest: sql<string>`min(${shipments.shippedOn})`.as("oldest_unbilled_on"),
+        })
+        .from(shipments)
+        .innerJoin(salesOrders, eq(salesOrders.id, shipments.salesOrderId))
+        .where(and(...unbilledConds))
+        .groupBy(salesOrders.customerId)
+        .as("unbilled");
       const conds: SQL[] = [
         eq(partners.isCustomer, true),
         isNotNull(partners.closingDay),
@@ -408,9 +419,10 @@ export function invoiceStore(db: Db): InvoiceStore {
           closingDay: partners.closingDay,
           paymentMonthOffset: partners.paymentMonthOffset,
           paymentDay: partners.paymentDay,
-          oldestUnbilledOn: oldest,
+          oldestUnbilledOn: unbilled.oldest,
         })
         .from(partners)
+        .leftJoin(unbilled, eq(unbilled.customerId, partners.id))
         .where(and(...conds))
         .orderBy(asc(partners.kana), asc(partners.id))
         .all()
