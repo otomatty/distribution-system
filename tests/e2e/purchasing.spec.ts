@@ -30,7 +30,8 @@ async function createAndConfirmOrder(
   // 数量を変えると、その行の金額と合計をサーバーで計算し直す（2,400円 × 数量、軽減税率 8%）
   const qty = page.getByLabel(`${itemName}の数量（ケース）`);
   await qty.fill(quantity);
-  await qty.press("Tab");
+  // 入力欄から離れると change で計算し直す（次の入力欄にフォーカスを移さない）
+  await qty.blur();
   const subtotal = 2400 * Number(quantity);
   const total = subtotal + Math.floor(subtotal * 0.08);
   await expect(page.locator("#po-total")).toHaveText(`¥${total.toLocaleString("ja-JP")}`);

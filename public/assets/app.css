@@ -1024,6 +1024,11 @@ body.touch .picker-table td {
 .form fieldset {
   min-width: 0;
 }
+/* 横にスクロールする表の中の .sr-only（position: absolute）が、表の枠の外で画面の幅を広げないようにする
+   （タブレットで画面の幅が広がると、表示が縮小されて押した位置がずれる） */
+.table-wrap {
+  position: relative;
+}
 .receive-lines td {
   vertical-align: middle;
 }
