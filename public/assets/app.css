@@ -833,6 +833,122 @@ body.touch .picker-table td {
   color: var(--text);
 }
 
+/* ---- 受注・発送 ---- */
+/* fieldset は既定で中身の幅より狭くならないので、明細の表は枠の中で横にスクロールさせる */
+.so-form fieldset {
+  min-width: 0;
+}
+.so-lines .price-input {
+  max-width: 9rem;
+  text-align: right;
+}
+.price-reason {
+  margin-top: 0.3rem;
+}
+.price-reason input {
+  margin-top: 0.15rem;
+}
+.line-warnings {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--warning);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.table tr.section-row th {
+  background: var(--surface-2);
+  font-size: 0.85rem;
+}
+.table tfoot.totals th {
+  text-align: right;
+  font-weight: 600;
+}
+.table tfoot.totals tr.grand-total th,
+.table tfoot.totals tr.grand-total td {
+  font-size: 1.05rem;
+}
+.table tr.row-muted td {
+  color: var(--muted);
+}
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.inline-form .field {
+  margin: 0;
+}
+.disclosure summary {
+  list-style: none;
+  cursor: pointer;
+}
+.disclosure summary::-webkit-details-marker {
+  display: none;
+}
+.disclosure[open] form {
+  margin-top: 0.5rem;
+  min-width: 16rem;
+}
+
+/* 発送リスト：商品名の列を固定して、販売先の列を横にスクロールする */
+.matrix-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.shipping-matrix {
+  width: auto;
+  min-width: 100%;
+}
+.shipping-matrix .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 14rem;
+  max-width: 20rem;
+  text-align: left;
+  background: var(--surface);
+  border-right: 2px solid var(--border);
+}
+.shipping-matrix thead .sticky-col,
+.shipping-matrix tfoot .sticky-col {
+  z-index: 3;
+  background: var(--surface-2);
+}
+.shipping-matrix tr.row-danger .sticky-col {
+  background: var(--danger-soft);
+}
+.shipping-matrix .customer-col {
+  min-width: 6.5rem;
+  white-space: normal;
+}
+.shipping-matrix .total-col {
+  font-weight: 700;
+  background: var(--surface-2);
+}
+.shipping-summary {
+  flex: 1 1 100%;
+  margin: 0;
+  font-weight: 600;
+}
+.big-check {
+  width: 1.8rem;
+  height: 1.8rem;
+}
+.confirm-panel {
+  border: 2px solid var(--primary);
+}
+.confirm-count {
+  font-size: 1.1rem;
+}
+.shortage-list {
+  margin: 0.3rem 0 0;
+}
+
 @media print {
   .app-header,
   .app-nav,

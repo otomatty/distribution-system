@@ -7,6 +7,7 @@ import {
   parseYenToCenti,
   priceWithTaxCenti,
   rateOn,
+  ratesOn,
   roundRatio,
   summarizeTax,
   taxAmount,
@@ -132,5 +133,17 @@ describe("parseYenToCenti / formatCenti", () => {
         expect(parseYenToCenti(formatCenti(c))).toBe(c);
       }),
     );
+  });
+});
+
+describe("ratesOn", () => {
+  it("取引日時点の標準税率と軽減税率", () => {
+    const rates = [
+      { category: "standard" as const, rateBps: 800, effectiveFrom: "2014-04-01" },
+      { category: "standard" as const, rateBps: 1000, effectiveFrom: "2019-10-01" },
+      { category: "reduced" as const, rateBps: 800, effectiveFrom: "2019-10-01" },
+    ];
+    expect(ratesOn(rates, "2026-11-02")).toEqual({ standard: 1000, reduced: 800 });
+    expect(ratesOn(rates, "2015-01-01")).toBeUndefined();
   });
 });
