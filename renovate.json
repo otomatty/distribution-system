@@ -13,6 +13,12 @@
     {
       "matchPackageNames": ["wrangler", "@cloudflare/vitest-plugin"],
       "groupName": "cloudflare tooling"
+    },
+    {
+      "description": "oxlint-tsgolint は TypeScript（tsgo）の版に合わせて出る。oxlint は oxlint-tsgolint の版を peerDependencies で求めるので、3つを同時に更新する（要件定義書 9章）。グループ名を上書きするため、ほかのルールより後に置く",
+      "matchPackageNames": ["typescript", "oxlint-tsgolint", "oxlint"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "groupName": "typescript and oxlint"
     }
   ]
 }
