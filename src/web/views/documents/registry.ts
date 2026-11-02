@@ -4,7 +4,8 @@
  * 帳票を追加する手順：
  * 1. 発行するユースケースの側（usecases/<区分>/）に、帳票の内容（スナップショット）の zod スキーマを書く。
  *    発行するときは、そのスキーマの形の値を ctx.documents.issue({ snapshot }) に渡す
- * 2. web/views/documents/<帳票>.tsx に defineTemplate({ schema, render })（define-template.ts）でテンプレートを書く。
+ * 2. web/views/documents/<帳票>.tsx に defineTemplate({ schema, render }) でテンプレートを書く。
+ *    defineTemplate は "./template" から import する（"./registry" から import すると、この一覧との循環 import になる）。
  *    共通の部品は parts.tsx、レイアウトと CSS は layout.tsx にある。テンプレートは値を表示するだけで、金額を計算しない
  * 3. 下の documentTemplates に1行で登録する
  *
@@ -19,13 +20,13 @@ import {
   type Orientation,
 } from "../../../domain/documents";
 import { err, ok, type Result } from "../../../domain/result";
-import type { DocumentMeta, DocumentTemplate, RenderedSheet } from "./define-template";
+import { deliveryNoteTemplate } from "./delivery-note";
 import { PrintDocument } from "./layout";
 import { purchaseOrderTemplate } from "./purchase-order";
+import type { DocumentMeta, DocumentTemplate, RenderedSheet } from "./template";
 
-// テンプレートの定義（defineTemplate）は define-template.ts にある。テンプレートのファイルはそちらを読み込む
-// （ここを読み込むと、テンプレートの一覧との間で循環する）
-export { defineTemplate, type DocumentMeta, type DocumentTemplate } from "./define-template";
+// テンプレートの定義（defineTemplate）は template.ts にある（テンプレートとこの一覧が互いに import しないように）
+export { defineTemplate } from "./template";
 
 /**
  * 帳票の種類 → テンプレート。帳票を追加する区分が1行ずつ登録する。
@@ -33,6 +34,7 @@ export { defineTemplate, type DocumentMeta, type DocumentTemplate } from "./defi
  *     invoice: invoiceTemplate,・credit_note: creditNoteTemplate,（請求）
  */
 export const documentTemplates: Partial<Record<DocumentType, DocumentTemplate>> = {
+  delivery_note: deliveryNoteTemplate,
   purchase_order: purchaseOrderTemplate,
 };
 

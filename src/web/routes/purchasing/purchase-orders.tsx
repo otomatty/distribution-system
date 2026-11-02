@@ -466,7 +466,7 @@ function Totals(props: {
 }) {
   const s = props.summary;
   return (
-    <div id="po-totals" class="totals" hx-swap-oob={props.oob ? "true" : undefined}>
+    <div id="po-totals" class="po-totals" hx-swap-oob={props.oob ? "true" : undefined}>
       {props.error ? <p class="field-error">{props.error}</p> : null}
       <table class="table totals-table">
         <tbody>

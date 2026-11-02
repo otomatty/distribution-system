@@ -27,6 +27,7 @@ import {
   SUPPLIER_INVOICE_STATUS_LABELS,
 } from "../domain/purchasing";
 import type { Result } from "../domain/result";
+import { SALES_ORDER_STATUS_LABELS } from "../domain/sales";
 import type { ActorRef } from "../infra/do/actor-ref";
 import type { QueryInput, QueryName, QueryOutput } from "../usecases/registry";
 import { csvResponse, type CsvValue } from "./csv";
@@ -122,6 +123,29 @@ export const csvExports = {
         value: (d) => (d.lastSendStatus ? SEND_STATUS_LABELS[d.lastSendStatus] : "未送付"),
       },
       { header: "発行日時", value: (d) => dateTime(d.createdAt) },
+    ],
+  }),
+  salesOrders: defineCsvExport({
+    fileName: "受注一覧",
+    fetch: (q, filter, page, pageSize) => q("salesOrders.list", { ...filter, page, pageSize }),
+    columns: [
+      { header: "受注番号", value: (o) => o.number },
+      { header: "状態", value: (o) => SALES_ORDER_STATUS_LABELS[o.status] },
+      { header: "出荷可能数", value: (o) => (o.shortage ? "不足" : "") },
+      { header: "受注日", value: (o) => o.orderedOn },
+      { header: "納品希望日", value: (o) => o.deliveryRequestedOn },
+      { header: "出荷予定日", value: (o) => o.shipPlannedOn },
+      { header: "販売先", value: (o) => o.customerName },
+      { header: "先方の担当者", value: (o) => o.customerContactName },
+      { header: "出荷元", value: (o) => (o.makerDirect ? "メーカー直" : o.locationName) },
+      { header: "社内の担当者", value: (o) => o.employeeName },
+      { header: "明細数", value: (o) => o.lineCount },
+      { header: "小計（税抜）", value: (o) => o.subtotal },
+      { header: "合計（税込）", value: (o) => o.total },
+      { header: "分割元", value: (o) => (o.splitFromId ? "分割" : "") },
+      { header: "メモ", value: (o) => o.memo },
+      { header: "取消の理由", value: (o) => o.cancelReason },
+      { header: "登録日時", value: (o) => dateTime(o.createdAt) },
     ],
   }),
   purchaseOrders: defineCsvExport({

@@ -1,6 +1,6 @@
 /**
- * 帳票のテンプレートの定義（defineTemplate）。テンプレートのファイル（purchase-order.tsx など）はここを読み込み、
- * registry.ts の documentTemplates に登録する（registry.ts を読み込むと循環するため、定義を分けている）。
+ * 帳票のテンプレートの定義（defineTemplate）。テンプレートの一覧は registry.ts。
+ * テンプレートのファイル（delivery-note.tsx など）はここを import し、registry.ts がテンプレートを import する。
  */
 import type { Child } from "hono/jsx";
 import type { z } from "zod";

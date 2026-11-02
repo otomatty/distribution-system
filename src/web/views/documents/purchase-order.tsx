@@ -7,8 +7,8 @@ import {
   type PurchaseOrderSnapshot,
 } from "../../../usecases/purchasing/snapshots";
 import { centiYen, postal, qty, rate, yen } from "../format";
-import { defineTemplate } from "./define-template";
 import { Addressee, DocumentDate, DocumentMeta, DocumentTitle, Issuer } from "./parts";
+import { defineTemplate } from "./template";
 
 const DESTINATION_KIND_LABELS: Readonly<
   Record<PurchaseOrderSnapshot["destination"]["kind"], string>

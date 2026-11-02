@@ -202,8 +202,12 @@
     }
   }
 
+  // 登録が終わったフォーム。入力の直後に登録すると、下書きの保存（400ms 後）が下書きを消した後に動き、
+  // 終わった登録の内容（受付番号を含む）が下書きとして残ってしまうので、終わったフォームは保存しない
+  var finishedForms = new WeakSet();
+
   function saveDraft(form) {
-    if (!storage) return;
+    if (!storage || finishedForms.has(form)) return;
     try {
       storage.setItem(
         draftKey(form),
@@ -214,14 +218,7 @@
     }
   }
 
-  // 入力から少し後に下書きを保存する予約（フォームごと）。送信が終わって下書きを消したら、予約も取り消す
-  // （取り消さないと、消した後に古い内容で保存し直し、同じ画面を開き直したときに復元してしまう）
-  var draftTimers = new WeakMap();
-
   function clearDraft(form) {
-    var pending = draftTimers.get(form);
-    if (pending) clearTimeout(pending);
-    draftTimers.delete(form);
     if (!storage) return;
     try {
       storage.removeItem(draftKey(form));
@@ -267,16 +264,12 @@
         }
       }
     }
+    var timer = null;
     form.addEventListener("input", function () {
-      var pending = draftTimers.get(form);
-      if (pending) clearTimeout(pending);
-      draftTimers.set(
-        form,
-        setTimeout(function () {
-          draftTimers.delete(form);
-          saveDraft(form);
-        }, 400),
-      );
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () {
+        saveDraft(form);
+      }, 400);
     });
     form.addEventListener("change", function () {
       saveDraft(form);
@@ -284,14 +277,16 @@
   }
 
   // 登録・保存が終わったら下書きを消す（成功時はサーバーが HX-Redirect を返す）。
-  // htmx は HX-Redirect の応答では detail.successful を設定しないので、状態コードで判定する
+  // htmx は HX-Redirect の応答では successful を設定しないので、状態コードで判断する
   document.addEventListener("htmx:afterRequest", function (event) {
     var elt = event.detail.elt;
     var xhr = event.detail.xhr;
     if (!elt || !xhr || xhr.status < 200 || xhr.status >= 300) return;
     var form = elt.tagName === "FORM" ? elt : elt.closest && elt.closest("form");
-    if (form && form.hasAttribute("data-draft") && xhr.getResponseHeader("HX-Redirect"))
+    if (form && form.hasAttribute("data-draft") && xhr.getResponseHeader("HX-Redirect")) {
+      finishedForms.add(form);
       clearDraft(form);
+    }
   });
   // htmx を使わない通常の送信でも、送信した時点で下書きを消す
   document.addEventListener("submit", function (event) {
@@ -301,8 +296,10 @@
       form.hasAttribute &&
       form.hasAttribute("data-draft") &&
       !form.hasAttribute("hx-post")
-    )
+    ) {
+      finishedForms.add(form);
       clearDraft(form);
+    }
   });
 
   function clearAllDrafts() {

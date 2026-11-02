@@ -2,5 +2,11 @@
 import { Hono } from "hono";
 
 import type { AppEnv } from "../../types";
+import { salesOrderRoutes, shipmentRoutes } from "./orders";
+import { shippingRoutes } from "./shipping";
 
 export const salesRoutes = new Hono<AppEnv>();
+
+salesRoutes.route("/sales-orders", salesOrderRoutes);
+salesRoutes.route("/shipments", shipmentRoutes);
+salesRoutes.route("/shipping", shippingRoutes);

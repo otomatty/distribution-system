@@ -11,11 +11,13 @@
 import type { Role } from "../../domain/roles";
 import { platformSection } from "./platform";
 import { payablesSection, purchasingSection } from "./purchasing";
+import { salesSection } from "./sales";
 import type { DashboardSection } from "./types";
 
 /** 表示する順。仕入・受注出荷・経理の欄は各区分が追加する */
 export const dashboardSections: readonly DashboardSection[] = [
   purchasingSection,
+  salesSection,
   payablesSection,
   platformSection,
 ];

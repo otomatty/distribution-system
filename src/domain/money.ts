@@ -86,6 +86,19 @@ export function rateOn(
   return best?.rateBps;
 }
 
+/**
+ * 取引日時点の標準税率・軽減税率。どちらかが税率表になければ undefined
+ * （税率表は初期データで2019年10月から入っているので、通常は起きない）。
+ */
+export function ratesOn(
+  rates: readonly TaxRateEntry[],
+  date: string,
+): Readonly<Record<TaxCategory, number>> | undefined {
+  const standard = rateOn(rates, "standard", date);
+  const reduced = rateOn(rates, "reduced", date);
+  return standard === undefined || reduced === undefined ? undefined : { standard, reduced };
+}
+
 export interface AmountLine {
   readonly amount: number;
   readonly taxCategory: TaxCategory;

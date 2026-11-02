@@ -1,0 +1,51 @@
+/**
+ * ダッシュボードの「受注・出荷」の欄（要件定義書 3.13）：今日の出荷予定（保管場所別）、出荷可能数が足りない受注、
+ * 出荷予定日を過ぎた未発送の受注。今日の入荷予定は仕入の欄で扱う。
+ */
+import { paths } from "../paths";
+import { runQuery } from "../usecase";
+import type { DashboardItem, DashboardSection } from "./types";
+
+export const salesSection: DashboardSection = {
+  id: "sales",
+  title: "受注・出荷",
+  roles: ["sales"],
+  async load(c) {
+    const d = await runQuery(c, "sales.dashboard", {});
+    const items: DashboardItem[] = d.shipPlanned.map((p) => ({
+      label: `今日の出荷予定（${p.locationName}）`,
+      count: p.count,
+      href:
+        p.locationId === null
+          ? paths.salesOrders({
+              status: "received",
+              locationId: "maker",
+              shipFrom: d.today,
+              shipTo: d.today,
+            })
+          : paths.shipping({ date: d.today, locationId: p.locationId }),
+    }));
+    if (items.length === 0) {
+      items.push({
+        label: "今日の出荷予定",
+        count: 0,
+        href: paths.salesOrders({ status: "received", shipFrom: d.today, shipTo: d.today }),
+      });
+    }
+    items.push(
+      {
+        label: "出荷可能数が足りない受注",
+        count: d.shortage,
+        href: paths.salesOrders({ status: "received", shortage: 1 }),
+        attention: true,
+      },
+      {
+        label: "出荷予定日を過ぎた未発送の受注",
+        count: d.overdue,
+        href: paths.salesOrders({ status: "received", shipTo: d.overdueShipTo }),
+        attention: true,
+      },
+    );
+    return items;
+  },
+};
