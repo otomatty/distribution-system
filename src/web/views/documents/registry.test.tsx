@@ -46,9 +46,9 @@ const sampleTemplate = defineTemplate({
 });
 
 const snapshot = {
-  to: { name: "大船渡ストア", honorific: "御中", address: "岩手県大船渡市" },
+  to: { name: "架空ストア", honorific: "御中", address: "岩手県大船渡市" },
   from: { name: "テスト商事", registrationNumber: "T1234567890123" },
-  lines: [{ name: "かもめの玉子 <10個入>", quantity: 3, amount: 3240 }],
+  lines: [{ name: "テスト銘菓 うみねこ <10個入>", quantity: 3, amount: 3240 }],
   total: 3240,
 };
 const meta = {
@@ -76,7 +76,7 @@ describe("帳票のテンプレート", () => {
     expect(html).toContain(`<style>${PRINT_CSS}</style>`);
     expect(html).toContain("<title>納品書 DN-2026-000001</title>");
     // 値はエスケープされる
-    expect(html).toContain("かもめの玉子 &lt;10個入&gt;");
+    expect(html).toContain("テスト銘菓 うみねこ &lt;10個入&gt;");
     // 外部のファイルを読まない
     expect(html).not.toMatch(/<(link|script|img)\b/);
     expect(html.replace(PRINT_CSS, "")).toMatchSnapshot();
