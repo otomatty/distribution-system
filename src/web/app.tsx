@@ -9,9 +9,11 @@ import { requireActor, securityHeaders } from "./middleware";
 import { authRoutes } from "./routes/auth";
 import { billingRoutes } from "./routes/billing";
 import { dashboardRoutes } from "./routes/dashboard";
+import { devRoutes } from "./routes/dev";
 import { mastersRoutes } from "./routes/masters";
 import { platformRoutes } from "./routes/platform";
 import { purchasingRoutes } from "./routes/purchasing";
+import { reportsRoutes } from "./routes/reports";
 import { salesRoutes } from "./routes/sales";
 import { stockRoutes } from "./routes/stock";
 import type { AppEnv } from "./types";
@@ -32,6 +34,7 @@ export function createApp(): Hono<AppEnv> {
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => authFor(c.env).handler(c.req.raw));
   app.route("/", authRoutes);
+  app.route("/", devRoutes);
 
   // ここから下はログインが必要
   app.use("*", requireActor);
@@ -42,6 +45,7 @@ export function createApp(): Hono<AppEnv> {
   app.route("/", salesRoutes);
   app.route("/", billingRoutes);
   app.route("/", platformRoutes);
+  app.route("/", reportsRoutes);
 
   app.notFound((c) => c.text("ページが見つかりません", 404));
   app.onError((error, c) => {

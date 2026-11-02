@@ -59,7 +59,11 @@ function conditions(filter: DocumentFilter): SQL | undefined {
       sql`NOT EXISTS (SELECT 1 FROM ${documentSends} s WHERE s.document_id = ${documents.id})`,
     );
   } else if (filter.sendStatus) {
-    conds.push(sql`${lastSendStatus} = ${filter.sendStatus}`);
+    // 最新の送付の結果が sendStatus の帳票は、結果が sendStatus の送付から探す（帳票ごとに最新の送付を調べると、
+    // 帳票の数だけ読む。ダッシュボードの「送付に失敗した帳票」。docs/performance.md）
+    conds.push(sql`${documents.id} IN (SELECT s.document_id FROM ${documentSends} s
+      WHERE s.status = ${filter.sendStatus}
+        AND NOT EXISTS (SELECT 1 FROM ${documentSends} s2 WHERE s2.document_id = s.document_id AND s2.id > s.id))`);
   }
   return conds.length > 0 ? and(...conds) : undefined;
 }

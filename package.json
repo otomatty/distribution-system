@@ -19,6 +19,7 @@
     "secrets": "secretlint \"**/*\"",
     "db:generate": "drizzle-kit generate --config drizzle.business.config.ts && drizzle-kit generate --config drizzle.auth.config.ts && node scripts/build-migrations.mjs",
     "db:seed": "node scripts/seed.mjs",
+    "perf": "node scripts/perf.mjs",
     "cf-typegen": "wrangler types --strict-vars=false src/worker-configuration.d.ts",
     "prepare": "lefthook install || true",
     "db:migrate:local": "wrangler d1 migrations apply AUTH_DB --local"

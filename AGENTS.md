@@ -36,7 +36,7 @@ src/
     core.ts          ユースケースの共通の型（操作者、時刻、採番、操作履歴、ジョブ、帳票）
     registry.ts      ユースケースの一覧（区分ごとの index.ts をまとめる）
     ports.ts         ポートの一覧（区分ごとの stores.ts をまとめる）
-    <区分>/          masters・stock・purchasing・sales・billing・platform
+    <区分>/          masters・stock・purchasing・sales・billing・platform・reports
       index.ts       この区分のユースケースの一覧（commands / queries）
       stores.ts      この区分のポート（インターフェース）
   infra/
@@ -73,6 +73,7 @@ docs/requirements.md 要件定義書の写し
 | sales      | 受注、引当、分割、発送リスト、発送と取消、納品書                                   |
 | billing    | 請求書、締め処理、返品伝票、返還請求書、入金と消込、売掛残高、販売先廃棄、集計     |
 | platform   | 帳票の PDF 化と送付、帳票の検索、処理状況、CSV、バックアップ、ダッシュボード       |
+| reports    | 売上・仕入の集計（月別に、販売先別・仕入先別・商品別）                             |
 
 依存の向きは次のとおりで、oxlint のルールで強制しています。違反する import を書かないでください。
 
@@ -114,6 +115,15 @@ docs/requirements.md 要件定義書の写し
 - 受け取ったファイル（仕入先請求書の PDF が見本）：形式は拡張子ではなく中身で確かめ、版ごとに新しいキーで R2 に置いてから、業務 DB に版（SHA-256 つき）を記録する。上書き・削除はせず、記録できなかったファイルだけを消す（`web/routes/purchasing/supplier-invoice-attachments.tsx`、`docs/operations.md`）
 - 運用（バックアップと復元、バケットロック、失敗に気づく方法）は `docs/operations.md`
 
+### テストデータ（bun run db:seed）
+
+- 投入の処理は `src/infra/seed/`。業務 DB の Durable Object の `seed`（`/dev/seed`）から呼び、開発用ログインと同じく ENVIRONMENT が development / test のときだけ動く
+- 書き込みは必ず本物のユースケースを通す（`session.run(コマンド, 入力, 社員, 時刻)`。過去の業務日の時刻で実行する）。テーブルに直接書かない。受付番号（`seed:<規模>:<手順>:<回>:<何番目>`）は `session.run` が付ける
+- 乱数は `session.random(対象のキー…)` を使う。キーには番号・名前・日付を使い、ID（ULID は毎回変わる）を使わない
+- 手順を足すときは `src/infra/seed/index.ts` の `STEPS`、毎日の操作を足すときは `operations.ts` の `DAILY`（発注・入荷・受注・発送・在庫・仕入先請求書・支払）か `billing.ts`（返品伝票・請求書・締め処理・返還請求書・入金と消込・販売先廃棄。1日の取引の最後に行う）に追加する。後から期間をまとめて処理すると、途中の未請求・未処理が実際の運用より大きく膨らむため、毎日の流れの中で行う
+- 整合の確認（`verify.ts`）と結合テスト（`tests/integration/seed.test.ts`）も更新する
+- 一覧・集計を追加・変更したら、full のデータで速さを確かめる（`bun run perf`、`docs/performance.md`）
+
 ## 3. コマンド
 
 `package.json` に次の名前で定義しています。
@@ -130,7 +140,8 @@ docs/requirements.md 要件定義書の写し
 | `bun run knip`                      | 使われていないコードと依存の検出                                                            |
 | `bun run secrets`                   | 秘密情報の混入チェック（secretlint）。`bun run check`、コミット時のフック、CI でも動く      |
 | `bun run db:generate`               | Drizzle のマイグレーションを生成                                                            |
-| `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定）                                                |
+| `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定。`-- --scale=full` で本番の約5倍）               |
+| `bun run perf`                      | テストデータを入れた wrangler dev で、主な画面の速さを測る（docs/performance.md）           |
 | `bun run db:migrate:local`          | ログイン情報（D1）のマイグレーションを手元に適用                                            |
 | `bun run cf-typegen`                | `wrangler.jsonc` からバインディングの型を生成                                               |
 

@@ -90,11 +90,6 @@ function toRecord(r: Row): InvoiceRecord {
  * サブクエリの中の同じ名前の列と取り違える）
  */
 
-/** 請求書ごとの最新の帳票の ID（取り消したものも含む） */
-const latestDocumentId = sql`(SELECT d.id FROM ${documents} d WHERE d.document_type = 'invoice' AND d.entity_id = "invoices"."id" ORDER BY d.id DESC LIMIT 1)`;
-/** その帳票の最新の送付の結果 */
-const lastSendStatus = sql`(SELECT s.status FROM ${documentSends} s WHERE s.document_id = ${latestDocumentId} ORDER BY s.id DESC LIMIT 1)`;
-
 function conditions(filter: InvoiceFilter): SQL | undefined {
   const conds: SQL[] = [];
   if (filter.status) conds.push(eq(invoices.status, filter.status));
@@ -113,8 +108,21 @@ function conditions(filter: InvoiceFilter): SQL | undefined {
   }
   if (filter.number)
     conds.push(sql`${invoices.number} LIKE ${likePattern(filter.number)} ESCAPE '\\'`);
-  if (filter.sendStatus) conds.push(sql`${lastSendStatus} = ${filter.sendStatus}`);
+  if (filter.sendStatus) conds.push(latestSendIs(filter.sendStatus));
   return conds.length > 0 ? and(...conds) : undefined;
+}
+
+/**
+ * 最新の帳票の最新の送付の結果が status の請求書。結果が status の送付から探す
+ * （請求書ごとに最新の帳票と送付を調べると、請求書の数だけ読む。ダッシュボードの「送付に失敗した請求書」。docs/performance.md）
+ */
+function latestSendIs(status: string): SQL {
+  return sql`${invoices.id} IN (SELECT d.entity_id FROM ${documentSends} s
+    INNER JOIN ${documents} d ON d.id = s.document_id
+    WHERE s.status = ${status} AND d.document_type = 'invoice'
+      AND NOT EXISTS (SELECT 1 FROM ${documentSends} s2 WHERE s2.document_id = s.document_id AND s2.id > s.id)
+      AND NOT EXISTS (SELECT 1 FROM ${documents} d2
+        WHERE d2.document_type = 'invoice' AND d2.entity_id = d.entity_id AND d2.id > d.id))`;
 }
 
 function stamp(meta: WriteMeta, table: typeof shipments | typeof salesReturns | typeof invoices) {
@@ -389,9 +397,20 @@ export function invoiceStore(db: Db): InvoiceStore {
         .map((r) => r.id);
     },
     closingCustomers(customerId) {
-      const oldest = sql<
-        string | null
-      >`(SELECT MIN(s.shipped_on) FROM ${shipments} s INNER JOIN ${salesOrders} o ON o.id = s.sales_order_id WHERE o.customer_id = "partners"."id" AND s.cancelled = 0 AND s.invoice_id IS NULL)`;
+      // 最も古い未請求の発送の日は、未請求の発送を1回だけ集計して販売先ごとに求める
+      // （販売先ごとの副問い合わせでは、販売先の数 × 未請求の発送を読み、本番の5倍の量で数秒かかる。docs/performance.md）
+      const unbilledConds: SQL[] = [eq(shipments.cancelled, false), isNull(shipments.invoiceId)];
+      if (customerId) unbilledConds.push(eq(salesOrders.customerId, customerId));
+      const unbilled = db
+        .select({
+          customerId: sql<string>`${salesOrders.customerId}`.as("unbilled_customer_id"),
+          oldest: sql<string>`min(${shipments.shippedOn})`.as("oldest_unbilled_on"),
+        })
+        .from(shipments)
+        .innerJoin(salesOrders, eq(salesOrders.id, shipments.salesOrderId))
+        .where(and(...unbilledConds))
+        .groupBy(salesOrders.customerId)
+        .as("unbilled");
       const conds: SQL[] = [
         eq(partners.isCustomer, true),
         isNotNull(partners.closingDay),
@@ -408,9 +427,10 @@ export function invoiceStore(db: Db): InvoiceStore {
           closingDay: partners.closingDay,
           paymentMonthOffset: partners.paymentMonthOffset,
           paymentDay: partners.paymentDay,
-          oldestUnbilledOn: oldest,
+          oldestUnbilledOn: unbilled.oldest,
         })
         .from(partners)
+        .leftJoin(unbilled, eq(unbilled.customerId, partners.id))
         .where(and(...conds))
         .orderBy(asc(partners.kana), asc(partners.id))
         .all()

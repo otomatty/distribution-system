@@ -67,6 +67,8 @@ export const documents = sqliteTable(
   (t) => [
     index("documents_search").on(t.transactionDate, t.partnerId),
     index("documents_entity").on(t.documentType, t.entityId),
+    // ダッシュボードの「PDF の作成に失敗した帳票」の件数（帳票をすべて読まない）
+    index("documents_status").on(t.status),
   ],
 );
 

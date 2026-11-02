@@ -9,6 +9,7 @@ import type { CommandDef, QueryDef } from "./core";
 import { mastersCommands, mastersQueries } from "./masters";
 import { platformCommands, platformQueries } from "./platform";
 import { purchasingCommands, purchasingQueries } from "./purchasing";
+import { reportsCommands, reportsQueries } from "./reports";
 import { salesCommands, salesQueries } from "./sales";
 import { stockCommands, stockQueries } from "./stock";
 
@@ -19,6 +20,7 @@ export const commands = {
   ...salesCommands,
   ...billingCommands,
   ...platformCommands,
+  ...reportsCommands,
 };
 
 export const queries = {
@@ -28,6 +30,7 @@ export const queries = {
   ...salesQueries,
   ...billingQueries,
   ...platformQueries,
+  ...reportsQueries,
 };
 
 type Commands = typeof commands;

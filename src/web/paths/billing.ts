@@ -1,6 +1,6 @@
 import { enc, withQuery, type Query } from "./query";
 
-/** 請求・入金・販売先廃棄・集計の画面 */
+/** 請求・入金・販売先廃棄の画面 */
 export const billingPaths = {
   invoices: (query?: Query) => withQuery("/invoices", query),
   /** 請求書一覧の CSV（POST。一覧と同じ絞り込みの条件） */
@@ -52,6 +52,4 @@ export const billingPaths = {
   disposal: (id: string, query?: Query) => withQuery(`/disposals/${enc(id)}`, query),
   disposalRates: (query?: Query) => withQuery("/disposals/rates", query),
   disposalRatesCsv: () => "/disposals/rates/csv",
-
-  reports: (query?: Query) => withQuery("/reports", query),
 };

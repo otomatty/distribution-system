@@ -36,6 +36,13 @@
       "when": 1793617817043,
       "tag": "0004_audit_logs_search_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793622588615,
+      "tag": "0005_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

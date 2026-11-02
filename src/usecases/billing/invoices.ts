@@ -818,19 +818,65 @@ export interface ClosingCandidate {
   readonly issuable: boolean;
 }
 
+/**
+ * 販売先ごとの期間の未請求の発送（それぞれ上限 + 1件まで。上限を超えたことがわかるように）を返す関数。
+ * 販売先が複数なら、期間をすべて含む範囲の未請求の発送を1回で読んで分ける（販売先ごとに読むと、
+ * 販売先の数 × 未請求の発送を読むことになる。docs/performance.md）。読む件数が多すぎるときは販売先ごとに読む
+ */
+function unbilledInPeriods(
+  ctx: Pick<QueryContext, "stores">,
+  periods: readonly { readonly customerId: string; readonly from: string; readonly to: string }[],
+): (customerId: string) => UnbilledShipment[] {
+  const perCustomer = CLOSING_MAX_SHIPMENTS + 1;
+  const byCustomer = new Map(periods.map((p) => [p.customerId, p]));
+  const each = (customerId: string): UnbilledShipment[] => {
+    const p = byCustomer.get(customerId);
+    if (!p) return [];
+    return ctx.stores.shipments.unbilled(
+      { customerId, shippedFrom: p.from, shippedTo: p.to },
+      perCustomer,
+    );
+  };
+  if (periods.length < 2) return each;
+  const limit = perCustomer * periods.length;
+  const all = ctx.stores.shipments.unbilled(
+    {
+      shippedFrom: periods.map((p) => p.from).reduce((a, b) => (b < a ? b : a)),
+      shippedTo: periods.map((p) => p.to).reduce((a, b) => (b > a ? b : a)),
+    },
+    limit + 1,
+  );
+  if (all.length > limit) return each;
+  const grouped = new Map<string, UnbilledShipment[]>();
+  for (const s of all) {
+    const p = byCustomer.get(s.customerId);
+    if (!p || s.shippedOn < p.from || s.shippedOn > p.to) continue;
+    const list = grouped.get(s.customerId) ?? [];
+    if (list.length < perCustomer) list.push(s);
+    grouped.set(s.customerId, list);
+  }
+  return (customerId) => grouped.get(customerId) ?? [];
+}
+
 function closingCandidates(
   ctx: Pick<QueryContext, "stores" | "clock">,
   customerId: string | undefined,
 ): ClosingCandidate[] {
   const today = ctx.clock.today();
   const out: ClosingCandidate[] = [];
-  for (const c of ctx.stores.invoices.closingCustomers(customerId)) {
-    if (c.oldestUnbilledOn === null) continue;
-    const target = closingTarget(c.oldestUnbilledOn, c.closingDay, today);
-    const shipments = ctx.stores.shipments.unbilled(
-      { customerId: c.id, shippedFrom: target.from, shippedTo: target.to },
-      CLOSING_MAX_SHIPMENTS + 1,
+  const targets = ctx.stores.invoices
+    .closingCustomers(customerId)
+    .flatMap((c) =>
+      c.oldestUnbilledOn === null
+        ? []
+        : [{ c, target: closingTarget(c.oldestUnbilledOn, c.closingDay, today) }],
     );
+  const unbilledFor = unbilledInPeriods(
+    ctx,
+    targets.map((t) => ({ customerId: t.c.id, from: t.target.from, to: t.target.to })),
+  );
+  for (const { c, target } of targets) {
+    const shipments = unbilledFor(c.id);
     const returns = ctx.stores.salesReturns.unbilled(
       { customerId: c.id, returnedTo: target.to },
       CLOSING_MAX_RETURNS + 1,

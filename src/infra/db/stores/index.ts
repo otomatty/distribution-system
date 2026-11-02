@@ -4,6 +4,7 @@ import { createBillingStores } from "./billing";
 import { createMastersStores } from "./masters";
 import { createPlatformStores } from "./platform";
 import { createPurchasingStores } from "./purchasing";
+import { createReportsStores } from "./reports";
 import { createSalesStores } from "./sales";
 import { createStockStores } from "./stock";
 
@@ -16,5 +17,6 @@ export function createStores(db: Db): Stores {
     ...createSalesStores(db),
     ...createBillingStores(db),
     ...createPlatformStores(db),
+    ...createReportsStores(db),
   };
 }

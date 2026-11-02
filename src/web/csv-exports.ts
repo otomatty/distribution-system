@@ -28,6 +28,7 @@ import {
   PURCHASE_ORDER_STATUS_LABELS,
   SUPPLIER_INVOICE_STATUS_LABELS,
 } from "../domain/purchasing";
+import { REPORT_AXIS_LABELS, REPORT_MEASURE_LABELS } from "../domain/reports";
 import type { Result } from "../domain/result";
 import { INVOICE_STATUS_LABELS, SALES_ORDER_STATUS_LABELS } from "../domain/sales";
 import type { ActorRef } from "../infra/do/actor-ref";
@@ -293,6 +294,22 @@ export const csvExports = {
       { header: "廃棄数", value: (r) => r.disposed },
       { header: "出荷数", value: (r) => r.shipped },
       { header: "廃棄率（%）", value: (r) => (r.rateBps === null ? null : formatRate(r.rateBps)) },
+    ],
+  }),
+  /**
+   * 売上・仕入の集計：行 × 月を縦に並べる（Excel のピボットテーブルで集計し直せる）。
+   * 1ページは「行（販売先・仕入先・商品）pageSize 件分 × 月」なので、CSV の行は pageSize より多く返る
+   */
+  reports: defineCsvExport({
+    fileName: "売上・仕入の集計",
+    fetch: (q, filter, page, pageSize) => q("reports.cells", { ...filter, page, pageSize }),
+    columns: [
+      { header: "集計", value: (r) => REPORT_MEASURE_LABELS[r.measure] },
+      { header: "区分", value: (r) => REPORT_AXIS_LABELS[r.axis] },
+      { header: "コード", value: (r) => r.code },
+      { header: "名前", value: (r) => r.name },
+      { header: "月", value: (r) => r.month },
+      { header: "金額（税抜）", value: (r) => r.amount },
     ],
   }),
 } satisfies Readonly<Record<string, CsvExport>>;

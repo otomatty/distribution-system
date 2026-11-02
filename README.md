@@ -29,7 +29,22 @@ bun run dev                      # http://localhost:8787
 ```
 
 `/dev/login` から、登録済みの社員のメールアドレスでログインできます（`ENVIRONMENT` が `development` か `test` のときだけ有効）。
-`wrangler.jsonc` の既定の `ENVIRONMENT` は開発用ログインが有効にならない値（`unconfigured`）なので、`bun run dev` と `.dev.vars` で `development` を渡しています（テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で渡す）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。テストデータは `bun run db:seed` で入れます。
+`wrangler.jsonc` の既定の `ENVIRONMENT` は開発用ログインが有効にならない値（`unconfigured`）なので、`bun run dev` と `.dev.vars` で `development` を渡しています（テストは `vitest.config.ts`、E2E は `tests/e2e/playwright.config.ts` で渡す）。最初の管理者は `wrangler.jsonc` の `INITIAL_ADMIN_EMAIL` です。テストデータは下の `bun run db:seed` で入れます。
+
+### テストデータ
+
+```sh
+bun run db:seed                    # 本番と同じくらいのマスタと、約3か月分の取引（毎日の開発用、30秒ほど）
+bun run db:seed -- --scale=full    # 本番の約5倍（商品 2,500・取引先 1,000・受注 約12万件・発注 約5万件の3年分。速度の確認用、1時間ほど）
+bun run db:seed -- --reset         # 業務データを消してから入れ直す（データがあると投入しない）
+```
+
+- 取引は、発注・分納・仕入返品・仕入先請求書と支払、受注・メーカー直・分割・発送、在庫操作・棚卸、請求書（発送ごと・締め処理）・返品伝票・返還請求書・入金と消込（一部入金・振込手数料・期限超過を含む）・販売先廃棄です
+- 取引先・商品・住所・電話番号はすべて架空です（社名に「サンプル」「見本」など、メールは example.co.jp）。乱数の種は固定で、取引の最終日（`--today=YYYY-MM-DD`、省略すると今日）が同じなら毎回同じデータになります
+- `bun run dev` が動いていればそこへ、動いていなければ自分で wrangler dev を起動して投入し、終わったら止めます。投入の最後に、在庫・引当・状態・採番の整合を確かめて表示します
+- ログインは `/dev/login` から：`admin@example.co.jp`（管理者）、`purchasing1@example.co.jp`（仕入担当）、`sales1@example.co.jp`（受注・出荷担当）、`warehouse1@example.co.jp`（倉庫）、`accounting1@example.co.jp`（経理担当）、`multi1@example.co.jp`（仕入と受注・出荷の兼任）など（`src/infra/seed/names.ts`）
+- 帳票の PDF は最近の2日分だけ作ります。それより前の帳票は、帳票の画面の「PDF の作成をやり直す」で作れます
+- 画面の速さは `bun run perf` で測れます（[docs/performance.md](docs/performance.md)）
 
 ## 検査
 

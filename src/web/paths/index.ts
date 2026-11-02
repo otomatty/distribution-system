@@ -7,6 +7,7 @@ import { corePaths } from "./core";
 import { mastersPaths } from "./masters";
 import { platformPaths } from "./platform";
 import { purchasingPaths } from "./purchasing";
+import { reportsPaths } from "./reports";
 import { salesPaths } from "./sales";
 import { stockPaths } from "./stock";
 
@@ -20,4 +21,5 @@ export const paths = {
   ...salesPaths,
   ...billingPaths,
   ...platformPaths,
+  ...reportsPaths,
 };
