@@ -126,44 +126,6 @@ export function Input(props: InputProps) {
   );
 }
 
-/** 数量の入力。タブレットでは「−」「＋」でも増減できる（public/assets/app.js） */
-export function QuantityInput(props: {
-  name: string;
-  value?: number | null | undefined;
-  min?: number;
-  error?: string | undefined;
-}) {
-  return (
-    <div class="stepper" data-stepper>
-      <button
-        type="button"
-        class="btn btn-secondary stepper-btn"
-        data-step="-1"
-        aria-label="1つ減らす"
-      >
-        −
-      </button>
-      <Input
-        name={props.name}
-        type="number"
-        inputmode="numeric"
-        min={props.min ?? 0}
-        step={1}
-        value={props.value}
-        error={props.error}
-      />
-      <button
-        type="button"
-        class="btn btn-secondary stepper-btn"
-        data-step="1"
-        aria-label="1つ増やす"
-      >
-        ＋
-      </button>
-    </div>
-  );
-}
-
 export function TextArea(props: {
   name: string;
   value?: string | null | undefined;
