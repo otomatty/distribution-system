@@ -662,7 +662,7 @@ documentRoutes.post("/:id/rerender", async (c) => {
   const result = await runCommand(c, "documents.rerender", { documentId: id }, formKey(form));
   if (!result.ok)
     return c.text(result.error.message, result.error.code === "forbidden" ? 403 : 409);
-  return redirectTo(c, `${paths.document(id)}?notice=rerender`);
+  return redirectTo(c, paths.document(id, { notice: "rerender" }));
 });
 
 // ---- ダウンロード -----------------------------------------------------------------

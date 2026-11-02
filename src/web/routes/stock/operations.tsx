@@ -390,7 +390,7 @@ stockOperationRoutes.post("/new", async (c) => {
   const values = valuesFromForm(form);
   const input = inputFromForm(values, form);
   const result = await runCommand(c, "stockOperations.create", input, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.stockOperation(result.value.id)}?notice=created`);
+  if (result.ok) return redirectTo(c, paths.stockOperation(result.value.id, { notice: "created" }));
 
   const errors = toFormErrors(result.error);
   const ids = input.lines.map((l) => l.itemId);

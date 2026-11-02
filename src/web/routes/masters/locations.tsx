@@ -329,7 +329,7 @@ locationRoutes.post("/:id", async (c) => {
   const version = int(form, "version");
   const fields = inputFromForm(form);
   const result = await runCommand(c, "locations.update", { id, version, fields }, formKey(form));
-  if (result.ok) return redirectTo(c, `${paths.location(id)}?notice=updated`);
+  if (result.ok) return redirectTo(c, paths.location(id, { notice: "updated" }));
   return c.html(
     <LocationForm
       action={paths.location(id)}
@@ -353,7 +353,7 @@ locationRoutes.post("/:id/archive", async (c) => {
     formKey(form),
   );
   if (result.ok)
-    return redirectTo(c, `${paths.location(id)}?notice=${archived ? "archived" : "unarchived"}`);
+    return redirectTo(c, paths.location(id, { notice: archived ? "archived" : "unarchived" }));
   return c.html(
     <Layout title="変更できません" actor={c.get("actor")} current={paths.locations()}>
       <Alert kind="error">{result.error.message}</Alert>

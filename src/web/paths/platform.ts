@@ -9,7 +9,7 @@ export const platformPaths = {
   documents: (query?: Query) => withQuery("/documents", query),
   documentsCsv: () => "/documents/csv",
   documentsBulk: () => "/documents/bulk",
-  document: (id: string) => `/documents/${enc(id)}`,
+  document: (id: string, query?: Query) => withQuery(`/documents/${enc(id)}`, query),
   documentDownload: (id: string) => `/documents/${enc(id)}/download`,
   /** 送付の欄（送付の操作と送付履歴）。GET で部分 HTML、POST で送付 */
   documentSends: (id: string) => `/documents/${enc(id)}/sends`,

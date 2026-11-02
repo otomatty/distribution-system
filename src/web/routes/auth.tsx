@@ -55,7 +55,7 @@ authRoutes.post("/login/google", async (c) => {
 });
 
 authRoutes.post("/logout", async (c) => {
-  const headers = new Headers({ Location: `${paths.login()}?logged_out=1` });
+  const headers = new Headers({ Location: paths.login({ logged_out: 1 }) });
   try {
     const res = await authFor(c.env).api.signOut({ headers: c.req.raw.headers, asResponse: true });
     for (const cookie of res.headers.getSetCookie()) headers.append("Set-Cookie", cookie);
