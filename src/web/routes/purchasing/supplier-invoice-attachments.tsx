@@ -86,7 +86,15 @@ supplierInvoiceAttachmentRoutes.post(
     const body = await c.req.parseBody();
     const file = body["file"];
     const keyField = body["_key"];
-    const formKey = typeof keyField === "string" && keyField !== "" ? keyField : null;
+    const formKey = typeof keyField === "string" ? keyField : "";
+    // 受付番号のない送信は業務 DB が受け付けないので、R2 に置く前に断る（記録のないファイルを作らない）
+    if (formKey === "")
+      return section(
+        c,
+        id,
+        { error: validation("画面を開き直してから、もう一度ファイルを選んでください") },
+        422,
+      );
     if (!(file instanceof File) || file.size === 0)
       return section(c, id, { error: validation("PDF のファイルを選んでください") }, 422);
     const bytes = new Uint8Array(await file.arrayBuffer());

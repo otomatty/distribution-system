@@ -25,7 +25,12 @@ import { inList } from "../db/sql-helpers";
 import { createStores } from "../db/stores";
 import { bootstrapSettings } from "../db/stores/masters/settings";
 import { errorFields, log } from "../observability/log";
-import { isDevAuthAllowed, type ActorRef } from "./actor-ref";
+import {
+  isDevAuthAllowed,
+  isInternalActorRef,
+  type ActorRef,
+  type InternalActorRef,
+} from "./actor-ref";
 import { documentPort, jobPort } from "./document-port";
 
 const commandMap = new Map<string, CommandDef<z.ZodType, unknown>>(Object.entries(commands));
@@ -43,6 +48,15 @@ class Rollback extends Error {
   constructor(readonly result: Result<unknown>) {
     super("rollback");
   }
+}
+
+/** 受付番号（冪等キー）がないか、形が正しくない操作の文言 */
+const MISSING_KEY_MESSAGE =
+  "受付番号がないため、操作を受け付けませんでした。画面を開き直してから、もう一度操作してください";
+
+/** 受付番号（画面のフォームが crypto.randomUUID() で作る）。空や長すぎるものは受け付けない */
+function isIdempotencyKey(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "" && value.length <= 128;
 }
 
 /** 保存しておいた処理結果（JSON）を読み戻す */
@@ -291,10 +305,36 @@ export class BusinessDb extends DurableObject<Env> {
   }
 
   /**
-   * 状態を変える操作を実行する。
-   * 受付番号（冪等キー）が処理済みなら、前回の結果をそのまま返す（二重送信の防止）。
+   * 状態を変える操作を実行する（画面からの操作）。受付番号（冪等キー）は必須で、
+   * ないものは受け付けない。処理済みの番号なら、前回の結果をそのまま返す（二重送信の防止）。
    */
   async command(
+    name: string,
+    input: unknown,
+    actorRef: ActorRef,
+    idempotencyKey: string,
+  ): Promise<Result<unknown>> {
+    // RPC の境界なので、型に関係なく中身を確かめる
+    if (!isIdempotencyKey(idempotencyKey)) return err("validation", MISSING_KEY_MESSAGE);
+    return this.execute(name, input, actorRef, idempotencyKey);
+  }
+
+  /**
+   * 受付番号なしで、状態を変える操作を実行する。画面を通らない内部の処理（Cron・Queues の処理、
+   * 開発用のテストデータの投入、テストの準備）だけが使う。画面からの操作は必ず command を使う。
+   * 操作者はブラウザからの入力では作らないもの（system・employee）に限る。
+   */
+  async internalCommand(
+    name: string,
+    input: unknown,
+    actorRef: InternalActorRef,
+  ): Promise<Result<unknown>> {
+    // RPC の境界なので、型に関係なく中身を確かめる（画面の操作者で受付番号を省けないように）
+    if (!isInternalActorRef(actorRef)) return err("forbidden", MISSING_KEY_MESSAGE);
+    return this.execute(name, input, actorRef, null);
+  }
+
+  private async execute(
     name: string,
     input: unknown,
     actorRef: ActorRef,
