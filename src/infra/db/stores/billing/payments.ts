@@ -8,7 +8,7 @@ import type {
 } from "../../../../usecases/billing/payments.port";
 import { auditInsert, type Db } from "../../client";
 import { customerPayments, employees, invoices, partners, paymentAllocations } from "../../schema";
-import { insertBatches } from "../../sql-helpers";
+import { inList, insertBatches } from "../../sql-helpers";
 
 /** 消込の1行あたりの列数（INSERT を分ける単位の計算に使う） */
 const ALLOCATION_COLUMNS = 12;
@@ -61,22 +61,61 @@ const allocationColumns = {
   createdAt: paymentAllocations.createdAt,
 };
 
-function receivableColumns(today: string) {
-  const open = sql`i.customer_id = "partners"."id" AND i.status IN ('unpaid', 'partial')`;
-  const overdue = sql`${open} AND i.due_on IS NOT NULL AND i.due_on < ${today}`;
-  return {
-    customerId: partners.id,
-    customerName: partners.name,
-    openTotal: sql<number>`(SELECT COALESCE(SUM(i.total), 0) FROM ${invoices} i WHERE ${open})`,
-    openAllocated: sql<number>`(SELECT COALESCE(SUM(i.allocated), 0) FROM ${invoices} i WHERE ${open})`,
-    overdueTotal: sql<number>`(SELECT COALESCE(SUM(i.total), 0) FROM ${invoices} i WHERE ${overdue})`,
-    overdueAllocated: sql<number>`(SELECT COALESCE(SUM(i.allocated), 0) FROM ${invoices} i WHERE ${overdue})`,
-    openCount: sql<number>`(SELECT COUNT(*) FROM ${invoices} i WHERE ${open})`,
-    overdueCount: sql<number>`(SELECT COUNT(*) FROM ${invoices} i WHERE ${overdue})`,
-    nextDueOn: sql<string | null>`(SELECT MIN(i.due_on) FROM ${invoices} i WHERE ${open})`,
-    paymentTotal: sql<number>`(SELECT COALESCE(SUM(p.amount), 0) FROM ${customerPayments} p WHERE p.customer_id = "partners"."id" AND p.cancelled = 0)`,
-    paymentAllocated: sql<number>`(SELECT COALESCE(SUM(a.amount), 0) FROM ${paymentAllocations} a INNER JOIN ${customerPayments} p ON p.id = a.payment_id WHERE p.customer_id = "partners"."id" AND p.cancelled = 0 AND a.cancelled = 0)`,
-  };
+/**
+ * 売掛残高の元になる集計。未入金・一部入金の請求書、入金、消込をそれぞれ1回ずつ販売先ごとに集計して結びつける
+ * （販売先ごとの副問い合わせでは、販売先の数 × 請求書・入金を読み、本番の5倍の量で1秒を超える。docs/performance.md）
+ */
+function receivableSources(
+  db: Db,
+  filter: { readonly customerId?: string | undefined; readonly today: string },
+) {
+  const overdue = sql`${invoices.dueOn} IS NOT NULL AND ${invoices.dueOn} < ${filter.today}`;
+  const openConds: SQL[] = [inList(invoices.status, ["unpaid", "partial"])];
+  const paidConds: SQL[] = [eq(customerPayments.cancelled, false)];
+  if (filter.customerId) {
+    openConds.push(eq(invoices.customerId, filter.customerId));
+    paidConds.push(eq(customerPayments.customerId, filter.customerId));
+  }
+  const open = db
+    .select({
+      customerId: sql<string>`${invoices.customerId}`.as("open_customer_id"),
+      total: sql<number>`sum(${invoices.total})`.as("open_total"),
+      allocated: sql<number>`sum(${invoices.allocated})`.as("open_allocated"),
+      overdueTotal: sql<number>`sum(CASE WHEN ${overdue} THEN ${invoices.total} ELSE 0 END)`.as(
+        "overdue_total",
+      ),
+      overdueAllocated:
+        sql<number>`sum(CASE WHEN ${overdue} THEN ${invoices.allocated} ELSE 0 END)`.as(
+          "overdue_allocated",
+        ),
+      count: sql<number>`count(*)`.as("open_count"),
+      overdueCount: sql<number>`sum(CASE WHEN ${overdue} THEN 1 ELSE 0 END)`.as("overdue_count"),
+      nextDueOn: sql<string | null>`min(${invoices.dueOn})`.as("next_due_on"),
+    })
+    .from(invoices)
+    .where(and(...openConds))
+    .groupBy(invoices.customerId)
+    .as("open_invoices");
+  const paid = db
+    .select({
+      customerId: sql<string>`${customerPayments.customerId}`.as("paid_customer_id"),
+      amount: sql<number>`sum(${customerPayments.amount})`.as("paid_amount"),
+    })
+    .from(customerPayments)
+    .where(and(...paidConds))
+    .groupBy(customerPayments.customerId)
+    .as("paid");
+  const used = db
+    .select({
+      customerId: sql<string>`${customerPayments.customerId}`.as("used_customer_id"),
+      amount: sql<number>`sum(${paymentAllocations.amount})`.as("used_amount"),
+    })
+    .from(paymentAllocations)
+    .innerJoin(customerPayments, eq(customerPayments.id, paymentAllocations.paymentId))
+    .where(and(...paidConds, eq(paymentAllocations.cancelled, false)))
+    .groupBy(customerPayments.customerId)
+    .as("used");
+  return { open, paid, used };
 }
 
 function bump(meta: { at: string; by: string }) {
@@ -185,23 +224,38 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
       return rows.length === 1;
     },
     receivables(filter, page, pageSize) {
-      const columns = receivableColumns(filter.today);
+      const { open, paid, used } = receivableSources(db, filter);
+      const paymentTotal = sql<number>`coalesce(${paid.amount}, 0)`;
+      const paymentAllocated = sql<number>`coalesce(${used.amount}, 0)`;
       const conds: SQL[] = [
         eq(partners.isCustomer, true),
-        sql`(${columns.openCount} > 0 OR ${columns.paymentTotal} > ${columns.paymentAllocated})`,
+        sql`(coalesce(${open.count}, 0) > 0 OR ${paymentTotal} > ${paymentAllocated})`,
       ];
       if (filter.customerId) conds.push(eq(partners.id, filter.customerId));
-      const where = and(...conds);
-      const total = db.select({ n: count() }).from(partners).where(where).get()?.n ?? 0;
-      const rows = db
-        .select(columns)
+      // 販売先の数だけの行なので、すべて読んでからページに分ける（件数のための2回目の集計をしない）
+      const all = db
+        .select({
+          customerId: partners.id,
+          customerName: partners.name,
+          openTotal: sql<number>`coalesce(${open.total}, 0)`,
+          openAllocated: sql<number>`coalesce(${open.allocated}, 0)`,
+          overdueTotal: sql<number>`coalesce(${open.overdueTotal}, 0)`,
+          overdueAllocated: sql<number>`coalesce(${open.overdueAllocated}, 0)`,
+          openCount: sql<number>`coalesce(${open.count}, 0)`,
+          overdueCount: sql<number>`coalesce(${open.overdueCount}, 0)`,
+          nextDueOn: sql<string | null>`${open.nextDueOn}`,
+          paymentTotal,
+          paymentAllocated,
+        })
         .from(partners)
-        .where(where)
+        .leftJoin(open, eq(open.customerId, partners.id))
+        .leftJoin(paid, eq(paid.customerId, partners.id))
+        .leftJoin(used, eq(used.customerId, partners.id))
+        .where(and(...conds))
         .orderBy(asc(partners.kana), asc(partners.id))
-        .limit(pageSize)
-        .offset((page - 1) * pageSize)
         .all();
-      return { rows, total, page, pageSize };
+      const rows = all.slice((page - 1) * pageSize, page * pageSize);
+      return { rows, total: all.length, page, pageSize };
     },
   };
 }
