@@ -89,6 +89,8 @@ export function Layout(props: {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="robots" content="noindex,nofollow" />
         <title>{props.title} | 流通管理システム</title>
+        {/* htmx が埋め込みの <style> を足すと CSP（style-src 'self'）に違反するので止める。代わりの CSS は app.css */}
+        <meta name="htmx-config" content='{"includeIndicatorStyles":false}' />
         <link rel="stylesheet" href="/assets/app.css" />
         <script src="/assets/vendor/htmx.min.js" defer></script>
         <script src="/assets/app.js" defer></script>

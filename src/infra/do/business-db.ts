@@ -4,7 +4,7 @@
  * 在庫の引当や採番が競合しない（要件定義書 8章）。
  */
 import { DurableObject } from "cloudflare:workers";
-import { and, asc, eq, inArray, is, lt, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, is, lt, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -12,6 +12,7 @@ import { monotonicFactory } from "ulid";
 import type { z } from "zod";
 
 import { toBusinessDate, yearOf } from "../../domain/dates";
+import type { DocumentType, RenderStatus, SendMethod, SendStatus } from "../../domain/documents";
 import { formatDocumentNumber, sequenceKey } from "../../domain/numbering";
 import { err, type Result } from "../../domain/result";
 import { can, ROLES } from "../../domain/roles";
@@ -24,6 +25,7 @@ import { createStores } from "../db/stores";
 import { bootstrapSettings } from "../db/stores/masters/settings";
 import { errorFields, log } from "../observability/log";
 import { isDevAuthAllowed, type ActorRef } from "./actor-ref";
+import { documentPort, jobPort } from "./document-port";
 
 const commandMap = new Map<string, CommandDef<z.ZodType, unknown>>(Object.entries(commands));
 const queryMap = new Map<string, QueryDef<z.ZodType, unknown>>(Object.entries(queries));
@@ -69,6 +71,46 @@ export interface JobRecord {
   readonly error: string | null;
   readonly createdBy: string;
   readonly createdAt: string;
+}
+
+/** 帳票の PDF 化に必要なもの */
+export interface DocumentForRender {
+  readonly id: string;
+  readonly documentType: DocumentType;
+  readonly number: string;
+  readonly transactionDate: string;
+  /** 発行時点の帳票の内容（JSON）。テンプレートのスキーマで検証してから使う */
+  readonly snapshotJson: string;
+  readonly status: RenderStatus;
+  readonly r2Key: string | null;
+}
+
+/** メールでの送付に必要なもの */
+export interface SendDelivery {
+  readonly sendId: string;
+  readonly status: SendStatus;
+  readonly method: SendMethod;
+  readonly recipient: string | null;
+  readonly document: {
+    readonly id: string;
+    readonly documentType: DocumentType;
+    readonly number: string;
+    readonly status: RenderStatus;
+    readonly r2Key: string | null;
+    readonly cancelled: boolean;
+  };
+  readonly partner: { readonly name: string; readonly honorific: string } | null;
+  readonly company: {
+    readonly name: string;
+    readonly email: string | null;
+    readonly phone: string | null;
+  };
+}
+
+export interface BackupRows {
+  readonly rows: Record<string, SqlStorageValue>[];
+  /** 続きを読むときの rowid。最後まで読んだら null */
+  readonly lastRowid: number | null;
 }
 
 function zodFields(error: z.ZodError): { field: string; message: string }[] {
@@ -120,6 +162,8 @@ export class BusinessDb extends DurableObject<Env> {
     let employee;
     if (ref.kind === "auth") {
       employee = stores.employees.findByAuthUserId(ref.userId);
+    } else if (ref.kind === "employee") {
+      employee = stores.employees.get(ref.employeeId);
     } else {
       if (!isDevAuthAllowed(this.env.ENVIRONMENT)) return undefined;
       employee = stores.employees.findByEmail(ref.email);
@@ -196,26 +240,13 @@ export class BusinessDb extends DurableObject<Env> {
     const now = new Date();
     const at = now.toISOString();
     const meta = { at, by: actor.employeeId };
-    const enqueue = (type: JobType, payload: Record<string, unknown>, total = 0): string => {
-      const id = this.ulid();
-      db.insert(schema.jobs)
-        .values({
-          id,
-          type,
-          payloadJson: JSON.stringify(payload),
-          status: "pending",
-          total,
-          ...auditInsert(meta),
-        })
-        .run();
-      createdJobs.push(id);
-      return id;
-    };
+    const nextId = () => this.ulid();
+    const jobs = jobPort(db, meta, nextId, createdJobs);
     return {
       actor,
       command,
       clock: { now: () => now, today: () => toBusinessDate(now) },
-      ids: { next: () => this.ulid() },
+      ids: { next: nextId },
       stores: createStores(db),
       audit: {
         record: (entry) => {
@@ -253,72 +284,8 @@ export class BusinessDb extends DurableObject<Env> {
           return formatDocumentNumber(kind, year, value);
         },
       },
-      jobs: { enqueue },
-      documents: {
-        issue: (input) => {
-          const id = this.ulid();
-          db.insert(schema.documents)
-            .values({
-              id,
-              documentType: input.documentType,
-              number: input.number,
-              entityId: input.entityId,
-              partnerId: input.partnerId,
-              transactionDate: input.transactionDate,
-              amount: input.amount,
-              snapshotJson: JSON.stringify(input.snapshot),
-              r2Key: null,
-              status: "pending",
-              ...auditInsert(meta),
-            })
-            .run();
-          enqueue("render_document", { documentId: id });
-          return id;
-        },
-        cancel: (documentId) => {
-          db.update(schema.documents)
-            .set({
-              cancelled: true,
-              updatedAt: at,
-              updatedBy: actor.employeeId,
-              version: sql`${schema.documents.version} + 1`,
-            })
-            .where(eq(schema.documents.id, documentId))
-            .run();
-        },
-        sendEmail: (documentId, recipient) => {
-          const id = this.ulid();
-          const jobId = enqueue("send_document", { sendId: id });
-          db.insert(schema.documentSends)
-            .values({
-              id,
-              documentId,
-              method: "email",
-              recipient,
-              status: "pending",
-              jobId,
-              ...auditInsert(meta),
-            })
-            .run();
-          return id;
-        },
-        recordManualSend: (documentId, note) => {
-          const id = this.ulid();
-          db.insert(schema.documentSends)
-            .values({
-              id,
-              documentId,
-              method: "manual",
-              recipient: null,
-              status: "sent",
-              sentAt: at,
-              note,
-              ...auditInsert(meta),
-            })
-            .run();
-          return id;
-        },
-      },
+      jobs,
+      documents: documentPort(db, meta, nextId, jobs),
     };
   }
 
@@ -471,10 +438,15 @@ export class BusinessDb extends DurableObject<Env> {
     return this.toJobRecord({ ...r, status: "running" });
   }
 
-  jobProgress(id: string, progress: number): void {
+  /** 進み具合。件数（total）が処理の途中で分かった場合は一緒に記録する */
+  jobProgress(id: string, progress: number, total?: number): void {
     this.db
       .update(schema.jobs)
-      .set({ progress, updatedAt: new Date().toISOString() })
+      .set({
+        progress,
+        ...(total === undefined ? {} : { total }),
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(schema.jobs.id, id))
       .run();
   }
@@ -495,6 +467,7 @@ export class BusinessDb extends DurableObject<Env> {
       .run();
   }
 
+  /** 失敗を記録する。message は画面に出すので、利用者向けの日本語にする（生の例外メッセージは入れない） */
   jobFail(id: string, message: string): void {
     const at = new Date().toISOString();
     this.db
@@ -504,29 +477,253 @@ export class BusinessDb extends DurableObject<Env> {
       .run();
   }
 
-  /** 処理状況の一覧（本人が依頼したもの。管理者はすべて） */
-  listJobs(actorRef: ActorRef, ids?: readonly string[]): Result<JobRecord[]> {
-    const actor = this.resolveActorSync(actorRef);
-    if (!actor) return err("unauthenticated", "ログインし直してください");
-    const conds = [];
-    if (!actor.roles.includes("admin")) conds.push(eq(schema.jobs.createdBy, actor.employeeId));
-    if (ids && ids.length > 0) conds.push(inArray(schema.jobs.id, [...ids]));
-    const rows = this.db
-      .select()
-      .from(schema.jobs)
-      .where(conds.length > 0 ? and(...conds) : undefined)
-      .orderBy(asc(schema.jobs.createdAt))
-      .limit(200)
-      .all();
-    return { ok: true, value: rows.toReversed().map((r) => this.toJobRecord(r)) };
+  /** Cron などシステムが自分で実行する処理を、処理状況に記録し始める（実行中として登録し、ID を返す） */
+  systemJobStart(type: JobType, payload: Record<string, unknown>): string {
+    const id = this.ulid();
+    const at = new Date().toISOString();
+    this.db
+      .insert(schema.jobs)
+      .values({
+        id,
+        type,
+        payloadJson: JSON.stringify(payload),
+        status: "running",
+        attempts: 1,
+        startedAt: at,
+        ...auditInsert({ at, by: SYSTEM_ACTOR.employeeId }),
+      })
+      .run();
+    return id;
   }
 
-  /** バックアップ用に全テーブルを書き出す */
-  exportAll(): Record<string, unknown[]> {
-    const out: Record<string, unknown[]> = {};
-    for (const [key, table] of Object.entries(schema)) {
-      if (is(table, SQLiteTable)) out[key] = this.db.select().from(table).all();
-    }
-    return out;
+  // ---- 帳票の PDF 化と送付（infra/queue から呼ぶ） ----------------------------------
+
+  documentForRender(id: string): DocumentForRender | null {
+    const r = this.db
+      .select({
+        id: schema.documents.id,
+        documentType: schema.documents.documentType,
+        number: schema.documents.number,
+        transactionDate: schema.documents.transactionDate,
+        snapshotJson: schema.documents.snapshotJson,
+        status: schema.documents.status,
+        r2Key: schema.documents.r2Key,
+      })
+      .from(schema.documents)
+      .where(eq(schema.documents.id, id))
+      .get();
+    return r ?? null;
   }
+
+  /** PDF（開発では HTML）を R2 に保存できたので、作成済みにする */
+  documentRendered(id: string, r2Key: string): void {
+    const at = new Date().toISOString();
+    this.db
+      .update(schema.documents)
+      .set({
+        status: "ready",
+        r2Key,
+        updatedAt: at,
+        updatedBy: SYSTEM_ACTOR.employeeId,
+        version: sql`${schema.documents.version} + 1`,
+      })
+      .where(and(eq(schema.documents.id, id), ne(schema.documents.status, "ready")))
+      .run();
+  }
+
+  /** PDF を作れなかった（理由は処理の記録 jobs.error に残る） */
+  documentRenderFailed(id: string): void {
+    const at = new Date().toISOString();
+    this.db
+      .update(schema.documents)
+      .set({
+        status: "failed",
+        updatedAt: at,
+        updatedBy: SYSTEM_ACTOR.employeeId,
+        version: sql`${schema.documents.version} + 1`,
+      })
+      .where(and(eq(schema.documents.id, id), eq(schema.documents.status, "pending")))
+      .run();
+  }
+
+  /** メールで送るのに必要なもの（送付履歴、帳票、宛名、送り主の自社情報） */
+  sendForDelivery(sendId: string): SendDelivery | null {
+    const send = this.db
+      .select()
+      .from(schema.documentSends)
+      .where(eq(schema.documentSends.id, sendId))
+      .get();
+    if (!send) return null;
+    const doc = this.db
+      .select({
+        id: schema.documents.id,
+        documentType: schema.documents.documentType,
+        number: schema.documents.number,
+        status: schema.documents.status,
+        r2Key: schema.documents.r2Key,
+        cancelled: schema.documents.cancelled,
+        partnerId: schema.documents.partnerId,
+      })
+      .from(schema.documents)
+      .where(eq(schema.documents.id, send.documentId))
+      .get();
+    if (!doc) return null;
+    const partner = this.db
+      .select({ name: schema.partners.name, honorific: schema.partners.honorific })
+      .from(schema.partners)
+      .where(eq(schema.partners.id, doc.partnerId))
+      .get();
+    const company = createStores(this.db).settings.getCompany();
+    return {
+      sendId: send.id,
+      status: send.status,
+      method: send.method,
+      recipient: send.recipient,
+      document: {
+        id: doc.id,
+        documentType: doc.documentType,
+        number: doc.number,
+        status: doc.status,
+        r2Key: doc.r2Key,
+        cancelled: doc.cancelled,
+      },
+      partner: partner ?? null,
+      company: { name: company.name, email: company.email, phone: company.phone },
+    };
+  }
+
+  documentSendSucceeded(sendId: string): void {
+    const at = new Date().toISOString();
+    this.db
+      .update(schema.documentSends)
+      .set({
+        status: "sent",
+        sentAt: at,
+        error: null,
+        updatedAt: at,
+        updatedBy: SYSTEM_ACTOR.employeeId,
+        version: sql`${schema.documentSends.version} + 1`,
+      })
+      .where(and(eq(schema.documentSends.id, sendId), eq(schema.documentSends.status, "pending")))
+      .run();
+  }
+
+  /** 送付の失敗を記録する。message は送付履歴とダッシュボードに出す */
+  documentSendFailed(sendId: string, message: string): void {
+    const at = new Date().toISOString();
+    this.db
+      .update(schema.documentSends)
+      .set({
+        status: "failed",
+        error: message,
+        updatedAt: at,
+        updatedBy: SYSTEM_ACTOR.employeeId,
+        version: sql`${schema.documentSends.version} + 1`,
+      })
+      .where(and(eq(schema.documentSends.id, sendId), eq(schema.documentSends.status, "pending")))
+      .run();
+  }
+
+  // ---- 定期処理（バックアップ、受付番号の掃除、止まった処理、エラーの通知） ------------------
+
+  /**
+   * 時間内に終わらなかった処理（Worker が途中で止まり、結果を記録できなかったもの）を失敗にする。
+   * その処理で送っていた帳票の送付も失敗にする（画面から再送できる）。失敗にした件数を返す。
+   * 進み具合を記録している処理は updated_at が新しくなるので対象にならない。
+   */
+  failStaleJobs(before: string, message: string): number {
+    const at = new Date().toISOString();
+    return this.db.transaction((tx) => {
+      const stale = tx
+        .select({ id: schema.jobs.id })
+        .from(schema.jobs)
+        .where(
+          and(
+            inArray(schema.jobs.status, ["queued", "running"]),
+            lt(schema.jobs.updatedAt, before),
+          ),
+        )
+        .all()
+        .map((j) => j.id);
+      if (stale.length === 0) return 0;
+      tx.update(schema.jobs)
+        .set({ status: "failed", error: message, finishedAt: at, updatedAt: at })
+        .where(inArray(schema.jobs.id, stale))
+        .run();
+      tx.update(schema.documentSends)
+        .set({
+          status: "failed",
+          error: message,
+          updatedAt: at,
+          updatedBy: SYSTEM_ACTOR.employeeId,
+          version: sql`${schema.documentSends.version} + 1`,
+        })
+        .where(
+          and(
+            inArray(schema.documentSends.jobId, stale),
+            eq(schema.documentSends.status, "pending"),
+          ),
+        )
+        .run();
+      return stale.length;
+    });
+  }
+
+  /** 古い受付番号（冪等キー）を消す。消した件数を返す */
+  purgeIdempotencyKeys(before: string): number {
+    return this.db
+      .delete(schema.idempotencyKeys)
+      .where(lt(schema.idempotencyKeys.createdAt, before))
+      .returning({ key: schema.idempotencyKeys.key })
+      .all().length;
+  }
+
+  /** バックアップの対象のテーブル名 */
+  backupTables(): string[] {
+    return backupTableNames();
+  }
+
+  /**
+   * バックアップ用に、テーブルの行を rowid の順に少しずつ読む（RPC の大きさの上限を超えないように分ける）。
+   * 列名は DB の列名（snake_case）のまま返す。
+   */
+  backupRows(table: string, afterRowid: number, limit: number): BackupRows {
+    if (!backupTableNames().includes(table)) throw new Error(`unknown table: ${table}`);
+    const size = Math.max(1, Math.min(limit, 5000));
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT rowid AS "__rowid", * FROM "${table}" WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+        afterRowid,
+        size,
+      )
+      .toArray();
+    let last: number | null = null;
+    const out = rows.map((row) => {
+      const { __rowid, ...rest } = row;
+      if (typeof __rowid === "number") last = __rowid;
+      return rest;
+    });
+    return { rows: out, lastRowid: rows.length < size ? null : last };
+  }
+
+  /**
+   * 重大なエラーを管理者にメールで知らせてよいか。同じエラー（fingerprint）は windowMs に1回まで。
+   * 知らせてよければ、送り先（有効な管理者のメールアドレス）を返す。知らせないなら空の配列。
+   */
+  claimErrorNotification(fingerprint: string, windowMs: number): string[] {
+    const key = `error-notification:${fingerprint}`;
+    const now = Date.now();
+    const last = this.ctx.storage.kv.get<number>(key);
+    if (typeof last === "number" && now - last < windowMs) return [];
+    this.ctx.storage.kv.put(key, now);
+    return createStores(this.db)
+      .employees.list()
+      .filter((e) => e.active && e.roles.includes("admin"))
+      .map((e) => e.email);
+  }
+}
+
+/** バックアップの対象（Drizzle のスキーマにあるテーブル。マイグレーションの記録は含めない） */
+function backupTableNames(): string[] {
+  return Object.values(schema).flatMap((t) => (is(t, SQLiteTable) ? [getTableName(t)] : []));
 }

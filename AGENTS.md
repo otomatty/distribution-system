@@ -102,6 +102,15 @@ docs/requirements.md 要件定義書の写し
 - 帳票（発注書・納品書・請求書・返還請求書）は `ctx.documents.issue(...)` で発行します。発行時点の内容を `snapshot` として保存し、PDF 化はコミット後に非同期で行います。メールでの送付は `ctx.documents.sendEmail(...)`
 - 時間のかかる処理（一括 PDF、大きな CSV など）は `ctx.jobs.enqueue(...)` で登録し、`infra/queue` で処理します。登録はコミットと同時に確定し、Queues への送信はコミット後に行われます（outbox）
 
+### 帳票・一括 PDF・CSV・ダッシュボードを追加する手順
+
+- 帳票：発行するユースケースの側にスナップショットの zod スキーマを書き、`web/views/documents/<帳票>.tsx` に `defineTemplate({ schema, render })` でテンプレートを書いて、`web/views/documents/registry.ts` の `documentTemplates` に1行で登録する。テンプレートは値を表示するだけで、金額を計算しない。テンプレートがない帳票やスキーマに合わない帳票は、PDF 化が失敗し理由が画面に残る
+- 帳票の送付・検索・再送は共通の仕組み（`documents.*`）が受け持つ。各区分は `ctx.documents.issue(...)`（発行）と `ctx.documents.cancel(...)`（取消）だけを呼ぶ。画面からは `paths.document(id)`（詳細と送付）と `paths.documentDownload(id)` に移る
+- 一括 PDF：`jobs.bulkDocuments`（帳票の ID、または `documentType` と元の伝票の ID）を呼ぶか、ユースケースの中で `ctx.jobs.enqueue("bulk_documents", { documentIds, name }, documentIds.length)` で登録し、処理状況（`paths.jobs()`）へ移る
+- CSV：`web/csv-exports.ts` の `csvExports` に定義（名前 → `{ fileName, fetch, columns }`）を足し、一覧の `#results` の中に `<CsvButton>` を置き、POST のルートで `exportCsv(c, 名前, 絞り込み条件, formKey(form))` を返す。2,000件を超えると自動で非同期になる。小さな表をその場で返すだけなら `web/csv.ts` の `csvResponse`
+- ダッシュボード：`web/dashboard/<区分>.ts` に欄（`DashboardSection`）を書き、`web/dashboard/sections.ts` の一覧に1行で登録する。件数は照会（ユースケース）で数え、項目は絞り込み済みの一覧の URL を持つ
+- 運用（バックアップと復元、バケットロック、失敗に気づく方法）は `docs/operations.md`
+
 ## 3. コマンド
 
 `package.json` に次の名前で定義しています。

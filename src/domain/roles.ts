@@ -29,6 +29,8 @@ export const PERMISSIONS = {
   "invoices.manage": ["accounting", "admin"],
   "payments.manage": ["accounting", "admin"],
   "stock.manage": ["sales", "admin"],
+  /** 帳票の PDF の作り直し、全員の処理状況の閲覧など、共通の仕組みの管理 */
+  "platform.admin": ["admin"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;
