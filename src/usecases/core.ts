@@ -4,6 +4,8 @@
  */
 import type { z } from "zod";
 
+import type { DocumentType } from "../domain/documents";
+import type { JobType } from "../domain/jobs";
 import type { DocumentKind } from "../domain/numbering";
 import type { Result } from "../domain/result";
 import type { Permission, Role } from "../domain/roles";
@@ -44,20 +46,14 @@ export interface SequencePort {
   next(kind: DocumentKind, businessDate: string): string;
 }
 
-export type JobType =
-  | "render_document"
-  | "send_document"
-  | "bulk_documents"
-  | "export_csv"
-  | "backup";
+export type { JobType } from "../domain/jobs";
 
 export interface JobPort {
   /** 非同期処理を登録する（コミット後に Queues へ送られる）。job の ID を返す */
   enqueue(type: JobType, payload: Record<string, unknown>, total?: number): string;
 }
 
-/** 帳票の種類（電子帳簿保存法の検索対象） */
-export type DocumentType = "purchase_order" | "delivery_note" | "invoice" | "credit_note";
+export type { DocumentType } from "../domain/documents";
 
 export interface IssueDocumentInput {
   readonly documentType: DocumentType;
