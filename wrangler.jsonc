@@ -55,6 +55,7 @@
         {
           "binding": "AUTH_DB",
           "database_name": "distribution-auth-staging",
+          // 仮の値。最初に CI からデプロイする前に、`wrangler d1 create … --location apac` が表示した ID に書き換える（docs/operations.md 1章）
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle/auth",
         },
@@ -87,6 +88,7 @@
         {
           "binding": "AUTH_DB",
           "database_name": "distribution-auth-production",
+          // 仮の値。最初に CI からデプロイする前に、`wrangler d1 create … --location apac` が表示した ID に書き換える（docs/operations.md 1章）
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle/auth",
         },

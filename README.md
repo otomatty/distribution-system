@@ -43,7 +43,7 @@ bun run test:e2e   # E2E テスト（Playwright）
 
 初回の準備：
 
-1. Cloudflare で D1（`AUTH_DB`）、R2（`FILES`、7年のバケットロック）、Queues（`JOBS`）を作り、`wrangler.jsonc` の ID を書き換える
+1. Cloudflare で D1（`AUTH_DB`）、R2（`FILES`、7年のバケットロック）、Queues（`JOBS`）を「アジア太平洋」の配置（`--location apac`）で作り、`wrangler.jsonc` の仮の `database_id`（すべて 0）を本物の ID に書き換える（手順は [docs/operations.md](docs/operations.md) の 1章）
 2. 秘密情報を登録する：`wrangler secret put BETTER_AUTH_SECRET` / `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`（`--env staging` と `--env production` のそれぞれ）
 3. Google Cloud で OAuth クライアント（社内向けの同意画面）を作り、リダイレクト URI に `https://<ドメイン>/api/auth/callback/google` を登録する
 4. GitHub の Environments に `staging` と `production`（必須レビューつき）を作り、`CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` を登録する
