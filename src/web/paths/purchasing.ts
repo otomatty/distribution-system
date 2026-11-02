@@ -31,6 +31,7 @@ export const purchasingPaths = {
   supplierInvoicePreview: () => "/supplier-invoices/preview",
   supplierInvoice: (id: string, query?: Query) => withQuery(`/supplier-invoices/${enc(id)}`, query),
   supplierInvoicePay: (id: string) => `/supplier-invoices/${enc(id)}/pay`,
+  /** 支払1件の取消（POST。支払の ID はフォームで送る） */
   supplierInvoiceCancelPayment: (id: string) => `/supplier-invoices/${enc(id)}/cancel-payment`,
   supplierInvoiceCancel: (id: string) => `/supplier-invoices/${enc(id)}/cancel`,
   /** 仕入先請求書の PDF の添付（POST、multipart）と、添付した版のダウンロード */

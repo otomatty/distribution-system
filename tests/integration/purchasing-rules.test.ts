@@ -58,6 +58,7 @@ describe("見つからない伝票", () => {
       systemCommandResult("supplierInvoices.cancelPayment", {
         id: MISSING,
         version: 1,
+        paymentId: MISSING,
         reason: "x",
       }),
     ]);
@@ -335,7 +336,7 @@ describe("仕入先請求書・支払の検証", () => {
       error: {
         details: expect.arrayContaining([
           "見つからない請求書が含まれています",
-          expect.stringContaining("未払いの請求書だけを支払えます"),
+          expect.stringContaining("未払い・一部支払の請求書だけを支払えます"),
         ]),
       },
     });
@@ -361,7 +362,7 @@ describe("仕入先請求書・支払の検証", () => {
       systemCommandResult("supplierInvoices.cancel", { id: inv.id, version: 9, reason: "x" }),
     ]);
     for (const r of stale) expect(r).toMatchObject({ ok: false, error: { code: "conflict" } });
-    await systemCommand("supplierInvoices.pay", {
+    const paid = await systemCommand("supplierInvoices.pay", {
       id: inv.id,
       version: 1,
       paidOn: "2026-11-01",
@@ -370,15 +371,34 @@ describe("仕入先請求書・支払の検証", () => {
     const cancel = await systemCommandResult("supplierInvoices.cancelPayment", {
       id: inv.id,
       version: 1,
+      paymentId: paid.paymentId,
       reason: "x",
     });
     expect(cancel).toMatchObject({ ok: false, error: { code: "conflict" } });
-    const notPaid = await systemCommandResult("supplierInvoices.cancelPayment", {
-      id: (await invoiceFor(2592)).inv.id,
-      version: 1,
+    // 支払の ID が請求書の支払でなければ not_found
+    const other = await invoiceFor(2592);
+    expect(
+      await systemCommandResult("supplierInvoices.cancelPayment", {
+        id: other.inv.id,
+        version: 1,
+        paymentId: paid.paymentId,
+        reason: "x",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+    await systemCommand("supplierInvoices.cancelPayment", {
+      id: inv.id,
+      version: 2,
+      paymentId: paid.paymentId,
       reason: "x",
     });
-    expect(errorOf(notPaid)).toContain("支払済みの請求書だけ");
+    // 未払いに戻った請求書の、取り消した支払はもう取り消せない
+    const notPaid = await systemCommandResult("supplierInvoices.cancelPayment", {
+      id: inv.id,
+      version: 3,
+      paymentId: paid.paymentId,
+      reason: "x",
+    });
+    expect(errorOf(notPaid)).toContain("支払済み・一部支払の請求書だけ");
   });
 
   it("入荷の取消で差額がなくなれば、差額の理由はそのまま残す", async () => {

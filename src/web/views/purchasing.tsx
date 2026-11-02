@@ -29,8 +29,11 @@ export function OrderStatusBadge(props: { status: PurchaseOrderStatus }) {
   );
 }
 
-const INVOICE_BADGE: Readonly<Record<SupplierInvoiceStatus, "neutral" | "warning" | "success">> = {
+const INVOICE_BADGE: Readonly<
+  Record<SupplierInvoiceStatus, "neutral" | "info" | "warning" | "success">
+> = {
   unpaid: "warning",
+  partial: "info",
   paid: "success",
   cancelled: "neutral",
 };

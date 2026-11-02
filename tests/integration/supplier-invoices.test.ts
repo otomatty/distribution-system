@@ -119,7 +119,7 @@ describe("仕入先請求書の登録", () => {
     expect(view?.invoice.status).toBe("unpaid");
     const html = await (await as(user).get(location)).text();
     expect(html).toContain("端数の処理の違い");
-    expect(html).toContain("支払済みにする");
+    expect(html).toContain("支払を記録する");
     // 発注の詳細から請求書に移れる
     const poHtml = await (await as(user).get(`/purchase-orders/${po.id}`)).text();
     expect(poHtml).toContain(`/supplier-invoices/${id}`);
@@ -220,15 +220,23 @@ describe("支払", () => {
     });
     expect(cannotCancel.ok).toBe(false);
 
+    const paymentId = (await systemQuery("supplierInvoices.get", { id: created.id }))?.payments[0]
+      ?.id;
+    const detail = await (await as(user).get(`/supplier-invoices/${created.id}`)).text();
+    expect(detail).toContain(`name="paymentId" value="${paymentId}"`);
     const noReason = await as(user).hx(`/supplier-invoices/${created.id}/cancel-payment`, {
       _key: newKey(),
       version: "2",
+      paymentId: paymentId ?? "",
       reason: "",
     });
-    expect(await noReason.text()).toContain("入力内容を確認してください");
+    const noReasonHtml = await noReason.text();
+    expect(noReasonHtml).toContain("入力内容を確認してください");
+    expect(noReasonHtml).toContain(`id="si-cancel-payment-${paymentId}"`);
     const back = await as(user).hx(`/supplier-invoices/${created.id}/cancel-payment`, {
       _key: newKey(),
       version: "2",
+      paymentId: paymentId ?? "",
       reason: "二重払いの訂正",
     });
     expect(back.headers.get("HX-Redirect")).toContain("notice=paymentCancelled");
@@ -237,6 +245,9 @@ describe("支払", () => {
     expect(view?.invoice.status).toBe("unpaid");
     expect(view?.payments[0]?.cancelled).toBe(true);
     expect(view?.payments[0]?.cancelReason).toBe("二重払いの訂正");
+    expect(await (await as(user).get(`/supplier-invoices/${created.id}`)).text()).toContain(
+      "取消の理由：二重払いの訂正",
+    );
 
     // 取消すと入荷が外れ、別の請求書に入れ直せる
     const cancel = await as(user).hx(`/supplier-invoices/${created.id}/cancel`, {
@@ -307,7 +318,7 @@ describe("支払予定一覧と一括支払い", () => {
       paymentDueOn: "2026-11-06",
     });
     const list = await (await as(user).get(`/payables?supplierId=${a.supplierId}`)).text();
-    expect(list).toContain("未払い <strong>1件</strong>");
+    expect(list).toContain("支払の残っている請求書 <strong>1件</strong>");
     expect(list).toContain(`value="${invA.id}:1"`);
     expect(list).not.toContain(invB.id);
     const csv = await as(user).post("/payables/csv", { _key: newKey(), supplierId: a.supplierId });
@@ -333,10 +344,12 @@ describe("支払予定一覧と一括支払い", () => {
     };
     const res = await as(user).hx("/payables/pay", form);
     const html = await res.text();
-    expect(html).toContain("2件の仕入先請求書を支払済みにしました（合計 ¥12,960）");
+    expect(html).toContain(
+      "2件の仕入先請求書の残りの額を支払い、支払済みにしました（合計 ¥12,960）",
+    );
     // 二重送信でも1回だけ
     const again = await as(user).hx("/payables/pay", form);
-    expect(await again.text()).toContain("2件の仕入先請求書を支払済みにしました");
+    expect(await again.text()).toContain("2件の仕入先請求書の残りの額を支払い");
     const viewA = await systemQuery("supplierInvoices.get", { id: invA.id });
     expect(viewA?.invoice.status).toBe("paid");
     expect(viewA?.payments).toHaveLength(1);
@@ -387,14 +400,19 @@ describe("支払予定一覧と一括支払い", () => {
       )
     ).text();
     expect(csv).toContain("2026-10,0,6000,480");
+    // 6,480円のうち 6,000円を払った請求書は一部支払（残り 480円）
     const list = await (
-      await as(user).get(`/supplier-invoices?supplierId=${a.supplierId}&status=paid`)
+      await as(user).get(`/supplier-invoices?supplierId=${a.supplierId}&status=partial`)
     ).text();
-    expect(list).toContain("支払済み");
+    expect(list).toContain("一部支払");
+    expect(list).toContain("<strong>¥480</strong>");
     const listCsv = await as(user).post("/supplier-invoices/csv", {
       _key: newKey(),
       supplierId: a.supplierId,
     });
-    expect(await listCsv.text()).toContain("2026-10-31,6000");
+    const csvText = await listCsv.text();
+    expect(csvText).toContain("支払済みの額,残りの額,最後の支払日");
+    expect(csvText).toContain(",一部支払,6480,");
+    expect(csvText).toContain(",6000,480,2026-10-31,");
   });
 });

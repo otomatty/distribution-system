@@ -178,7 +178,8 @@ export interface ReceiptChange<L extends PurchaseOrderLineState> {
  *   支払うものが残っていないので支払済みにする。受入のある入荷がすべて支払済みの場合と、受入のある入荷が
  *   1件もない場合（全数をその場で返品した、受入 0 で打ち切った）を含む。受入のない入荷は請求書に載せられない
  *   （仕入先請求書の対象は受入のある入荷だけ）ので、こうしないと支払済みになる手段がない
- * unpaidAcceptedReceipts は、その時点の「受入があり、支払済みの請求書に入っていない入荷」の件数。
+ * unpaidAcceptedReceipts は、その時点の「受入があり、支払済みの請求書に入っていない入荷」の件数
+ * （一部支払の請求書の入荷は、支払済みの請求書に入っていないと数える）。
  */
 export function settledOrderStatus(
   lines: readonly PurchaseOrderLineState[],
@@ -250,15 +251,35 @@ export function recordReceipt<L extends PurchaseOrderLineState>(
 }
 
 /**
- * 入荷を取り消せるか。支払済みの請求書に含まれる入荷と、支払済み（以降）の発注の入荷は取り消せない
- * （要件定義書 3.6「支払済みになる前なら取り消せる」）。
+ * 請求書の支払の状況で、結びついた入荷・仕入返品を取り消せるか。
+ * 支払（一部を含む）を記録した請求書の入荷・仕入返品は取り消せない（請求の対象が変わると、支払った額の根拠が変わるため）。
+ * 一部支払の請求書は、先に支払をすべて取り消せば（未払いに戻れば）取り消せる。
+ * 未払いの請求書なら取り消せ、請求書から外して計算額と差額を計算し直す（detachReceiptFromInvoice）。
+ */
+function invoiceAllowsCancel(
+  invoiceStatus: SupplierInvoiceStatus | null,
+  what: "入荷" | "仕入返品",
+): Result<true> {
+  if (invoiceStatus === "paid")
+    return err("invalid_state", `支払済みの請求書に含まれる${what}は取り消せません`);
+  if (invoiceStatus === "partial")
+    return err(
+      "invalid_state",
+      `一部支払の請求書に含まれる${what}は取り消せません。先に請求書の支払をすべて取り消してください`,
+    );
+  return ok(true);
+}
+
+/**
+ * 入荷を取り消せるか。支払（一部を含む）を記録した請求書に含まれる入荷と、支払済み（以降）の発注の入荷は取り消せない
+ * （要件定義書 3.6「支払済みになる前なら取り消せる」）。invoiceStatus は入荷を結びつけた請求書の状態（なければ null）。
  */
 export function receiptCancellable(
   status: PurchaseOrderStatus,
-  includedInPaidInvoice: boolean,
+  invoiceStatus: SupplierInvoiceStatus | null,
 ): Result<true> {
-  if (includedInPaidInvoice)
-    return err("invalid_state", "支払済みの請求書に含まれる入荷は取り消せません");
+  const invoice = invoiceAllowsCancel(invoiceStatus, "入荷");
+  if (!invoice.ok) return invoice;
   if (status !== "ordered" && status !== "received")
     return err("invalid_state", "この発注の入荷は取り消せません");
   return ok(true);
@@ -272,11 +293,11 @@ export function receiptCancellable(
  */
 export function cancelReceipt(
   status: PurchaseOrderStatus,
-  includedInPaidInvoice: boolean,
+  invoiceStatus: SupplierInvoiceStatus | null,
   linesAfter: readonly PurchaseOrderLineState[],
   unpaidAcceptedReceiptsAfter: number,
 ): Result<"ordered" | "received" | "paid"> {
-  const cancellable = receiptCancellable(status, includedInPaidInvoice);
+  const cancellable = receiptCancellable(status, invoiceStatus);
   if (!cancellable.ok) return cancellable;
   return ok(settledOrderStatus(linesAfter, unpaidAcceptedReceiptsAfter));
 }
@@ -425,13 +446,24 @@ export function receiptCancelBlockedByReturns(
 
 // ---- 仕入先請求書と支払 ------------------------------------------------------
 
-export type SupplierInvoiceStatus = "unpaid" | "paid" | "cancelled";
+/**
+ * 仕入先請求書の状態。未払い → 一部支払（残りの額より少ない支払）→ 支払済み（残りが 0）と、取消。
+ * 支払の取消で、支払済み・一部支払 → 一部支払・未払いに戻る。
+ */
+export type SupplierInvoiceStatus = "unpaid" | "partial" | "paid" | "cancelled";
 
 export const SUPPLIER_INVOICE_STATUS_LABELS: Readonly<Record<SupplierInvoiceStatus, string>> = {
   unpaid: "未払い",
+  partial: "一部支払",
   paid: "支払済み",
   cancelled: "取消",
 };
+
+/** 支払の残っている請求書の状態（支払予定・買掛の対象） */
+export const OPEN_SUPPLIER_INVOICE_STATUSES = [
+  "unpaid",
+  "partial",
+] as const satisfies readonly SupplierInvoiceStatus[];
 
 /** 請求額とシステム計算額の差額。差額があるときは理由が必要。 */
 export function invoiceDifference(
@@ -488,54 +520,106 @@ export function isSettlementInvoice(invoicedAmount: number): boolean {
 }
 
 /**
- * 支払（未払い → 支払済み）。
- * - 請求額が 1 円以上の請求書：支払額は 1 円以上（請求額と違ってもよい。差額は経理が確かめる）
+ * 請求書の残りの支払額 = 請求額 − 支払済みの額（取り消していない支払の合計）。取消の請求書は 0。
+ * 請求額が 0 円以下の請求書（精算）は、精算する前は請求額（0 円・マイナス）、精算した後は 0。
+ */
+export function supplierInvoiceRemaining(invoice: {
+  readonly status: SupplierInvoiceStatus;
+  readonly invoicedAmount: number;
+  readonly paidAmount: number;
+}): number {
+  return invoice.status === "cancelled" ? 0 : invoice.invoicedAmount - invoice.paidAmount;
+}
+
+/** 支払（または精算）の後の請求書の状態と支払済みの額 */
+export interface SupplierInvoicePayment {
+  readonly status: "partial" | "paid";
+  readonly paidAmount: number;
+}
+
+/**
+ * 支払（未払い・一部支払 → 一部支払・支払済み）。支払は1回ごとに1件の記録になる。
+ * - 請求額が 1 円以上の請求書：支払額は 1 円以上で、残りの額（請求額 − 支払済みの額）まで。残りより多い支払は受け付けない。
+ *   残りより少なければ一部支払、残りと同じ額なら支払済みになる。一部支払の請求書は、残りが 0 になるまで何回でも支払える
  * - 請求額が 0 円以下の請求書：支払額は請求額と同じ額でなければならない（0 円、またはマイナス = 相殺・返金を受ける額）。
  *   仕入返品が入荷より多い月の請求書は、請求額をマイナスで登録できる（3.7 の計算額 = 受入数 × 単価 + 送料 − 仕入返品）。
  *   支払額を1円以上に限ると、この請求書は未払いのまま支払予定と期限超過に残り続け、対象の発注も支払済みにならない。
  *   精算の額を請求額と同じにするのは、買掛残高（請求額 − 支払額）をちょうど 0 にするため。0 円以下の請求書の
- *   一部だけを精算する、という支払はありえないので、ほかの額は受け付けない。一括支払いも同じ規則で、請求額で精算する
+ *   一部だけを精算する、という支払はありえないので、ほかの額は受け付けない（一部支払にはならない）
+ * 一括支払いは、選んだ請求書の残りの額（0 円以下の請求書は請求額）を支払う。
  */
 export function paySupplierInvoice(
   status: SupplierInvoiceStatus,
   invoicedAmount: number,
+  paidAmount: number,
   amount: number,
-): Result<"paid"> {
-  if (status !== "unpaid") return err("invalid_state", "未払いの請求書だけを支払えます");
+): Result<SupplierInvoicePayment> {
+  if (status !== "unpaid" && status !== "partial")
+    return err("invalid_state", "未払い・一部支払の請求書だけを支払えます");
   if (isSettlementInvoice(invoicedAmount)) {
     if (amount !== invoicedAmount) {
       const message = `請求額が ${formatYen(invoicedAmount)} 円の請求書は、請求額と同じ額（${formatYen(invoicedAmount)} 円）で精算してください`;
       return err("validation", message, { fields: [{ field: "amount", message }] });
     }
-    return ok("paid");
+    return ok({ status: "paid", paidAmount: invoicedAmount });
   }
   if (!Number.isInteger(amount) || amount <= 0)
     return err("validation", "支払額は1円以上の整数で入力してください", {
       fields: [{ field: "amount", message: "支払額は1円以上で入力してください" }],
     });
-  return ok("paid");
+  const remaining = invoicedAmount - paidAmount;
+  if (amount > remaining) {
+    const message = `支払額が残りの額（${formatYen(remaining)} 円）を超えています`;
+    return err("validation", message, { fields: [{ field: "amount", message }] });
+  }
+  const next = paidAmount + amount;
+  return ok({ status: next === invoicedAmount ? "paid" : "partial", paidAmount: next });
 }
 
-/** 支払の取消（支払済み → 未払い）。理由が必須 */
+/** 支払の取消の後の請求書の状態と支払済みの額 */
+export interface SupplierPaymentCancellation {
+  readonly status: "unpaid" | "partial";
+  readonly paidAmount: number;
+}
+
+/**
+ * 支払1件の取消（支払済み・一部支払 → 一部支払・未払い）。理由が必須。
+ * 取り消した後に、取り消していない支払が残っていれば一部支払、1件も残らなければ未払い。
+ * otherLivePayments は、この支払のほかの、取り消していない支払の件数。
+ */
 export function cancelSupplierPayment(
   status: SupplierInvoiceStatus,
+  paidAmount: number,
+  payment: { readonly amount: number; readonly cancelled: boolean },
+  otherLivePayments: number,
   reason: string,
-): Result<"unpaid"> {
-  if (status !== "paid") return err("invalid_state", "支払済みの請求書だけ支払を取り消せます");
+): Result<SupplierPaymentCancellation> {
+  if (status !== "paid" && status !== "partial")
+    return err("invalid_state", "支払済み・一部支払の請求書だけ支払を取り消せます");
+  if (payment.cancelled) return err("invalid_state", "この支払はすでに取り消されています");
   if (reason.trim() === "")
     return err("validation", "支払の取消の理由を入力してください", {
       fields: [{ field: "reason", message: "取消の理由を入力してください" }],
     });
-  return ok("unpaid");
+  return ok({
+    status: otherLivePayments > 0 ? "partial" : "unpaid",
+    paidAmount: paidAmount - payment.amount,
+  });
 }
 
-/** 仕入先請求書の取消（未払い → 取消）。支払済みなら先に支払を取り消す。理由が必須 */
+/**
+ * 仕入先請求書の取消（未払い → 取消）。取り消していない支払が1件でも残っていれば（一部支払・支払済み）取り消せない
+ * ので、先に支払をすべて取り消す。理由が必須
+ */
 export function cancelSupplierInvoice(
   status: SupplierInvoiceStatus,
   reason: string,
 ): Result<"cancelled"> {
-  if (status === "paid")
-    return err("invalid_state", "支払済みの請求書は取り消せません。先に支払を取り消してください");
+  if (status === "paid" || status === "partial")
+    return err(
+      "invalid_state",
+      `${SUPPLIER_INVOICE_STATUS_LABELS[status]}の請求書は取り消せません。先に支払をすべて取り消してください`,
+    );
   if (status !== "unpaid") return err("invalid_state", "すでに取り消されています");
   if (reason.trim() === "")
     return err("validation", "取消の理由を入力してください", {
@@ -546,8 +630,9 @@ export function cancelSupplierInvoice(
 
 /**
  * 請求書の支払・支払の取消・請求書の取消のあとの発注の状態（settledOrderStatus で決め直す）。
- * - 支払：入荷済みの発注は、受入のある入荷がすべて支払済みの請求書に入れば支払済み。分納の途中（発注済み）なら変えない
- * - 支払の取消：支払済みの発注は、未払いに戻った入荷があるので入荷済みに戻る
+ * - 支払：入荷済みの発注は、受入のある入荷がすべて支払済み（残りが 0）の請求書に入れば支払済み。
+ *   一部支払の請求書の入荷は未払いと数える（支払済みにしない）。分納の途中（発注済み）なら変えない
+ * - 支払の取消：支払済みの発注は、支払済みでなくなった（一部支払・未払いに戻った）入荷があるので入荷済みに戻る
  * 作成中・取消の発注（入荷がないので、請求書に結びつかない）は変えない。
  */
 export function orderStatusAfterPaymentChange(

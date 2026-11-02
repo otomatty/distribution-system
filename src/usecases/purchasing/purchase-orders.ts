@@ -19,6 +19,7 @@ import {
   returnableUnits,
   type PricedLine,
   type PurchaseOrderStatus,
+  type SupplierInvoiceStatus,
 } from "../../domain/purchasing";
 import { err, ok, type FieldError, type Result } from "../../domain/result";
 import { can } from "../../domain/roles";
@@ -563,7 +564,11 @@ export interface PurchaseOrderView {
   readonly documents: readonly DocumentSummary[];
   readonly sends: readonly DocumentSendRecord[];
   /** 入荷を含む仕入先請求書（取消を除く） */
-  readonly invoices: readonly { id: string; invoiceNumber: string | null; status: string }[];
+  readonly invoices: readonly {
+    id: string;
+    invoiceNumber: string | null;
+    status: SupplierInvoiceStatus;
+  }[];
   /** 仕入先の既定の送付方法とメールアドレス（確定の画面の初期値） */
   readonly supplierEmail: string | null;
   readonly supplierSendMethod: "email" | "none";
@@ -635,7 +640,7 @@ export const getPurchaseOrder = defineQuery({
       },
       cancellableReceiptIds: can(roles, "receipts.manage")
         ? active
-            .filter((r) => receiptCancellable(order.status, r.supplierInvoiceStatus === "paid").ok)
+            .filter((r) => receiptCancellable(order.status, r.supplierInvoiceStatus).ok)
             .map((r) => r.id)
         : [],
       returns: ctx.stores.purchaseReturns

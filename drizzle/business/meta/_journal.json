@@ -43,6 +43,13 @@
       "when": 1793622588615,
       "tag": "0005_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793629729268,
+      "tag": "0006_supplier_invoice_partial_payment",
+      "breakpoints": true
     }
   ]
 }

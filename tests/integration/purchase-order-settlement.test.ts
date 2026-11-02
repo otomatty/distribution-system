@@ -34,13 +34,13 @@ async function invoiceAndPay(supplierId: string, receiptIds: string[], amount: n
     receiptIds,
     differenceReason: "テスト",
   });
-  await systemCommand("supplierInvoices.pay", {
+  const paid = await systemCommand("supplierInvoices.pay", {
     id: inv.id,
     version: 1,
     paidOn: "2026-10-31",
     amount,
   });
-  return inv;
+  return { ...inv, paymentId: paid.paymentId };
 }
 
 describe("入荷の取消のあとの発注の状態（明細から決める）", () => {
@@ -86,6 +86,7 @@ describe("支払うものが残っていない発注は支払済みにする", (
     await systemCommand("supplierInvoices.cancelPayment", {
       id: x.id,
       version: 2,
+      paymentId: x.paymentId,
       reason: "支払の誤り",
     });
     expect(await status(po.id)).toBe("received");
@@ -238,7 +239,7 @@ describe("請求額が 0 円以下の仕入先請求書（相殺・返金を受�
     expect(await status(po.id)).toBe("paid");
   });
 
-  it("請求額が 1 円以上の請求書は、これまでどおり 1 円以上の支払額で支払う", async () => {
+  it("請求額が 1 円以上の請求書は 1 円以上の支払額で支払う。残りより少なければ一部支払で、発注は支払済みにならない", async () => {
     const { supplierId, po } = await singleLineOrder(1);
     const r = await receive(po.id, [1]);
     const inv = await systemCommand("supplierInvoices.create", {
@@ -261,15 +262,26 @@ describe("請求額が 0 円以下の仕入先請求書（相殺・返金を受�
       amount: -1296,
     });
     expect(negative.ok).toBe(false);
-    // 一部の額でも支払える（差額は経理が確かめる）
-    await systemCommand("supplierInvoices.pay", {
+    // 一部の額なら一部支払（残りは買掛残高に残る）。受入のある入荷が全額を支払った請求書に入るまで、発注は入荷済みのまま
+    // （仕様の変更：以前は一部の額でも支払済みになり、差額が買掛残高に残り続けた）
+    const partial = await systemCommand("supplierInvoices.pay", {
       id: inv.id,
       version: 1,
       paidOn: "2026-11-02",
       amount: 1000,
     });
-    expect(await status(po.id)).toBe("paid");
+    expect(partial.status).toBe("partial");
+    expect(await status(po.id)).toBe("received");
     const view = await systemQuery("supplierInvoices.get", { id: inv.id });
     expect(view?.settlement).toBe(false);
+    expect(view?.invoice).toMatchObject({ status: "partial", paidAmount: 1000 });
+    expect(view?.remaining).toBe(296);
+    await systemCommand("supplierInvoices.pay", {
+      id: inv.id,
+      version: 2,
+      paidOn: "2026-11-03",
+      amount: 296,
+    });
+    expect(await status(po.id)).toBe("paid");
   });
 });

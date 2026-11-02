@@ -1434,7 +1434,8 @@ function OrderDetail(props: { view: PurchaseOrderView; notice?: string | undefin
           <ul>
             {view.invoices.map((i) => (
               <li>
-                <a href={paths.supplierInvoice(i.id)}>{i.invoiceNumber ?? "（番号なし）"}</a>
+                <a href={paths.supplierInvoice(i.id)}>{i.invoiceNumber ?? "（番号なし）"}</a>{" "}
+                <SupplierInvoiceStatusBadge status={i.status} />
               </li>
             ))}
           </ul>

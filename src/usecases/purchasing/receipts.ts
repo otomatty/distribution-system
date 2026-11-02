@@ -3,7 +3,7 @@
  * - 分納：複数回に分けて記録できる。全数がそろうか「残りは打ち切り」で入荷済みになる
  * - 明細ごとに受入数と返品数（その場で返したもの）を分ける。在庫に入るのは「受入数 × 入数」
  * - 保管場所は発注の納入先から決まる。メーカー直・その他の届け先は「納品済み」の確認だけで在庫を動かさない
- * - 取消は、支払済みの請求書に含まれていなければできる（在庫は打ち消しの行で戻す）
+ * - 取消は、支払（一部を含む）を記録した請求書に含まれていなければできる（在庫は打ち消しの行で戻す）
  */
 import { z } from "zod";
 
@@ -161,7 +161,7 @@ export const cancelPurchaseReceipt = defineCommand({
     const own = receipt.lines.some((l) => l.accepted > 0) ? 1 : 0;
     const next = cancelReceipt(
       po.status,
-      receipt.supplierInvoiceStatus === "paid",
+      receipt.supplierInvoiceStatus,
       reverted.value,
       ctx.stores.supplierInvoices.unpaidReceiptCount(po.id) - own,
     );
