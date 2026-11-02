@@ -1052,3 +1052,18 @@ details.card > summary {
     display: block;
   }
 }
+
+/* ---- メーカー直の発注（受注詳細の欄） ---- */
+.maker-direct-suppliers {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.maker-direct-suppliers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}

@@ -38,6 +38,7 @@ import {
   type Page,
 } from "../schemas";
 import { closingTermsOf, countBy, fieldError, taxRatesOn, writeMeta } from "./common";
+import { checkSalesOrderLink } from "./maker-direct";
 import type {
   PurchaseOrderDetail,
   PurchaseOrderFields,
@@ -94,6 +95,8 @@ const fieldsInput = z.object({
   deliveryRequestedOn: optionalBusinessDate,
   /** 取引条件のない仕入先のときだけ使う（ある仕入先は自動で計算する） */
   paymentDueOn: optionalBusinessDate,
+  /** メーカー直の受注から作るとき、その受注（作るときだけ使い、編集では変わらない） */
+  salesOrderId: optionalId,
   memo: optionalText(2000),
   lines: z.array(lineInput).max(200, "1つの発注に入れられる商品は200件までです").default([]),
 });
@@ -209,6 +212,17 @@ function prepareOrder(
     return fieldError("supplierId", "取引終了の仕入先は選べません");
   const destination = checkDestination(ctx, input, before);
   if (!destination.ok) return destination;
+  const salesOrderId = before ? before.salesOrderId : input.salesOrderId;
+  if (salesOrderId) {
+    const link = checkSalesOrderLink(ctx, {
+      salesOrderId,
+      supplierId: supplier.id,
+      destinationKind: input.destinationKind,
+      destinationCustomerId: destination.value.destinationCustomerId,
+      orderId: before?.id ?? null,
+    });
+    if (!link.ok) return link;
+  }
   if (input.employeeId) {
     const employee = ctx.stores.employees.get(input.employeeId);
     if (!employee || (!employee.active && before?.employeeId !== input.employeeId))
@@ -242,6 +256,7 @@ function prepareOrder(
       deliveryRequestedOn: input.deliveryRequestedOn,
       paymentDueOn,
       sendMethod: before?.sendMethod ?? supplier.defaultSendMethod,
+      salesOrderId,
       memo: input.memo,
       subtotal: summary.subtotal,
       tax: summary.tax,

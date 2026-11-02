@@ -1,5 +1,6 @@
 /** 仕入（発注・入荷・仕入返品・仕入先請求書・支払）のユースケース。追加したら下の一覧に1行ずつ登録する */
 import { purchasingDashboard, receiptsDueToday } from "./dashboard";
+import { makerDirectDraft, makerDirectPlan } from "./maker-direct";
 import {
   cancelPurchaseOrder,
   confirmPurchaseOrder,
@@ -46,6 +47,8 @@ export const purchasingQueries = {
   "purchaseOrders.list": listPurchaseOrders,
   "purchaseOrders.get": getPurchaseOrder,
   "purchaseOrders.preview": previewPurchaseOrder,
+  "purchaseOrders.makerDirectPlan": makerDirectPlan,
+  "purchaseOrders.makerDirectDraft": makerDirectDraft,
   "receipts.schedule": receivingSchedule,
   "receipts.dueToday": receiptsDueToday,
   "supplierInvoices.list": listSupplierInvoices,

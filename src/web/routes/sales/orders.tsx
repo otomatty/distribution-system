@@ -8,6 +8,7 @@ import { toBusinessDate } from "../../../domain/dates";
 import { parseYenToCenti } from "../../../domain/money";
 import type { DomainError } from "../../../domain/result";
 import { SALES_ORDER_STATUS_LABELS, type SalesOrderStatus } from "../../../domain/sales";
+import type { MakerDirectPlan } from "../../../usecases/purchasing/maker-direct";
 import type { OrderEvaluation } from "../../../usecases/sales/evaluate";
 import type { SalesOrderView } from "../../../usecases/sales/orders";
 import type { ShortageDetail } from "../../../usecases/stock/queries";
@@ -41,6 +42,7 @@ import { CsvButton } from "../../views/csv-button";
 import { centiPlain, dateTime, qty, yen } from "../../views/format";
 import { ItemPicker, pickedItemIds } from "../../views/item-picker";
 import { Layout } from "../../views/layout";
+import { MakerDirectOrders } from "../../views/maker-direct";
 import { OrderLinesTable, SalesOrderStatusBadge } from "../../views/sales";
 import {
   ChargeRow,
@@ -680,6 +682,8 @@ function DetailBody(props: {
   notice?: string | undefined;
   error?: DomainError | undefined;
   shortages?: readonly ShortageDetail[] | undefined;
+  /** メーカー直の受注から作った発注（メーカー直の受注だけ） */
+  makerDirect?: MakerDirectPlan | null | undefined;
 }) {
   const { order, evaluation, shipments, actions } = props.view;
   const today = toBusinessDate(new Date());
@@ -761,6 +765,7 @@ function DetailBody(props: {
           withStock={actions.edit}
         />
       </section>
+      {props.makerDirect ? <MakerDirectOrders plan={props.makerDirect} /> : null}
       {actions.ship && props.canShip ? (
         <section class="card">
           <h2>発送</h2>
@@ -947,6 +952,9 @@ async function detailBody(
     extra.error?.code === "insufficient_stock"
       ? await runQuery(c, "stock.shortages", { details: [...(extra.error.details ?? [])] })
       : undefined;
+  const makerDirect = view.order.makerDirect
+    ? await runQuery(c, "purchaseOrders.makerDirectPlan", { salesOrderId: id })
+    : null;
   return (
     <DetailBody
       view={view}
@@ -955,6 +963,7 @@ async function detailBody(
       notice={extra.notice}
       error={extra.error}
       shortages={shortages}
+      makerDirect={makerDirect}
     />
   );
 }

@@ -17,6 +17,7 @@ import {
   partners,
   purchaseOrderLines,
   purchaseOrders,
+  salesOrders,
 } from "../../schema";
 import { insertBatches } from "../../sql-helpers";
 
@@ -40,6 +41,8 @@ const recordColumns = {
   deliveryRequestedOn: purchaseOrders.deliveryRequestedOn,
   paymentDueOn: purchaseOrders.paymentDueOn,
   sendMethod: purchaseOrders.sendMethod,
+  salesOrderId: purchaseOrders.salesOrderId,
+  salesOrderNumber: salesOrders.number,
   memo: purchaseOrders.memo,
   subtotal: purchaseOrders.subtotal,
   tax: purchaseOrders.tax,
@@ -68,6 +71,7 @@ function conditions(filter: PurchaseOrderFilter): SQL | undefined {
   const conds: SQL[] = [];
   if (filter.status) conds.push(eq(purchaseOrders.status, filter.status));
   if (filter.supplierId) conds.push(eq(purchaseOrders.supplierId, filter.supplierId));
+  if (filter.salesOrderId) conds.push(eq(purchaseOrders.salesOrderId, filter.salesOrderId));
   if (filter.from) conds.push(gte(purchaseOrders.orderedOn, filter.from));
   if (filter.to) conds.push(lte(purchaseOrders.orderedOn, filter.to));
   if (filter.hasMemo)
@@ -136,7 +140,8 @@ export function purchaseOrderStore(db: Db): PurchaseOrderStore {
       .leftJoin(partners, eq(partners.id, purchaseOrders.supplierId))
       .leftJoin(locations, eq(locations.id, purchaseOrders.destinationLocationId))
       .leftJoin(customers, eq(customers.id, purchaseOrders.destinationCustomerId))
-      .leftJoin(employees, eq(employees.id, purchaseOrders.employeeId));
+      .leftJoin(employees, eq(employees.id, purchaseOrders.employeeId))
+      .leftJoin(salesOrders, eq(salesOrders.id, purchaseOrders.salesOrderId));
 
   function lines(orderId: string): PurchaseOrderLineRecord[] {
     return db
@@ -247,6 +252,7 @@ export function purchaseOrderStore(db: Db): PurchaseOrderStore {
         .leftJoin(locations, eq(locations.id, purchaseOrders.destinationLocationId))
         .leftJoin(customers, eq(customers.id, purchaseOrders.destinationCustomerId))
         .leftJoin(employees, eq(employees.id, purchaseOrders.employeeId))
+        .leftJoin(salesOrders, eq(salesOrders.id, purchaseOrders.salesOrderId))
         .where(where)
         .orderBy(desc(purchaseOrders.orderedOn), desc(purchaseOrders.number))
         .limit(pageSize)
