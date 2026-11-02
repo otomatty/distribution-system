@@ -1,6 +1,5 @@
 /** 在庫の画面の部品（在庫不足の表示など。発送・入荷の取消などほかの区分の画面でも使う） */
 import type { DomainError } from "../../domain/result";
-import { STOCK_REASONS, type StockReason } from "../../domain/stock";
 import type { ShortageDetail } from "../../usecases/stock/queries";
 import { Alert, ErrorSummary } from "./components";
 import { qty } from "./format";
@@ -51,10 +50,6 @@ export function StockErrorSummary(props: {
       </table>
     </Alert>
   );
-}
-
-export function reasonLabel(reason: StockReason): string {
-  return STOCK_REASONS[reason];
 }
 
 /** 符号つきの数量（+3 / −2） */
