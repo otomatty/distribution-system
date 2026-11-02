@@ -1,9 +1,11 @@
 /**
  * 発送リスト・一括発送・納品書の一括 PDF（要件定義書 3.9、5章 発送リスト）とダッシュボードの「受注・出荷」の欄。
+ * 発送リストは選んだ日までに出荷予定日が来た未発送の受注を出し、過ぎたものは「遅れ」と示す。発送日は受注日より前にできない。
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { addDays } from "../../src/domain/dates";
 import * as schema from "../../src/infra/db/schema";
 import { bulkDocumentsPayload } from "../../src/usecases/platform/job-payloads";
 import { createLocation } from "./fixtures";
@@ -117,7 +119,7 @@ describe("発送リスト", () => {
     const other = await (
       await as(user).get(`/shipping?date=${d.date}&locationId=${otherLocation}`)
     ).text();
-    expect(other).toContain("この日に発送する受注はありません");
+    expect(other).toContain("この日までに発送する受注はありません");
   });
 
   it("印刷用の HTML（A4 横、販売先が多ければ列を分けて複数ページ）と仕分けリスト（1販売先1枚）", async () => {
@@ -405,7 +407,9 @@ describe("ダッシュボードの「受注・出荷」の欄", () => {
     const after = await systemQuery("sales.dashboard", {});
     expect(after.today).toBe(today());
     const here = after.shipPlanned.find((p) => p.locationId === d.locationId);
-    expect(here?.count).toBe(3);
+    // 発送リストと同じく、出荷予定日を過ぎた（遅れの）受注も今日までの出荷予定に数える
+    expect(here?.count).toBe(4);
+    expect(here?.overdue).toBe(1);
     const maker = (list: typeof after.shipPlanned) =>
       list.find((p) => p.locationId === null)?.count ?? 0;
     expect(maker(after.shipPlanned) - maker(before.shipPlanned)).toBe(1);
@@ -416,10 +420,238 @@ describe("ダッシュボードの「受注・出荷」の欄", () => {
     const user = await createEmployee(["sales"]);
     const page = await (await as(user).get("/")).text();
     expect(page).toContain("受注・出荷");
+    expect(page).toContain("今日までの出荷予定（");
+    expect(page).toContain("うち遅れ 1 件");
     expect(page).toContain("出荷可能数が足りない受注");
     expect(page).toContain(`/shipping?date=${after.today}&amp;locationId=${d.locationId}`);
     expect(page).toContain("/sales-orders?status=received&amp;shortage=1");
     const purchasing = await createEmployee(["purchasing"]);
     expect(await (await as(purchasing).get("/")).text()).not.toContain("受注・出荷");
+  });
+});
+
+/** 遅れの受注（出荷予定日が2日前、受注日は3日前）・今日の受注・明日の受注を1つの保管場所に作る */
+async function overdueDay() {
+  const setup = await salesSetup({ a: 20, b: 24 });
+  const { a, b, locationId } = setup;
+  const late = await createCustomer();
+  const date = today();
+  const overdue = await createOrder({
+    customerId: late.id,
+    locationId,
+    orderedOn: addDays(date, -3),
+    shipPlannedOn: addDays(date, -2),
+    memo: "遅れている受注",
+    lines: [{ itemId: a.id, quantity: 2, unitPriceCenti: 15_050 }],
+  });
+  const current = await createOrder({
+    customerId: setup.customer.id,
+    locationId,
+    shipPlannedOn: date,
+    lines: [{ itemId: b.id, quantity: 6, unitPriceCenti: 10_000 }],
+  });
+  const tomorrow = await createOrder({
+    customerId: setup.customer.id,
+    locationId,
+    shipPlannedOn: addDays(date, 1),
+    lines: [{ itemId: a.id, quantity: 1, unitPriceCenti: 15_050 }],
+  });
+  return { ...setup, late, overdue, current, tomorrow, date };
+}
+
+describe("発送リストの遅れ（出荷予定日を過ぎた未発送の受注）", () => {
+  it("選んだ日までの未発送の受注をすべて出し、遅れを要約・列の見出し・一括発送の表で示す。オフラインの目印は残す", async () => {
+    const user = await createEmployee(["sales"]);
+    const d = await overdueDay();
+    const list = await systemQuery("shipping.list", { date: d.date, locationId: d.locationId });
+    expect(list!.orders.map((o) => o.id).toSorted()).toEqual(
+      [d.overdue.id, d.current.id].toSorted(),
+    );
+    expect(list!.orders.find((o) => o.id === d.overdue.id)).toMatchObject({
+      overdue: true,
+      shipPlannedOn: addDays(d.date, -2),
+    });
+    expect(list!.orders.find((o) => o.id === d.current.id)?.overdue).toBe(false);
+    expect(list!.overdueOrders.map((o) => o.number)).toEqual([d.overdue.number]);
+    expect(list!.customers.find((c) => c.id === d.late.id)?.overdue).toBe(true);
+    expect(list!.customers.find((c) => c.id === d.customer.id)?.overdue).toBe(false);
+
+    const page = await (
+      await as(user).get(`/shipping?date=${d.date}&locationId=${d.locationId}`)
+    ).text();
+    expect(page).toContain("出荷予定日を過ぎた未発送の受注が 1 件あります");
+    expect(page).toContain(`（遅れ：出荷予定日 ${addDays(d.date, -2)}）`);
+    expect(page).toContain("遅れ 1 件");
+    expect(page).toContain("overdue-col");
+    expect(page).not.toContain(d.tomorrow.number);
+    expect(page).toContain('data-offline-snapshot="live"');
+    expect(page).toContain('class="sticky-col"');
+    expect(page.match(/name="orderId"[^>]*checked/g)).toHaveLength(2);
+
+    // 前の日を選べば、その日までの受注だけ（今日の受注は出さない。遅れの受注はまだ遅れでない）
+    const earlier = await systemQuery("shipping.list", {
+      date: addDays(d.date, -2),
+      locationId: d.locationId,
+    });
+    expect(earlier!.orders.map((o) => o.id)).toEqual([d.overdue.id]);
+    expect(earlier!.overdueOrders).toEqual([]);
+
+    // 印刷（A4 横）と仕分けリストも同じ受注を対象にし、遅れを示す
+    const print = await (
+      await as(user).get(`/shipping/print?date=${d.date}&locationId=${d.locationId}`)
+    ).text();
+    expect(print).toContain("【遅れ】出荷予定日を過ぎた受注 1 件を含みます");
+    expect(print).toContain(`【遅れ】${d.late.name}`);
+    expect(print).toContain("print landscape");
+    const sorting = await (
+      await as(user).get(`/shipping/sorting?date=${d.date}&locationId=${d.locationId}`)
+    ).text();
+    expect(sorting.match(/class="print-page"/g)).toHaveLength(2);
+    expect(sorting).toContain(`${d.overdue.number}【遅れ：出荷予定日 ${addDays(d.date, -2)}】`);
+    expect(sorting).toContain("遅れている受注");
+  });
+
+  it("一括発送は遅れの受注も含めて発送し、発送済みの納品書の一括 PDF もその日に発送した受注を含める", async () => {
+    const user = await createEmployee(["sales"]);
+    const d = await overdueDay();
+    const ids = [d.overdue.id, d.current.id];
+    const confirm = await (
+      await as(user).hx("/shipping/bulk/confirm", {
+        date: d.date,
+        locationId: d.locationId,
+        orderId: ids,
+      })
+    ).text();
+    expect(confirm).toContain("2 件を発送する");
+    const res = await as(user).hx("/shipping/bulk/ship", {
+      _key: newKey(),
+      date: d.date,
+      locationId: d.locationId,
+      orderId: ids,
+      orderVersion: await versions(ids),
+      shippedOn: d.date,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("2 件を発送しました。");
+    const after = await systemQuery("shipping.list", { date: d.date, locationId: d.locationId });
+    expect(after!.orders).toEqual([]);
+    expect(after!.shippedShipmentIds).toHaveLength(2);
+    const page = await (
+      await as(user).get(`/shipping?date=${d.date}&locationId=${d.locationId}`)
+    ).text();
+    expect(page).toContain("発送済みの納品書を一括 PDF（2 件）");
+    // 出荷予定日の日の発送リストには、その日に発送していないので出さない
+    const planned = await systemQuery("shipping.list", {
+      date: addDays(d.date, -2),
+      locationId: d.locationId,
+    });
+    expect(planned!.shippedShipmentIds).toEqual([]);
+  });
+});
+
+describe("発送日と受注日", () => {
+  it("個別の発送は、受注日より前の発送日ではできない（発送日の欄のエラー）", async () => {
+    const user = await createEmployee(["sales"]);
+    const d = await overdueDay();
+    const view = await getOrder(d.current.id);
+    const early = await systemCommandResult("shipments.ship", {
+      id: d.current.id,
+      version: view.order.version,
+      shippedOn: addDays(d.date, -1),
+    });
+    expect(early).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation",
+        fields: [{ field: "shippedOn", message: `発送日は受注日（${d.date}）以降にしてください` }],
+      },
+    });
+    expect((await getOrder(d.current.id)).order.status).toBe("received");
+    const res = await as(user).hx(`/sales-orders/${d.current.id}/ship`, {
+      _key: newKey(),
+      version: String(view.order.version),
+      shippedOn: addDays(d.date, -1),
+    });
+    expect(await res.text()).toContain(`発送日：発送日は受注日（${d.date}）以降にしてください`);
+    // 受注日と同じ日なら発送できる
+    const ok = await systemCommandResult("shipments.ship", {
+      id: d.overdue.id,
+      version: (await getOrder(d.overdue.id)).order.version,
+      shippedOn: addDays(d.date, -3),
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  it("一括発送は、受注日が発送日より後の受注を理由とともに示し、外して続ける", async () => {
+    const user = await createEmployee(["sales"]);
+    const d = await overdueDay();
+    const ids = [d.overdue.id, d.current.id];
+    const yesterday = addDays(d.date, -1);
+    const check = await systemQuery("shipping.check", { orderIds: ids, shippedOn: yesterday });
+    expect(check.shippedOn).toBe(yesterday);
+    expect(check.shippable.map((o) => o.id)).toEqual([d.overdue.id]);
+    expect(check.tooEarly).toMatchObject([{ id: d.current.id, orderedOn: d.date }]);
+    // 発送日を指定しなければ今日で確かめる
+    expect((await systemQuery("shipping.check", { orderIds: ids })).tooEarly).toEqual([]);
+
+    const confirm = await (
+      await as(user).hx("/shipping/bulk/confirm", {
+        date: d.date,
+        locationId: d.locationId,
+        orderId: ids,
+        shippedOn: yesterday,
+      })
+    ).text();
+    expect(confirm).toContain(`受注日が発送日（${yesterday}）より後の受注が 1 件あります`);
+    expect(confirm).toContain(`${d.current.number}（${d.customer.name}）：受注日 ${d.date}`);
+    expect(confirm).toContain(`name="excludeEarlyId" value="${d.current.id}"`);
+    expect(confirm).toContain("受注日が発送日より後の 1 件を外して続ける（1 件を発送）");
+    // 発送日を変えると確かめ直す（発送日の欄の変更で確認の欄を差し替える）
+    expect(confirm).toContain('hx-target="closest .confirm-panel"');
+
+    // 外さずに送ると、何も発送せずに理由を返す（業務エラー）
+    const versionsNow = await versions(ids);
+    const blocked = await systemCommandResult("shipments.bulkShip", {
+      orders: ids.map((id, i) => ({ id, version: Number(versionsNow[i]) })),
+      shippedOn: yesterday,
+    });
+    expect(blocked).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation",
+        fields: [{ field: "shippedOn" }],
+        details: [`${d.current.number}（受注日 ${d.date}）`],
+      },
+    });
+    const shownAgain = await as(user).hx("/shipping/bulk/ship", {
+      _key: newKey(),
+      date: d.date,
+      locationId: d.locationId,
+      orderId: ids,
+      orderVersion: versionsNow,
+      shippedOn: yesterday,
+    });
+    expect(shownAgain.status).toBe(422);
+    expect(await shownAgain.text()).toContain("受注日が発送日（");
+    for (const id of ids) expect((await getOrder(id)).order.status).toBe("received");
+
+    // 外して続ける（同じ受付番号で2回送っても1回分）
+    const form = {
+      _key: newKey(),
+      date: d.date,
+      locationId: d.locationId,
+      orderId: ids,
+      orderVersion: versionsNow,
+      excludeEarlyId: [d.current.id],
+      shippedOn: yesterday,
+    };
+    const res = await as(user).hx("/shipping/bulk/ship", form);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(
+      "1 件を発送しました（受注日が発送日より後の 1 件は外しました）",
+    );
+    expect((await as(user).hx("/shipping/bulk/ship", form)).status).toBe(200);
+    expect((await getOrder(d.overdue.id)).shipments[0]?.shippedOn).toBe(yesterday);
+    expect((await getOrder(d.current.id)).order.status).toBe("received");
   });
 });
