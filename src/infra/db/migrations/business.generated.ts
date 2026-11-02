@@ -39,6 +39,13 @@ export const businessMigrations: {
         "when": 1793614079085,
         "tag": "0004_sales_orders_split_from",
         "breakpoints": true
+      },
+      {
+        "idx": 5,
+        "version": "6",
+        "when": 1793617229888,
+        "tag": "0005_list_and_period_indexes",
+        "breakpoints": true
       }
     ]
   },
@@ -47,6 +54,7 @@ export const businessMigrations: {
     "m0001": "ALTER TABLE `purchase_orders` ADD `subtotal` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nALTER TABLE `purchase_orders` ADD `tax` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nALTER TABLE `purchase_orders` ADD `total` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nALTER TABLE `purchase_return_lines` ADD `purchase_order_line_id` text;--> statement-breakpoint\nALTER TABLE `purchase_return_lines` ADD `unit_price_centi` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nCREATE INDEX `purchase_return_lines_order_line` ON `purchase_return_lines` (`purchase_order_line_id`);--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `purchase_order_id` text;--> statement-breakpoint\nCREATE INDEX `purchase_returns_order` ON `purchase_returns` (`purchase_order_id`);--> statement-breakpoint\nCREATE INDEX `purchase_returns_invoice` ON `purchase_returns` (`supplier_invoice_id`);--> statement-breakpoint\nCREATE INDEX `receipt_lines_order_line` ON `receipt_lines` (`purchase_order_line_id`);",
     "m0002": "CREATE TABLE `supplier_invoice_attachments` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`supplier_invoice_id` text NOT NULL,\n\t`r2_key` text NOT NULL,\n\t`file_name` text NOT NULL,\n\t`size` integer NOT NULL,\n\t`sha256` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`created_by` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`updated_by` text NOT NULL,\n\t`version` integer DEFAULT 1 NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `supplier_invoice_attachments_invoice` ON `supplier_invoice_attachments` (`supplier_invoice_id`);",
     "m0003": "CREATE INDEX `purchase_orders_sales_order` ON `purchase_orders` (`sales_order_id`);",
-    "m0004": "CREATE INDEX `sales_orders_split_from` ON `sales_orders` (`split_from_id`);"
+    "m0004": "CREATE INDEX `sales_orders_split_from` ON `sales_orders` (`split_from_id`);",
+    "m0005": "CREATE INDEX `purchase_orders_ordered` ON `purchase_orders` (`ordered_on`,`number`);--> statement-breakpoint\nCREATE INDEX `receipts_received` ON `receipts` (`received_on`);--> statement-breakpoint\nCREATE INDEX `invoices_issued` ON `invoices` (`issued_on`,`number`);--> statement-breakpoint\nCREATE INDEX `sales_orders_ship_planned` ON `sales_orders` (`ship_planned_on`,`number`);--> statement-breakpoint\nCREATE INDEX `shipments_unbilled` ON `shipments` (`invoice_id`,`shipped_on`);"
   }
 };

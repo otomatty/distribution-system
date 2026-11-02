@@ -27,6 +27,8 @@ export const salesOrders = sqliteTable(
     index("sales_orders_customer").on(t.customerId),
     // 受注の詳細で分割先の受注を探す（受注の取得のたびに使う。発送・一括発送でも呼ばれる）
     index("sales_orders_split_from").on(t.splitFromId),
+    // 受注一覧の並び（出荷予定日の新しい順）。並べ替えずに1ページ分だけ読む（docs/performance.md）
+    index("sales_orders_ship_planned").on(t.shipPlannedOn, t.number),
   ],
 );
 
@@ -83,6 +85,8 @@ export const shipments = sqliteTable(
     index("shipments_order").on(t.salesOrderId),
     index("shipments_invoice").on(t.invoiceId),
     index("shipments_date").on(t.shippedOn),
+    // 未請求の発送を期間で探す（発送ごとの請求書・締め処理。未請求のすべてを読まない）
+    index("shipments_unbilled").on(t.invoiceId, t.shippedOn),
   ],
 );
 
@@ -120,6 +124,8 @@ export const invoices = sqliteTable(
     uniqueIndex("invoices_number").on(t.number),
     index("invoices_customer").on(t.customerId, t.issuedOn),
     index("invoices_status_due").on(t.status, t.dueOn),
+    // 請求書一覧の並び（発行日の新しい順）と発行日の絞り込み
+    index("invoices_issued").on(t.issuedOn, t.number),
   ],
 );
 

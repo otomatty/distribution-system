@@ -41,6 +41,8 @@ export const purchaseOrders = sqliteTable(
     uniqueIndex("purchase_orders_number").on(t.number),
     index("purchase_orders_status").on(t.status, t.orderedOn),
     index("purchase_orders_supplier").on(t.supplierId),
+    // 発注一覧の並び（発注日の新しい順）と発注日の絞り込み
+    index("purchase_orders_ordered").on(t.orderedOn, t.number),
     // メーカー直の受注から作った発注を、受注詳細と発注の作成で引く
     index("purchase_orders_sales_order").on(t.salesOrderId),
   ],
@@ -84,6 +86,8 @@ export const receipts = sqliteTable(
   (t) => [
     index("receipts_order").on(t.purchaseOrderId),
     index("receipts_invoice").on(t.supplierInvoiceId),
+    // 集計（仕入）で入荷日の期間の入荷を探す
+    index("receipts_received").on(t.receivedOn),
   ],
 );
 
