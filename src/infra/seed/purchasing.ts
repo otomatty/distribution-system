@@ -468,23 +468,32 @@ export function registerSupplierInvoices(session: SeedSession, world: World, day
       const r = session.random("supplier-invoice", s.name, day.date, batch);
       const shippingFee = r.chance(0.15) ? r.pick([500, 800, 1200] as const) : 0;
       const at = clock.next();
-      const preview = session.ask(
-        previewSupplierInvoice,
-        { supplierId: s.id, invoiceDate: day.date, receiptIds, returnIds, shippingFee },
-        at,
-      );
-      if (!preview?.amounts) break;
-      const difference = r.chance(0.05) ? r.pick([-300, -100, -12, 5, 40, 250] as const) : 0;
+      const previewOf = (returns: string[]) =>
+        session.ask(
+          previewSupplierInvoice,
+          { supplierId: s.id, invoiceDate: day.date, receiptIds, returnIds: returns, shippingFee },
+          at,
+        )?.amounts?.computedAmount ?? null;
+      // 仕入返品が入荷より多くて請求額が0円以下になるときは、返品を次の請求書に回す
+      let returns = returnIds;
+      let computed = previewOf(returns);
+      if (computed !== null && computed <= 0 && returns.length > 0) {
+        returns = [];
+        computed = previewOf(returns);
+      }
+      if (computed === null || computed <= 0) break;
+      const picked = r.chance(0.05) ? r.pick([-300, -100, -12, 5, 40, 250] as const) : 0;
+      const difference = computed + picked > 0 ? picked : 0;
       const created = session.run(
         createSupplierInvoice,
         {
           supplierId: s.id,
           invoiceDate: day.date,
           receiptIds,
-          returnIds,
+          returnIds: returns,
           shippingFee,
           invoiceNumber: `S${String(index + 1).padStart(4, "0")}-${day.date.replaceAll("-", "")}-${batch + 1}`,
-          invoicedAmount: preview.amounts.computedAmount + difference,
+          invoicedAmount: computed + difference,
           differenceReason: difference === 0 ? null : "先方の計算との端数の違い",
           paymentDueOn: s.terms ? null : addDays(day.date, 30),
           memo: null,
@@ -505,6 +514,7 @@ export function paySupplierInvoices(session: SeedSession, day: SeedDay): void {
       id: schema.supplierInvoices.id,
       version: schema.supplierInvoices.version,
       invoiceNumber: schema.supplierInvoices.invoiceNumber,
+      invoicedAmount: schema.supplierInvoices.invoicedAmount,
       paymentDueOn: schema.supplierInvoices.paymentDueOn,
     })
     .from(schema.supplierInvoices)
@@ -517,6 +527,8 @@ export function paySupplierInvoices(session: SeedSession, day: SeedDay): void {
     .orderBy(asc(schema.supplierInvoices.paymentDueOn), asc(schema.supplierInvoices.invoiceNumber))
     .all()
     .filter((x) => {
+      // 0円以下の請求書は支払わない（一括支払いは1件でも支払えなければ何も支払わない）
+      if (x.invoicedAmount <= 0) return false;
       const late = session.random("pay", x.invoiceNumber ?? x.id).chance(0.02) ? 10 : 0;
       return x.paymentDueOn !== null && addDays(x.paymentDueOn, late) <= day.date;
     });

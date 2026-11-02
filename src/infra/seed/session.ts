@@ -143,8 +143,9 @@ export class SeedSession {
     if (r.ok) return r.value;
     this.rejected += 1;
     if (this.rejections.length < 20) {
-      const fields = (r.error.fields ?? []).map((f) => `${f.field}:${f.message}`).join(", ");
-      this.rejections.push(`${label}：${r.error.message}${fields ? `（${fields}）` : ""}`);
+      const fields = (r.error.fields ?? []).map((f) => `${f.field}:${f.message}`);
+      const extra = [...fields, ...(r.error.details ?? []).slice(0, 3)].join(", ");
+      this.rejections.push(`${label}：${r.error.message}${extra ? `（${extra}）` : ""}`);
     }
     return undefined;
   }
