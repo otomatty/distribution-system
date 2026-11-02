@@ -50,6 +50,13 @@
       "when": 1793629729268,
       "tag": "0006_supplier_invoice_partial_payment",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793629730127,
+      "tag": "0007_purchase_return_cancel",
+      "breakpoints": true
     }
   ]
 }

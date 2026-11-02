@@ -16,6 +16,9 @@ export const purchasingPaths = {
   purchaseOrderCancel: (id: string) => `/purchase-orders/${enc(id)}/cancel`,
   purchaseOrderMemo: (id: string) => `/purchase-orders/${enc(id)}/memo`,
   purchaseReturnNew: (orderId: string) => `/purchase-orders/${enc(orderId)}/returns/new`,
+  /** 仕入返品の取消（POST） */
+  purchaseReturnCancel: (orderId: string, returnId: string) =>
+    `/purchase-orders/${enc(orderId)}/returns/${enc(returnId)}/cancel`,
 
   receiving: (query?: Query) => withQuery("/receiving", query),
   /** 入荷確認（タブレット） */

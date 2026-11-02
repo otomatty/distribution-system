@@ -444,6 +444,30 @@ export function receiptCancelBlockedByReturns(
   return ok(true);
 }
 
+/**
+ * 仕入返品の取消（入荷の取消と同じ条件）。
+ * - 取り消していない仕入返品だけ。理由が必須
+ * - 支払（一部を含む）を記録した請求書から差し引いた仕入返品は取り消せない（invoiceAllowsCancel）
+ * - 未払いの請求書から差し引いていれば、請求書から外して計算額と差額を計算し直す（ユースケースで行う）
+ * - 発注の状態は問わない（仕入返品は発注の入荷済みの数を変えないので、支払済みの発注でも、請求書に入っていない
+ *   仕入返品なら取り消せる）。在庫は打ち消しの行で戻す（増えるだけなので在庫不足にはならない）
+ * invoiceStatus は仕入返品を差し引いた請求書の状態（なければ null）。
+ */
+export function cancelPurchaseReturn(
+  cancelled: boolean,
+  invoiceStatus: SupplierInvoiceStatus | null,
+  reason: string,
+): Result<true> {
+  if (cancelled) return err("invalid_state", "この仕入返品はすでに取り消されています");
+  const invoice = invoiceAllowsCancel(invoiceStatus, "仕入返品");
+  if (!invoice.ok) return invoice;
+  if (reason.trim() === "")
+    return err("validation", "取消の理由を入力してください", {
+      fields: [{ field: "reason", message: "取消の理由を入力してください" }],
+    });
+  return ok(true);
+}
+
 // ---- 仕入先請求書と支払 ------------------------------------------------------
 
 /**

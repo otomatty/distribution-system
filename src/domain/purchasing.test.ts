@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { unwrap, unwrapErr } from "../../tests/support/result";
 import {
   cancelOrder,
+  cancelPurchaseReturn,
   cancelReceipt,
   cancelSupplierInvoice,
   cancelSupplierPayment,
@@ -365,6 +366,22 @@ describe("仕入返品", () => {
     expect(
       recordPurchaseReturn("draft", returnable, [{ lineId: "l1", units: 1 }], "floor").ok,
     ).toBe(false);
+  });
+  it("取消は入荷の取消と同じ条件：支払（一部を含む）を記録した請求書から差し引いたものは取り消せない。理由が必須", () => {
+    expect(cancelPurchaseReturn(false, null, "数え間違い")).toEqual({ ok: true, value: true });
+    expect(cancelPurchaseReturn(false, "unpaid", "数え間違い")).toEqual({ ok: true, value: true });
+    expect(unwrapErr(cancelPurchaseReturn(false, "paid", "x")).message).toBe(
+      "支払済みの請求書に含まれる仕入返品は取り消せません",
+    );
+    expect(unwrapErr(cancelPurchaseReturn(false, "partial", "x")).message).toContain(
+      "先に請求書の支払をすべて取り消してください",
+    );
+    expect(unwrapErr(cancelPurchaseReturn(true, null, "x")).message).toBe(
+      "この仕入返品はすでに取り消されています",
+    );
+    const blank = unwrapErr(cancelPurchaseReturn(false, null, "  "));
+    expect(blank.code).toBe("validation");
+    expect(blank.fields?.[0]?.field).toBe("reason");
   });
   it("仕入返品した数を下回る入荷の取消はできない", () => {
     expect(

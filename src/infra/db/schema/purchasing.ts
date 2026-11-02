@@ -124,6 +124,10 @@ export const purchaseReturns = sqliteTable(
     locationId: text("location_id").notNull(),
     supplierInvoiceId: text("supplier_invoice_id"),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    /** 取消の理由・日時（UTC）・操作者（仕入返品の取消） */
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     memo: text("memo"),
     ...auditColumns,
   },

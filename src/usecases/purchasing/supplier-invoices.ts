@@ -58,6 +58,7 @@ import {
   type Page,
 } from "../schemas";
 import { closingTermsOf, fieldError, taxRatesOn, writeMeta } from "./common";
+import type { PurchaseReturnRecord } from "./purchase-returns.port";
 import type { ReceiptRecord } from "./receipts.port";
 import type {
   InvoiceReceiptRow,
@@ -321,7 +322,8 @@ export const createSupplierInvoice = defineCommand({
 });
 
 /**
- * 請求書の支払・支払の取消・取消のあとに、発注の状態を決め直す（domain の orderStatusAfterPaymentChange）。
+ * 請求書の支払・支払の取消・取消、仕入返品の取消のあとに、発注の状態を決め直す
+ * （domain の orderStatusAfterPaymentChange = settledOrderStatus）。
  * 支払済みの請求書に入っていない、受入のある入荷の件数は、請求書の状態を変えた後の値で数える。
  * orderIds は請求書に結びついていた入荷の発注（取消では、入荷を外す前に読んでおく）。
  * ref は操作履歴に残す、きっかけの伝票（{ supplierInvoiceId } など）。変えた発注の ID を返す。
@@ -545,17 +547,19 @@ export const cancelSupplierInvoiceCommand = defineCommand({
 });
 
 /**
- * 入荷の取消で、未払いの請求書からその入荷を外し、計算額と差額を計算し直す。
+ * 入荷・仕入返品の取消で、未払いの請求書からその入荷・仕入返品を外し、計算額と差額を計算し直す。
  * 差額が出て理由がなければ、取消のためと記録する（経理が請求書の画面で確かめる）。
+ * 支払（一部を含む）を記録した請求書の入荷・仕入返品は、取消の前に domain で止めている。
  */
-export function detachReceiptFromInvoice(
+function detachFromInvoice(
   ctx: UsecaseContext,
   invoiceId: string,
-  receipt: Pick<ReceiptRecord, "id" | "number">,
+  source: { kind: "receipt" | "purchase_return"; id: string; number: string },
 ): Result<true> {
   const invoice = ctx.stores.supplierInvoices.get(invoiceId);
   if (!invoice || invoice.status !== "unpaid") return ok(true);
-  ctx.stores.supplierInvoices.setReceiptInvoice([receipt.id], null);
+  if (source.kind === "receipt") ctx.stores.supplierInvoices.setReceiptInvoice([source.id], null);
+  else ctx.stores.supplierInvoices.setReturnInvoice([source.id], null);
   const amounts = computeAmounts(
     ctx,
     invoice.invoiceDate,
@@ -565,25 +569,47 @@ export function detachReceiptFromInvoice(
   );
   if (!amounts.ok) return amounts;
   const difference = invoice.invoicedAmount - amounts.value.computedAmount;
+  const label = source.kind === "receipt" ? "入荷" : "仕入返品";
   const differenceReason =
     difference === 0
       ? invoice.differenceReason
-      : (invoice.differenceReason ?? `入荷 ${receipt.number} の取消で計算額が変わりました`);
+      : (invoice.differenceReason ?? `${label} ${source.number} の取消で計算額が変わりました`);
   const patch = { computedAmount: amounts.value.computedAmount, difference, differenceReason };
   if (!ctx.stores.supplierInvoices.update(invoiceId, invoice.version, patch, writeMeta(ctx)))
     return err("conflict", STALE_VERSION_MESSAGE);
   ctx.audit.record({
     entityType: "supplier_invoice",
     entityId: invoiceId,
-    action: "detach_receipt",
+    action: source.kind === "receipt" ? "detach_receipt" : "detach_return",
     before: {
       computedAmount: invoice.computedAmount,
       difference: invoice.difference,
       differenceReason: invoice.differenceReason,
     },
-    after: { ...patch, receiptId: receipt.id },
+    after: {
+      ...patch,
+      ...(source.kind === "receipt" ? { receiptId: source.id } : { purchaseReturnId: source.id }),
+    },
   });
   return ok(true);
+}
+
+/** 入荷の取消で、未払いの請求書からその入荷を外す（detachFromInvoice） */
+export function detachReceiptFromInvoice(
+  ctx: UsecaseContext,
+  invoiceId: string,
+  receipt: Pick<ReceiptRecord, "id" | "number">,
+): Result<true> {
+  return detachFromInvoice(ctx, invoiceId, { kind: "receipt", ...receipt });
+}
+
+/** 仕入返品の取消で、未払いの請求書からその仕入返品を外す（detachFromInvoice） */
+export function detachReturnFromInvoice(
+  ctx: UsecaseContext,
+  invoiceId: string,
+  ret: Pick<PurchaseReturnRecord, "id" | "number">,
+): Result<true> {
+  return detachFromInvoice(ctx, invoiceId, { kind: "purchase_return", ...ret });
 }
 
 // ---- 照会 -----------------------------------------------------------------------

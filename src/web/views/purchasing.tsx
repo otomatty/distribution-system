@@ -10,7 +10,7 @@ import {
 import type { DomainError } from "../../domain/result";
 import type { ShortageDetail } from "../../usecases/stock/queries";
 import { paths } from "../paths";
-import { Badge, Field, FormKey, Version, type Option } from "./components";
+import { Badge, ErrorSummary, Field, FormKey, Version, type Option } from "./components";
 import { StockErrorSummary } from "./stock";
 
 const ORDER_BADGE: Readonly<
@@ -92,6 +92,47 @@ export function ReceiptCancelForm(props: {
         </Field>
         <button type="submit" class="btn btn-danger btn-sm">
           入荷を取り消す
+        </button>
+      </form>
+    </details>
+  );
+}
+
+/**
+ * 仕入返品の取消（理由を入力する。発注詳細の仕入返品の欄から開く）。失敗したら、この欄だけを差し替えて理由を出す
+ */
+export function PurchaseReturnCancelForm(props: {
+  orderId: string;
+  returnId: string;
+  number: string;
+  version: number;
+  error?: DomainError | null;
+}) {
+  const id = `return-cancel-${props.returnId}`;
+  const action = paths.purchaseReturnCancel(props.orderId, props.returnId);
+  return (
+    <details id={id} open={props.error ? true : undefined}>
+      <summary class="btn btn-secondary btn-sm">取消</summary>
+      <form
+        method="post"
+        action={action}
+        hx-post={action}
+        hx-target={`#${id}`}
+        hx-swap="outerHTML"
+        class="form"
+      >
+        <ErrorSummary error={props.error} />
+        <FormKey />
+        <Version value={props.version} />
+        <input type="hidden" name="number" value={props.number} />
+        <Field label={`${props.number} の取消の理由`} name={`reason-${props.returnId}`} required>
+          <textarea id={`f-reason-${props.returnId}`} name="reason" rows={2}></textarea>
+        </Field>
+        <p class="hint">
+          在庫は打ち消しの行で戻します。未払いの仕入先請求書から差し引いていれば、請求書から外します。
+        </p>
+        <button type="submit" class="btn btn-danger btn-sm">
+          仕入返品を取り消す
         </button>
       </form>
     </details>

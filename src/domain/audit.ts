@@ -48,6 +48,8 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   pay: "支払",
   cancel_payment: "支払・入金の取消",
   detach_receipt: "入荷の切り離し",
+  detach_return: "仕入返品の切り離し",
+  cancel_purchase_return: "仕入返品の取消",
   attach_pdf: "PDF の添付",
   issue: "発行",
   reissue: "再発行",

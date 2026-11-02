@@ -11,7 +11,7 @@ import {
   updatePurchaseOrder,
   updatePurchaseOrderMemo,
 } from "./purchase-orders";
-import { createPurchaseReturn } from "./purchase-returns";
+import { cancelPurchaseReturnCommand, createPurchaseReturn } from "./purchase-returns";
 import { cancelPurchaseReceipt, receivingSchedule, recordPurchaseReceipt } from "./receipts";
 import {
   attachSupplierInvoicePdf,
@@ -40,6 +40,7 @@ export const purchasingCommands = {
   "receipts.record": recordPurchaseReceipt,
   "receipts.cancel": cancelPurchaseReceipt,
   "purchaseReturns.create": createPurchaseReturn,
+  "purchaseReturns.cancel": cancelPurchaseReturnCommand,
   "supplierInvoices.create": createSupplierInvoice,
   "supplierInvoices.cancel": cancelSupplierInvoiceCommand,
   "supplierInvoices.pay": paySupplierInvoiceCommand,

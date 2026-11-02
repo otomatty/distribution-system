@@ -10,6 +10,7 @@ import { isBusinessDate, paymentDueDate } from "../../domain/dates";
 import { lineAmount, parseYenToCenti, sumAmounts } from "../../domain/money";
 import {
   cancelOrder,
+  cancelPurchaseReturn,
   receiptCancellable,
   canEditOrder,
   confirmOrder,
@@ -584,6 +585,8 @@ export interface PurchaseOrderView {
   };
   /** 取り消せる入荷の ID */
   readonly cancellableReceiptIds: readonly string[];
+  /** 取り消せる仕入返品の ID */
+  readonly cancellableReturnIds: readonly string[];
 }
 
 /** 発注詳細（明細ごとの残り・受入・返品、入荷の履歴、仕入返品、発注書と送付履歴、仕入先請求書） */
@@ -617,6 +620,7 @@ export const getPurchaseOrder = defineQuery({
     const supplier = ctx.stores.partners.get(order.supplierId);
     const receipts = ctx.stores.receipts.listByOrder(id);
     const active = receipts.filter((r) => !r.cancelled);
+    const returns = ctx.stores.purchaseReturns.listByOrder(id);
     const roles = ctx.actor.roles;
     const manage = can(roles, "purchaseOrders.manage");
     const editable = canEditOrder(order.status);
@@ -643,9 +647,12 @@ export const getPurchaseOrder = defineQuery({
             .filter((r) => receiptCancellable(order.status, r.supplierInvoiceStatus).ok)
             .map((r) => r.id)
         : [],
-      returns: ctx.stores.purchaseReturns
-        .listByOrder(id)
-        .map((r) => Object.assign(r, { subtotal: sumAmounts(r.lines) })),
+      cancellableReturnIds: can(roles, "purchaseReturns.manage")
+        ? returns
+            .filter((r) => cancelPurchaseReturn(r.cancelled, r.supplierInvoiceStatus, "取消").ok)
+            .map((r) => r.id)
+        : [],
+      returns: returns.map((r) => Object.assign(r, { subtotal: sumAmounts(r.lines) })),
       documents,
       sends: latest ? ctx.stores.documents.sends(latest.id) : [],
       invoices: ctx.stores.supplierInvoices.invoicesForOrder(id),

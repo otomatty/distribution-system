@@ -1,4 +1,5 @@
 import type { TaxCategory } from "../../domain/money";
+import type { SupplierInvoiceStatus } from "../../domain/purchasing";
 import type { WriteMeta } from "../ports";
 
 /** 仕入返品（入荷後に見つかった不良品など）。在庫から減らし、仕入先請求書の計算額から差し引く */
@@ -27,7 +28,14 @@ export interface PurchaseReturnLineFields {
 export interface PurchaseReturnRecord extends PurchaseReturnFields {
   readonly id: string;
   readonly supplierInvoiceId: string | null;
+  /** 差し引いた仕入先請求書の状態（請求書に入っていなければ null） */
+  readonly supplierInvoiceStatus: SupplierInvoiceStatus | null;
   readonly cancelled: boolean;
+  /** 取消の理由・日時（UTC）・操作者（取り消していなければ null） */
+  readonly cancelReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledByName: string | null;
+  readonly version: number;
   readonly createdAt: string;
   readonly createdByName: string | null;
   readonly locationName: string;
@@ -46,8 +54,11 @@ export interface PurchaseReturnStore {
     lines: readonly (PurchaseReturnLineFields & { id: string })[],
     meta: WriteMeta,
   ): void;
-  /** 発注の仕入返品（返品日・記録の順） */
+  get(id: string): PurchaseReturnRecord | undefined;
+  /** 発注の仕入返品（取り消したものを含む、返品日・記録の順） */
   listByOrder(orderId: string): PurchaseReturnRecord[];
+  /** 版番号が一致し、まだ取り消していないときだけ取消にする（理由・日時・操作者を記録する） */
+  markCancelled(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 発注明細ごとの、取り消していない仕入返品の数の合計（販売単位） */
   returnedByLine(orderId: string): { lineId: string; units: number }[];
 }
