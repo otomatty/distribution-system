@@ -13,6 +13,7 @@ import {
   monthsBetween,
   paymentDueDate,
   plannedShipDate,
+  startOfBusinessDay,
   toBusinessDate,
   validateClosingTerms,
   weekRange,
@@ -99,5 +100,9 @@ describe("dates", () => {
     expect(addMonths("2026-11", -5)).toBe("2026-06");
     expect(addMonths("2026-03", -5)).toBe("2025-10");
     expect(addMonths("2026-11", 2)).toBe("2027-01");
+  });
+  it("業務日の始まりの時刻（UTC）", () => {
+    expect(startOfBusinessDay("2026-11-02")).toBe("2026-11-01T15:00:00.000Z");
+    expect(() => startOfBusinessDay("2026-13-01")).toThrow(RangeError);
   });
 });

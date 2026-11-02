@@ -67,6 +67,7 @@ const NAV: readonly { readonly title: string; readonly items: readonly NavItem[]
     items: [
       { label: "社員管理", href: paths.employees(), permission: "employees.manage" },
       { label: "設定", href: paths.settings(), permission: "settings.manage" },
+      { label: "操作履歴", href: paths.auditLogs(), permission: "platform.admin" },
     ],
   },
 ];

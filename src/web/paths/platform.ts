@@ -16,4 +16,7 @@ export const platformPaths = {
   documentSendRetry: (id: string, sendId: string) =>
     `/documents/${enc(id)}/sends/${enc(sendId)}/retry`,
   documentRerender: (id: string) => `/documents/${enc(id)}/rerender`,
+
+  /** 操作履歴の検索（管理者だけ） */
+  auditLogs: (query?: Query) => withQuery("/audit-logs", query),
 };

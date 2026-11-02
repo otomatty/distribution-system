@@ -22,6 +22,14 @@ function toUtcDate(date: string): Date {
   return new Date(`${date}T00:00:00Z`);
 }
 
+/**
+ * 業務日（日本時間）が始まる時刻を、UTC の ISO 文字列で返す。
+ * 日時（UTC）で保存したもの（操作履歴など）を業務日の範囲で絞り込むときに使う。
+ */
+export function startOfBusinessDay(date: string): string {
+  return new Date(toUtcDate(date).getTime() - JST_OFFSET_MS).toISOString();
+}
+
 export function addDays(date: string, days: number): string {
   const d = toUtcDate(date);
   d.setUTCDate(d.getUTCDate() + days);
