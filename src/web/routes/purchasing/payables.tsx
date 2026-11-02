@@ -108,7 +108,7 @@ async function Results(props: {
           hx-post={paths.payablesBulkPay()}
           hx-target="#results"
           hx-swap="outerHTML"
-          hx-confirm="選んだ仕入先請求書を、それぞれの請求額で支払済みにします。よろしいですか？"
+          hx-confirm="選んだ仕入先請求書を、それぞれの請求額で支払済みにします（請求額が 0 円以下のものは、請求額で精算します）。よろしいですか？"
           class="form"
         >
           <FormKey />

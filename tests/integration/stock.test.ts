@@ -42,7 +42,7 @@ describe("在庫操作の画面", () => {
     const user = await createEmployee(["purchasing"]);
     const html = await (await as(user).get("/stock?reorder=1")).text();
     expect(html).toContain("条件に合う在庫はありません");
-    const csv = await (await as(user).get("/stock/export.csv?reorder=1")).text();
+    const csv = await (await as(user).post("/stock/csv", { _key: newKey(), reorder: "1" })).text();
     expect(csv.split("\r\n").filter((l) => l !== "")).toHaveLength(1);
   });
 
@@ -469,7 +469,7 @@ describe("在庫一覧・在庫明細", () => {
     const alert = alertsAfter.find((x) => x.itemId === low.id);
     expect(alert).toMatchObject({ available: -5, incoming: 12, reorderPoint: 10 });
 
-    const csv = await as(user).get(`/stock/export.csv?q=${encodeURIComponent(tag)}`);
+    const csv = await as(user).post("/stock/csv", { _key: newKey(), q: tag });
     expect(csv.headers.get("Content-Type")).toContain("text/csv");
     expect(csv.headers.get("Content-Disposition")).toContain("filename*=UTF-8''");
     const bytes = new Uint8Array(await csv.arrayBuffer());
@@ -483,7 +483,7 @@ describe("在庫一覧・在庫明細", () => {
     expect(text).toContain("\r\n");
 
     const none = await (
-      await as(user).get(`/stock/export.csv?q=${encodeURIComponent(tag)}&reorder=1&genreId=NOPE`)
+      await as(user).post("/stock/csv", { _key: newKey(), q: tag, reorder: "1", genreId: "NOPE" })
     ).text();
     expect(none.split("\r\n").filter((l) => l !== "")).toHaveLength(1);
   });

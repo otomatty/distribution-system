@@ -3,8 +3,8 @@ import { enc, withQuery, type Query } from "./query";
 /** 在庫の画面 */
 export const stockPaths = {
   stock: (query?: Query) => withQuery("/stock", query),
-  /** 在庫一覧の CSV（在庫一覧と同じ絞り込みの条件） */
-  stockCsv: (query?: Query) => withQuery("/stock/export.csv", query),
+  /** 在庫一覧の CSV（POST。在庫一覧と同じ絞り込みの条件をフォームで送る） */
+  stockCsv: () => "/stock/csv",
   /** 在庫明細（商品ごとの台帳） */
   stockItem: (itemId: string, query?: Query) => withQuery(`/stock/${enc(itemId)}`, query),
   stockOperations: (query?: Query) => withQuery("/stock/operations", query),

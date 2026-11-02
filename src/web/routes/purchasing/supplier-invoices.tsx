@@ -9,6 +9,7 @@ import { TAX_CATEGORY_LABELS } from "../../../domain/money";
 import type { DomainError } from "../../../domain/result";
 import type {
   InvoiceCandidates,
+  SupplierInvoiceListItem,
   SupplierInvoiceView,
 } from "../../../usecases/purchasing/supplier-invoices";
 import { exportCsv } from "../../csv-exports";
@@ -17,9 +18,10 @@ import { NOTICES, redirectTo } from "../../http";
 import { hasPermission } from "../../middleware";
 import { paths, type Query } from "../../paths";
 import type { AppEnv } from "../../types";
-import { runCommand, runQuery } from "../../usecase";
+import { queryAs, runCommand, runQuery } from "../../usecase";
 import {
   Alert,
+  Badge,
   DescriptionList,
   EmptyState,
   ErrorSummary,
@@ -61,6 +63,21 @@ async function supplierOptions(c: Context<AppEnv>): Promise<Option[]> {
 
 // ---- 一覧 ---------------------------------------------------------------------
 
+/** 金額の欄。未入力は undefined、数字でなければ NaN（ユースケースの検証でエラーになる） */
+function amountParam(text: string): number | undefined {
+  const t = text.replaceAll(",", "").trim();
+  if (t === "") return undefined;
+  return /^-?\d+$/.test(t) ? Number(t) : Number.NaN;
+}
+
+function inputValue(v: number | undefined): string {
+  return v === undefined ? "" : String(v);
+}
+
+/**
+ * URL のクエリ・CSV のフォームから、一覧の絞り込み条件を作る（名前は画面と CSV で共通）。
+ * 取引年月日（請求日）・取引金額（請求額）・取引先（仕入先）の範囲と組み合わせで探せる（電子帳簿保存法）
+ */
 function filterFrom(get: (name: string) => string) {
   const text = (name: string) => get(name).trim() || undefined;
   return {
@@ -68,17 +85,25 @@ function filterFrom(get: (name: string) => string) {
     supplierId: text("supplierId"),
     from: text("from"),
     to: text("to"),
+    amountMin: amountParam(get("amountMin")),
+    amountMax: amountParam(get("amountMax")),
     q: text("q"),
   };
 }
 
+const EMPTY_PAGE = { rows: [], total: 0, page: 1, pageSize: 50 };
+
 supplierInvoiceRoutes.get("/", async (c) => {
   const f = filterFrom((name) => c.req.query(name) ?? "");
   const page = Math.max(1, Number(c.req.query("page") ?? "1") || 1);
-  const [result, suppliers] = await Promise.all([
-    runQuery(c, "supplierInvoices.list", { ...f, page, pageSize: 50 }),
+  const [listed, suppliers] = await Promise.all([
+    queryAs(c.env, c.get("actorRef"), "supplierInvoices.list", { ...f, page, pageSize: 50 }),
     supplierOptions(c),
   ]);
+  if (!listed.ok && listed.error.code !== "validation")
+    return c.text(listed.error.message, listed.error.code === "forbidden" ? 403 : 400);
+  const result = listed.ok ? listed.value : EMPTY_PAGE;
+  const errors = listed.ok ? {} : toFormErrors(listed.error);
   const query: Query = { ...f };
   const canManage = hasPermission(c.get("actor").roles, "supplierInvoices.manage");
   return c.html(
@@ -119,11 +144,27 @@ supplierInvoiceRoutes.get("/", async (c) => {
         <Field label="仕入先" name="supplierId">
           <Select name="supplierId" value={f.supplierId} options={suppliers} empty="すべて" />
         </Field>
-        <Field label="請求日（から）" name="from">
-          <Input name="from" type="date" value={f.from} />
+        <Field label="請求日（から）" name="from" error={errors["from"]}>
+          <Input name="from" type="date" value={f.from} error={errors["from"]} />
         </Field>
-        <Field label="請求日（まで）" name="to">
-          <Input name="to" type="date" value={f.to} />
+        <Field label="請求日（まで）" name="to" error={errors["to"]}>
+          <Input name="to" type="date" value={f.to} error={errors["to"]} />
+        </Field>
+        <Field label="請求額（以上）" name="amountMin" error={errors["amountMin"]}>
+          <Input
+            name="amountMin"
+            inputmode="numeric"
+            value={inputValue(f.amountMin)}
+            error={errors["amountMin"]}
+          />
+        </Field>
+        <Field label="請求額（以下）" name="amountMax" error={errors["amountMax"]}>
+          <Input
+            name="amountMax"
+            inputmode="numeric"
+            value={inputValue(f.amountMax)}
+            error={errors["amountMax"]}
+          />
         </Field>
         <noscript>
           <button type="submit" class="btn btn-secondary">
@@ -132,6 +173,7 @@ supplierInvoiceRoutes.get("/", async (c) => {
         </noscript>
       </form>
       <section id="results">
+        {listed.ok ? null : <FilterError error={listed.error} />}
         <div class="toolbar">
           <CsvButton action={paths.supplierInvoicesCsv()} filters={query} />
         </div>
@@ -151,8 +193,25 @@ supplierInvoiceRoutes.get("/", async (c) => {
   );
 });
 
+/** 検索の条件のエラー（絞り込みでは表の部分だけを差し替えるので、項目ごとの内容もここに出す） */
+function FilterError(props: { error: DomainError }) {
+  const fields = props.error.fields ?? [];
+  return (
+    <Alert kind="error">
+      <strong>{props.error.message}</strong>
+      {fields.length > 0 ? (
+        <ul>
+          {fields.map((e) => (
+            <li>{e.message}</li>
+          ))}
+        </ul>
+      ) : null}
+    </Alert>
+  );
+}
+
 export function InvoiceTable(props: {
-  rows: readonly SupplierInvoiceView["invoice"][];
+  rows: readonly SupplierInvoiceListItem[];
   selectable?: boolean;
 }) {
   return (
@@ -196,7 +255,14 @@ export function InvoiceTable(props: {
               <td>
                 <SupplierInvoiceStatusBadge status={i.status} />
               </td>
-              <td class="num">{yen(i.invoicedAmount)}</td>
+              <td class="num">
+                {yen(i.invoicedAmount)}
+                {i.settlement && i.status === "unpaid" ? (
+                  <div>
+                    <Badge kind="info">精算（相殺・返金）</Badge>
+                  </div>
+                ) : null}
+              </td>
               <td class={i.difference === 0 ? "num" : "num text-danger"}>
                 {i.difference === 0 ? "" : yen(i.difference)}
               </td>
@@ -644,6 +710,7 @@ function PayForm(props: {
     memo: "",
   };
   const e = props.error ? toFormErrors(props.error) : {};
+  const settlement = props.view.settlement;
   return (
     <form
       id="si-pay"
@@ -654,15 +721,26 @@ function PayForm(props: {
       hx-swap="outerHTML"
       class="form card"
     >
-      <h2>支払を記録</h2>
+      <h2>{settlement ? "精算を記録（相殺・返金）" : "支払を記録"}</h2>
+      {settlement ? (
+        <p class="hint">
+          請求額が {yen(i.invoicedAmount)}{" "}
+          のため、お金は払いません。請求額と同じ額で精算します（マイナスは、相殺するか返金を受ける額です）。
+        </p>
+      ) : null}
       <ErrorSummary error={props.error} />
       <FormKey />
       <Version value={i.version} />
       <div class="grid-3">
-        <Field label="支払日" name="paidOn" required error={e["paidOn"]}>
+        <Field label={settlement ? "精算日" : "支払日"} name="paidOn" required error={e["paidOn"]}>
           <Input name="paidOn" type="date" value={v.paidOn} />
         </Field>
-        <Field label="支払額（円）" name="amount" required error={e["amount"]}>
+        <Field
+          label={settlement ? "精算額（円・請求額と同じ額）" : "支払額（円）"}
+          name="amount"
+          required
+          error={e["amount"]}
+        >
           <Input name="amount" value={v.amount} inputmode="numeric" />
         </Field>
         <Field label="メモ" name="memo" error={e["memo"]}>
@@ -671,7 +749,7 @@ function PayForm(props: {
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-          支払済みにする
+          {settlement ? "精算する（相殺・返金）" : "支払済みにする"}
         </button>
       </div>
     </form>

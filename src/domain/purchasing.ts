@@ -1,5 +1,6 @@
 /** 発注・入荷・仕入先請求書のルール（要件定義書 3.5〜3.7、4章）。 */
 import {
+  formatYen,
   lineAmount,
   rateOn,
   roundRatio,
@@ -169,14 +170,37 @@ export interface ReceiptChange<L extends PurchaseOrderLineState> {
 }
 
 /**
+ * 入荷の進み具合と支払の状況から決まる、発注済み以降の発注の状態（入荷の記録・入荷の取消・支払・支払の取消・
+ * 請求書の取消のたびに、この関数で決め直す）。
+ * - どれかの明細に残りがあれば発注済み（分納の途中）
+ * - 全明細の残りが 0（全数がそろったか、残りを打ち切った）なら入荷済み
+ * - ただし、受入のある入荷（取り消したものを除く）のうち支払済みの請求書に入っていないものが1件もなければ、
+ *   支払うものが残っていないので支払済みにする。受入のある入荷がすべて支払済みの場合と、受入のある入荷が
+ *   1件もない場合（全数をその場で返品した、受入 0 で打ち切った）を含む。受入のない入荷は請求書に載せられない
+ *   （仕入先請求書の対象は受入のある入荷だけ）ので、こうしないと支払済みになる手段がない
+ * unpaidAcceptedReceipts は、その時点の「受入があり、支払済みの請求書に入っていない入荷」の件数。
+ */
+export function settledOrderStatus(
+  lines: readonly PurchaseOrderLineState[],
+  unpaidAcceptedReceipts: number,
+): "ordered" | "received" | "paid" {
+  if (lines.some((l) => remainingQuantity(l) > 0)) return "ordered";
+  return unpaidAcceptedReceipts > 0 ? "received" : "paid";
+}
+
+/**
  * 入荷の記録を検証し、記録後の明細の状態と発注の状態を返す。
  * 全明細の残りが 0 になれば入荷済み、そうでなければ発注済みのまま（分納）。
+ * 残りが 0 になっても、支払うものが残っていなければ支払済み（settledOrderStatus）。
+ * unpaidAcceptedReceipts は記録の前の「受入があり、支払済みの請求書に入っていない入荷」の件数で、
+ * この入荷に受入があれば1件を足して判定する。
  * changes は受入数・返品数・打ち切りのあった明細（明細の順）。
  */
 export function recordReceipt<L extends PurchaseOrderLineState>(
   status: PurchaseOrderStatus,
   lines: readonly L[],
   inputs: readonly ReceiptLineInput[],
+  unpaidAcceptedReceipts: number,
 ): Result<{ lines: L[]; status: PurchaseOrderStatus; changes: ReceiptChange<L>[] }> {
   if (status !== "ordered") return err("invalid_state", "発注済みの発注だけに入荷を記録できます");
   const byId = new Map(inputs.map((i) => [i.lineId, i]));
@@ -217,20 +241,44 @@ export function recordReceipt<L extends PurchaseOrderLineState>(
   }
   if (changes.length === 0)
     return err("validation", "受入数・返品数・打ち切りのいずれかを入力してください");
-  const done = next.every((l) => remainingQuantity(l) === 0);
-  return ok({ lines: next, status: done ? "received" : "ordered", changes });
+  const accepted = changes.some((c) => c.accepted > 0) ? 1 : 0;
+  return ok({
+    lines: next,
+    status: settledOrderStatus(next, unpaidAcceptedReceipts + accepted),
+    changes,
+  });
 }
 
-/** 入荷を取り消したときの発注の状態。支払済みの請求書に含まれる入荷は取り消せない。 */
-export function cancelReceipt(
+/**
+ * 入荷を取り消せるか。支払済みの請求書に含まれる入荷と、支払済み（以降）の発注の入荷は取り消せない
+ * （要件定義書 3.6「支払済みになる前なら取り消せる」）。
+ */
+export function receiptCancellable(
   status: PurchaseOrderStatus,
   includedInPaidInvoice: boolean,
-): Result<"ordered"> {
+): Result<true> {
   if (includedInPaidInvoice)
     return err("invalid_state", "支払済みの請求書に含まれる入荷は取り消せません");
   if (status !== "ordered" && status !== "received")
     return err("invalid_state", "この発注の入荷は取り消せません");
-  return ok("ordered");
+  return ok(true);
+}
+
+/**
+ * 入荷を取り消したときの発注の状態。取り消した後の明細（revertReceipt の結果）から決める
+ * （settledOrderStatus）。ほかの入荷の打ち切りが残っていて全明細の残りが 0 なら入荷済みのまま
+ * （発注済みに戻すと、残りが 0 のまま次の入荷を記録できなくなる）。
+ * unpaidAcceptedReceiptsAfter は、取り消した後の「受入があり、支払済みの請求書に入っていない入荷」の件数。
+ */
+export function cancelReceipt(
+  status: PurchaseOrderStatus,
+  includedInPaidInvoice: boolean,
+  linesAfter: readonly PurchaseOrderLineState[],
+  unpaidAcceptedReceiptsAfter: number,
+): Result<"ordered" | "received" | "paid"> {
+  const cancellable = receiptCancellable(status, includedInPaidInvoice);
+  if (!cancellable.ok) return cancellable;
+  return ok(settledOrderStatus(linesAfter, unpaidAcceptedReceiptsAfter));
 }
 
 /** 入荷1件の明細（取消のときに発注の明細へ戻す値） */
@@ -431,9 +479,36 @@ export function registerSupplierInvoice(receiptCount: number): Result<"unpaid"> 
   return ok("unpaid");
 }
 
-/** 支払（未払い → 支払済み）。支払額は1円以上 */
-export function paySupplierInvoice(status: SupplierInvoiceStatus, amount: number): Result<"paid"> {
+/**
+ * 請求額が 0 円以下の請求書は、お金を払うのではなく「精算」する（相殺・返金を受ける）。
+ * 仕入返品が入荷より多い請求書（請求額がマイナス）や、入荷と返品が同じ額の請求書（0 円）がこれにあたる。
+ */
+export function isSettlementInvoice(invoicedAmount: number): boolean {
+  return invoicedAmount <= 0;
+}
+
+/**
+ * 支払（未払い → 支払済み）。
+ * - 請求額が 1 円以上の請求書：支払額は 1 円以上（請求額と違ってもよい。差額は経理が確かめる）
+ * - 請求額が 0 円以下の請求書：支払額は請求額と同じ額でなければならない（0 円、またはマイナス = 相殺・返金を受ける額）。
+ *   仕入返品が入荷より多い月の請求書は、請求額をマイナスで登録できる（3.7 の計算額 = 受入数 × 単価 + 送料 − 仕入返品）。
+ *   支払額を1円以上に限ると、この請求書は未払いのまま支払予定と期限超過に残り続け、対象の発注も支払済みにならない。
+ *   精算の額を請求額と同じにするのは、買掛残高（請求額 − 支払額）をちょうど 0 にするため。0 円以下の請求書の
+ *   一部だけを精算する、という支払はありえないので、ほかの額は受け付けない。一括支払いも同じ規則で、請求額で精算する
+ */
+export function paySupplierInvoice(
+  status: SupplierInvoiceStatus,
+  invoicedAmount: number,
+  amount: number,
+): Result<"paid"> {
   if (status !== "unpaid") return err("invalid_state", "未払いの請求書だけを支払えます");
+  if (isSettlementInvoice(invoicedAmount)) {
+    if (amount !== invoicedAmount) {
+      const message = `請求額が ${formatYen(invoicedAmount)} 円の請求書は、請求額と同じ額（${formatYen(invoicedAmount)} 円）で精算してください`;
+      return err("validation", message, { fields: [{ field: "amount", message }] });
+    }
+    return ok("paid");
+  }
   if (!Number.isInteger(amount) || amount <= 0)
     return err("validation", "支払額は1円以上の整数で入力してください", {
       fields: [{ field: "amount", message: "支払額は1円以上で入力してください" }],
@@ -470,20 +545,18 @@ export function cancelSupplierInvoice(
 }
 
 /**
- * 請求書を支払ったときの発注の状態（入荷済み → 支払済み）。
- * 発注の入荷（取り消したものを除く）がすべて支払済みの請求書に入ったときだけ支払済みにする。
- * 分納の途中（発注済み）なら変えない。
+ * 請求書の支払・支払の取消・請求書の取消のあとの発注の状態（settledOrderStatus で決め直す）。
+ * - 支払：入荷済みの発注は、受入のある入荷がすべて支払済みの請求書に入れば支払済み。分納の途中（発注済み）なら変えない
+ * - 支払の取消：支払済みの発注は、未払いに戻った入荷があるので入荷済みに戻る
+ * 作成中・取消の発注（入荷がないので、請求書に結びつかない）は変えない。
  */
-export function orderStatusAfterInvoicePaid(
+export function orderStatusAfterPaymentChange(
   status: PurchaseOrderStatus,
-  allReceiptsPaid: boolean,
+  lines: readonly PurchaseOrderLineState[],
+  unpaidAcceptedReceipts: number,
 ): PurchaseOrderStatus {
-  return status === "received" && allReceiptsPaid ? "paid" : status;
-}
-
-/** 支払を取り消したときの発注の状態（支払済み → 入荷済み） */
-export function orderStatusAfterPaymentCancelled(status: PurchaseOrderStatus): PurchaseOrderStatus {
-  return status === "paid" ? "received" : status;
+  if (status === "draft" || status === "cancelled") return status;
+  return settledOrderStatus(lines, unpaidAcceptedReceipts);
 }
 
 export interface PayableMonth {

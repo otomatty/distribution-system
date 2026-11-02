@@ -15,6 +15,7 @@ import {
   bulkShip,
   cancelShipmentCommand,
   checkBulkShipment,
+  deliveryNoteDefaultDate,
   listUnbilledShipments,
   shippingList,
   shipSalesOrderCommand,
@@ -39,5 +40,6 @@ export const salesQueries = {
   "shipping.list": shippingList,
   "shipping.check": checkBulkShipment,
   "shipments.unbilled": listUnbilledShipments,
+  "shipments.deliveryNoteDate": deliveryNoteDefaultDate,
   "sales.dashboard": salesDashboard,
 } as const;

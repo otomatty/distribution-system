@@ -138,13 +138,15 @@ export const updatePartnerTerms = defineCommand({
           },
         );
       }
-      const message = validateClosingTerms({
+      const invalid = validateClosingTerms({
         closingDay: terms.closingDay,
         paymentMonthOffset: terms.paymentMonthOffset,
         paymentDay: terms.paymentDay,
       });
-      if (message)
-        return err("validation", message, { fields: [{ field: "terms.closingDay", message }] });
+      if (invalid)
+        return err("validation", invalid.message, {
+          fields: [{ field: `terms.${invalid.field}`, message: invalid.message }],
+        });
     }
     const updated = ctx.stores.partners.update(id, v, terms, {
       at: ctx.clock.now().toISOString(),

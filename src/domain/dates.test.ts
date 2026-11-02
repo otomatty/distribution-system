@@ -70,6 +70,44 @@ describe("dates", () => {
       validateClosingTerms({ closingDay: 20, paymentMonthOffset: 1, paymentDay: 0 }),
     ).toBeDefined();
   });
+  it("当月払いで支払日が締め日より前の条件は、締め処理ができないので拒否する（31 は月末）", () => {
+    expect(validateClosingTerms({ closingDay: 20, paymentMonthOffset: 0, paymentDay: 10 })).toEqual(
+      {
+        field: "paymentDay",
+        message:
+          "当月払いの支払日は締め日（20日）以降にしてください。締め日より前の支払日にするなら、支払月を翌月以降にしてください",
+      },
+    );
+    expect(
+      validateClosingTerms({ closingDay: 31, paymentMonthOffset: 0, paymentDay: 28 })?.message,
+    ).toContain("締め日（月末）以降");
+    for (const ok of [
+      { closingDay: 20, paymentMonthOffset: 0, paymentDay: 20 },
+      { closingDay: 20, paymentMonthOffset: 0, paymentDay: 31 },
+      { closingDay: 31, paymentMonthOffset: 0, paymentDay: 31 },
+      { closingDay: 20, paymentMonthOffset: 1, paymentDay: 10 },
+    ])
+      expect(validateClosingTerms(ok)).toBeUndefined();
+    expect(
+      validateClosingTerms({ closingDay: 29, paymentMonthOffset: 1, paymentDay: 31 })?.field,
+    ).toBe("closingDay");
+    expect(
+      validateClosingTerms({ closingDay: 20, paymentMonthOffset: 3, paymentDay: 10 })?.field,
+    ).toBe("paymentMonthOffset");
+  });
+  it("受け付けた条件なら、締め日の支払期限は締め期間の終わり以降になる（性質）", () => {
+    const days = [...Array.from({ length: 28 }, (_, i) => i + 1), 31];
+    for (const closingDay of days)
+      for (const paymentDay of days)
+        for (const paymentMonthOffset of [0, 1, 2]) {
+          const terms = { closingDay, paymentMonthOffset, paymentDay };
+          if (validateClosingTerms(terms)) continue;
+          for (const date of ["2026-01-15", "2026-02-10", "2026-02-28", "2026-12-31"]) {
+            const { to } = closingPeriod(date, closingDay);
+            expect(paymentDueDate(to, terms) >= to).toBe(true);
+          }
+        }
+  });
   it("出荷予定日と表記", () => {
     expect(plannedShipDate("2026-11-05", 2)).toBe("2026-11-03");
     expect(plannedShipDate("2026-11-05", -1)).toBe("2026-11-05");

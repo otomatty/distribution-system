@@ -114,8 +114,8 @@ export interface StockStore {
   entriesBySource(sourceType: StockSourceType, sourceId: string): LedgerEntry[];
 
   // ---- 画面用の照会 ----
+  /** 商品コード・保管場所の順（ページを分けて読んでも行が重ならない順） */
   listBalances(filter: StockListFilter, page: number, pageSize: number): Page<StockListRow>;
-  allBalances(filter: StockListFilter, limit: number): StockListRow[];
   reorderCandidates(): ReorderCandidate[];
   openPurchaseLines(itemIds?: readonly string[]): OpenPurchaseLine[];
   /** 期間の前の残高（opening）と、期間内の行（業務日・記録順） */

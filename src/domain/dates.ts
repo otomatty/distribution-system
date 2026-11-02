@@ -165,11 +165,35 @@ function validDay(d: number): boolean {
   return Number.isInteger(d) && ((d >= 1 && d <= 28) || d === 31);
 }
 
-export function validateClosingTerms(terms: ClosingTerms): string | undefined {
-  if (!validDay(terms.closingDay)) return "締め日は1〜28日または月末（31）で指定してください";
-  if (!validDay(terms.paymentDay)) return "支払日は1〜28日または月末（31）で指定してください";
+/** 締め日・支払日の表記（31 は月末） */
+function dayLabel(day: number): string {
+  return day === 31 ? "月末" : `${day}日`;
+}
+
+/**
+ * 取引条件の検証。正しくなければ、エラーのある項目と内容を返す。
+ * 当月払い（支払月 0）で支払日が締め日より前（例：20日締め・当月10日払い）だと、支払期限が締め期間の
+ * 終わり（締め日）より前になり、締め処理の請求書の支払期限が発行日より前になって締め処理ができない
+ * （billing の validateIssueDates）。31 は月末で、どの日よりも後として比べる（月末締め・当月28日払いも拒否する。
+ * 2月以外は支払日が月末より前になるため）。支払日が締め日と同じ日（当月末締め・当月末払いなど）はよい
+ */
+export function validateClosingTerms(
+  terms: ClosingTerms,
+): { field: keyof ClosingTerms; message: string } | undefined {
+  if (!validDay(terms.closingDay))
+    return { field: "closingDay", message: "締め日は1〜28日または月末（31）で指定してください" };
+  if (!validDay(terms.paymentDay))
+    return { field: "paymentDay", message: "支払日は1〜28日または月末（31）で指定してください" };
   if (![0, 1, 2].includes(terms.paymentMonthOffset))
-    return "支払月は当月・翌月・翌々月から選んでください";
+    return {
+      field: "paymentMonthOffset",
+      message: "支払月は当月・翌月・翌々月から選んでください",
+    };
+  if (terms.paymentMonthOffset === 0 && terms.paymentDay < terms.closingDay)
+    return {
+      field: "paymentDay",
+      message: `当月払いの支払日は締め日（${dayLabel(terms.closingDay)}）以降にしてください。締め日より前の支払日にするなら、支払月を翌月以降にしてください`,
+    };
   return undefined;
 }
 

@@ -550,18 +550,30 @@ function TermsForm(props: {
             value={s("closingDay")}
             options={DAY_OPTIONS}
             empty="設定しない"
+            error={props.errors["terms.closingDay"]}
           />
         </Field>
-        <Field label="支払月" name="paymentMonthOffset">
+        <Field
+          label="支払月"
+          name="paymentMonthOffset"
+          error={props.errors["terms.paymentMonthOffset"]}
+        >
           <Select
             name="paymentMonthOffset"
             value={s("paymentMonthOffset")}
             options={MONTH_OFFSET_OPTIONS}
             empty="—"
+            error={props.errors["terms.paymentMonthOffset"]}
           />
         </Field>
-        <Field label="支払日" name="paymentDay">
-          <Select name="paymentDay" value={s("paymentDay")} options={DAY_OPTIONS} empty="—" />
+        <Field label="支払日" name="paymentDay" error={props.errors["terms.paymentDay"]}>
+          <Select
+            name="paymentDay"
+            value={s("paymentDay")}
+            options={DAY_OPTIONS}
+            empty="—"
+            error={props.errors["terms.paymentDay"]}
+          />
         </Field>
         <Field
           label="登録番号（インボイス）"
@@ -577,6 +589,7 @@ function TermsForm(props: {
       </div>
       <p class="hint">
         締め日を設定すると、支払予定日・支払期限を自動で計算し、販売先は月締めで請求します。
+        当月払いの支払日は締め日以降にしてください。
       </p>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">
