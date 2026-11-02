@@ -3,10 +3,44 @@
  * 受注詳細の「メーカー直の発注」の欄と、発注の作成画面の説明・仕入先の選択。値はユースケースの結果を表示するだけ。
  */
 import type { MakerDirectDraft, MakerDirectPlan } from "../../usecases/purchasing/maker-direct";
+import type { LinkedPurchaseOrder } from "../../usecases/sales/orders";
 import { paths } from "../paths";
 import { Alert, Badge, EmptyState } from "./components";
 import { qty, yen } from "./format";
 import { OrderStatusBadge } from "./purchasing";
+
+/**
+ * 受注の取消・編集・分割で、受注から作った（取り消していない）発注を知らせる。発注は自動では取り消さない。
+ * source を渡すと「分割元の受注 SO-… から作った発注」と書く（分割した受注の詳細で出すとき）
+ */
+export function LinkedPurchaseOrdersNotice(props: {
+  orders: readonly LinkedPurchaseOrder[];
+  source?: { readonly id: string; readonly number: string } | null | undefined;
+}) {
+  if (props.orders.length === 0) return null;
+  const source = props.source ?? null;
+  return (
+    <Alert kind="warning">
+      <p class="linked-po-notice">
+        {source ? (
+          <>
+            分割元の受注 <a href={paths.salesOrder(source.id)}>{source.number}</a> から
+          </>
+        ) : (
+          "この受注から"
+        )}
+        作った発注が{props.orders.length}件あります（
+        {props.orders.map((o, i) => (
+          <>
+            {i > 0 ? "、" : ""}
+            <a href={paths.purchaseOrder(o.id)}>{o.number}</a>
+          </>
+        ))}
+        ）。必要なら発注も取り消してください
+      </p>
+    </Alert>
+  );
+}
 
 /** 受注詳細の欄：受注から作った発注（両方向のリンク）と、仕入先ごとの「発注を作る」 */
 export function MakerDirectOrders(props: { plan: MakerDirectPlan }) {

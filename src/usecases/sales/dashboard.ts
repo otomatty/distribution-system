@@ -13,7 +13,8 @@ export interface SalesDashboard extends SalesDashboardCounts {
 }
 
 /**
- * 今日の出荷予定（保管場所別の件数）、出荷可能数が足りない受注、出荷予定日を過ぎた未発送の受注。
+ * 今日までの出荷予定（保管場所別の件数。発送リストと同じく出荷予定日を過ぎた未発送の受注を含み、そのうちの遅れの件数も数える）、
+ * 出荷可能数が足りない受注、出荷予定日を過ぎた未発送の受注。
  * 今日の入荷予定は仕入の区分の照会で数える（受注の区分では数えない）。
  */
 export const salesDashboard = defineQuery({

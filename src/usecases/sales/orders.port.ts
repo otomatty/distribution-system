@@ -143,11 +143,15 @@ export interface ShippingOrder {
 }
 
 export interface SalesDashboardCounts {
-  /** 今日が出荷予定日の受注済みの受注（保管場所ごと。メーカー直は locationId が null） */
+  /**
+   * 出荷予定日が今日までの受注済みの受注（保管場所ごと。メーカー直は locationId が null）。
+   * 発送リストと同じく、出荷予定日を過ぎた（遅れの）受注も含め、そのうちの件数を overdue に持つ
+   */
   readonly shipPlanned: readonly {
     readonly locationId: string | null;
     readonly locationName: string;
     readonly count: number;
+    readonly overdue: number;
   }[];
   /** 出荷可能数が足りない受注（発送前） */
   readonly shortage: number;
@@ -181,9 +185,9 @@ export interface SalesOrderStore {
   /** 明細を入れ替える（並びは渡した順。ID は呼び出し側で決める） */
   replaceLines(orderId: string, lines: readonly SalesOrderLineFields[]): void;
   replaceCharges(orderId: string, charges: readonly SalesChargeFields[]): void;
-  /** 出荷予定日 × 保管場所の受注済みの受注（受注番号の順） */
-  forShipping(shipPlannedOn: string, locationId: string): ShippingOrder[];
-  /** 出荷予定日 × 保管場所で発送済みの受注の ID */
-  shippedIds(shipPlannedOn: string, locationId: string): string[];
+  /** 保管場所の受注済みの受注（メーカー直を除く）で、出荷予定日が date までのもの（受注番号の順） */
+  forShipping(date: string, locationId: string): ShippingOrder[];
+  /** 保管場所の発送済みの受注のうち、出荷予定日が date までで、date に発送した（有効な発送の発送日）ものの ID */
+  shippedIds(date: string, locationId: string): string[];
   dashboard(today: string): SalesDashboardCounts;
 }

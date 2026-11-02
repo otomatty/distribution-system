@@ -1,7 +1,10 @@
 /**
  * 発送リスト（要件定義書 3.9、5章 発送リスト。倉庫のタブレット対応）。
- * 出荷予定日 × 保管場所で、行が商品・列が販売先・右端が合計の表。印刷（A4 横、販売先が多ければ列を分けて複数ページ）、
- * 販売先ごとの仕分けリスト、一括発送（確認してから1つのトランザクションで実行）、納品書の一括 PDF。
+ * 出荷予定日 × 保管場所で、行が商品・列が販売先・右端が合計の表。選んだ日までに出荷予定日が来た未発送の受注をすべて出し、
+ * 出荷予定日を過ぎたもの（遅れ）は表の上の要約・列の見出し・一括発送の表で「遅れ」と示す。
+ * 印刷（A4 横、販売先が多ければ列を分けて複数ページ）、販売先ごとの仕分けリスト、一括発送（確認してから
+ * 1つのトランザクションで実行。在庫が足りない受注・受注日が発送日より後の受注は外して続けられる）、納品書の一括 PDF は、
+ * どれも画面と同じ受注を対象にする。
  */
 import { Hono, type Context } from "hono";
 import type { Child } from "hono/jsx";
@@ -80,9 +83,26 @@ function Matrix(props: { list: ShippingList }) {
               現在庫
             </th>
             {list.customers.map((cu) => (
-              <th class="num customer-col" scope="col" data-customer={cu.id}>
+              <th
+                class={cu.overdue ? "num customer-col overdue-col" : "num customer-col"}
+                scope="col"
+                data-customer={cu.id}
+              >
                 {cu.name}
-                <div class="muted small">{cu.orders.map((o) => o.number).join(" ")}</div>
+                {cu.overdue ? (
+                  <>
+                    {" "}
+                    <Badge kind="danger">遅れ</Badge>
+                  </>
+                ) : null}
+                <div class="muted small">
+                  {cu.orders.map((o) => (
+                    <div>
+                      {o.number}
+                      {o.overdue ? `（遅れ：出荷予定日 ${o.shipPlannedOn}）` : ""}
+                    </div>
+                  ))}
+                </div>
               </th>
             ))}
             <th class="num total-col" scope="col">
@@ -127,9 +147,32 @@ function Matrix(props: { list: ShippingList }) {
   );
 }
 
+/** 出荷予定日を過ぎた未発送の受注（遅れ）の要約。表の上に出す */
+function OverdueSummary(props: { list: ShippingList }) {
+  const overdue = props.list.overdueOrders;
+  if (overdue.length === 0) return null;
+  return (
+    <Alert kind="warning">
+      <strong>
+        <Badge kind="danger">遅れ</Badge> 出荷予定日を過ぎた未発送の受注が {overdue.length}{" "}
+        件あります（この表と一括発送に含みます）。
+      </strong>
+      <ul class="overdue-list">
+        {overdue.map((o) => (
+          <li>
+            <a href={paths.salesOrder(o.id)}>{o.number}</a>（{o.customerName}）：出荷予定日{" "}
+            {o.shipPlannedOn}
+          </li>
+        ))}
+      </ul>
+    </Alert>
+  );
+}
+
 function BulkForm(props: { list: ShippingList }) {
   const { list } = props;
   const short = new Set(list.shortOrderIds);
+  const tooEarly = new Set(list.tooEarlyOrderIds);
   return (
     <form
       id="bulk-form"
@@ -148,13 +191,22 @@ function BulkForm(props: { list: ShippingList }) {
               <th>発送する</th>
               <th>受注番号</th>
               <th>販売先</th>
+              <th>出荷予定日</th>
               <th class="num">明細</th>
               <th>在庫</th>
             </tr>
           </thead>
           <tbody>
             {list.orders.map((o) => (
-              <tr class={short.has(o.id) ? "row-warning" : undefined}>
+              <tr
+                class={
+                  short.has(o.id) || tooEarly.has(o.id)
+                    ? "row-warning"
+                    : o.overdue
+                      ? "row-danger"
+                      : undefined
+                }
+              >
                 <td>
                   <input
                     class="big-check"
@@ -169,8 +221,20 @@ function BulkForm(props: { list: ShippingList }) {
                   <a href={paths.salesOrder(o.id)}>{o.number}</a>
                 </td>
                 <td>{o.customerName}</td>
+                <td class="nowrap">
+                  {o.shipPlannedOn}
+                  {o.overdue ? (
+                    <>
+                      {" "}
+                      <Badge kind="danger">遅れ</Badge>
+                    </>
+                  ) : null}
+                </td>
                 <td class="num">{o.lineCount}</td>
-                <td>{short.has(o.id) ? <Badge kind="warning">在庫不足</Badge> : null}</td>
+                <td>
+                  {short.has(o.id) ? <Badge kind="warning">在庫不足</Badge> : null}
+                  {tooEarly.has(o.id) ? <Badge kind="warning">受注日が今日より後</Badge> : null}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -204,7 +268,22 @@ function ShortageList(props: { check: BulkCheck }) {
   );
 }
 
-/** 一括発送の確認。対象と件数を示し、在庫が足りない受注は「外して続ける」か「中止」を選ぶ */
+/** 外して続けるボタンの文言（在庫が足りない受注・受注日が発送日より後の受注） */
+function continueLabel(check: BulkCheck): string {
+  const n = check.shippable.length;
+  const reasons = [
+    ...(check.short.length > 0 ? [`在庫が足りない ${check.short.length} 件`] : []),
+    ...(check.tooEarly.length > 0 ? [`受注日が発送日より後の ${check.tooEarly.length} 件`] : []),
+  ];
+  return reasons.length > 0
+    ? `${reasons.join("・")}を外して続ける（${n} 件を発送）`
+    : `${n} 件を発送する`;
+}
+
+/**
+ * 一括発送の確認。対象と件数を示し、在庫が足りない受注・受注日が発送日より後の受注は「外して続ける」か「中止」を選ぶ。
+ * 発送日を変えると、その日で確かめ直す（受注日が発送日より後の受注が変わる）
+ */
 function ConfirmPanel(props: {
   check: BulkCheck;
   date: string;
@@ -215,6 +294,24 @@ function ConfirmPanel(props: {
   const n = check.shippable.length;
   const today = toBusinessDate(new Date());
   const cancel = paths.shipping({ date: props.date, locationId: props.locationId });
+  const all = [...check.shippable, ...check.short, ...check.tooEarly];
+  const dateField = (
+    <div
+      hx-post={paths.shippingBulkConfirm()}
+      hx-trigger="change"
+      hx-target="closest .confirm-panel"
+      hx-swap="outerHTML"
+    >
+      <Field
+        label="発送日"
+        name="shippedOn"
+        required
+        hint="変えると、その日で発送できるか確かめ直します（受注日より前の日には発送できません）"
+      >
+        <Input name="shippedOn" type="date" value={check.shippedOn} max={today} />
+      </Field>
+    </div>
+  );
   return (
     <div class="card confirm-panel" role="region" aria-label="一括発送の確認">
       <h2>一括発送の確認</h2>
@@ -236,60 +333,77 @@ function ConfirmPanel(props: {
           <ShortageList check={check} />
         </Alert>
       ) : null}
+      {check.tooEarly.length > 0 ? (
+        <Alert kind="warning">
+          <strong>
+            受注日が発送日（{check.shippedOn}）より後の受注が {check.tooEarly.length}{" "}
+            件あります。この発送日では発送できません。
+          </strong>
+          <ul class="shortage-list">
+            {check.tooEarly.map((o) => (
+              <li>
+                {o.number}（{o.customerName}）：受注日 {o.orderedOn}
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      ) : null}
       {check.ineligibleIds.length > 0 ? (
         <Alert kind="info">
           発送済み・取消などで対象外の受注が {check.ineligibleIds.length} 件あります（除きます）。
         </Alert>
       ) : null}
-      {n === 0 ? (
-        <>
-          <p>発送できる受注がありません。</p>
-          <a class="btn btn-secondary btn-lg" href={cancel}>
-            中止
-          </a>
-        </>
-      ) : (
-        <form
-          method="post"
-          action={paths.shippingBulkShip()}
-          hx-post={paths.shippingBulkShip()}
-          hx-target="#shipping-results"
-          hx-swap="outerHTML"
-        >
-          <FormKey />
-          <input type="hidden" name="date" value={props.date} />
-          <input type="hidden" name="locationId" value={props.locationId} />
-          {[...check.shippable, ...check.short].map((o) => (
-            <>
-              <input type="hidden" name="orderId" value={o.id} />
-              <input type="hidden" name="orderVersion" value={String(o.version)} />
-            </>
-          ))}
-          {check.short.map((o) => (
-            <input type="hidden" name="excludeId" value={o.id} />
-          ))}
-          <p class="confirm-count">
-            <strong>{n} 件</strong>
-            の受注を発送します。引当を外して在庫を減らし、納品書を発行します。
-          </p>
-          <p class="small">
-            {check.shippable.map((o) => `${o.number}（${o.customerName}）`).join("、")}
-          </p>
-          <Field label="発送日" name="shippedOn" required>
-            <Input name="shippedOn" type="date" value={today} max={today} />
-          </Field>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-lg">
-              {check.short.length > 0
-                ? `在庫が足りない ${check.short.length} 件を外して続ける（${n} 件を発送）`
-                : `${n} 件を発送する`}
-            </button>
+      <form
+        method="post"
+        action={paths.shippingBulkShip()}
+        hx-post={paths.shippingBulkShip()}
+        hx-target="#shipping-results"
+        hx-swap="outerHTML"
+      >
+        <FormKey />
+        <input type="hidden" name="date" value={props.date} />
+        <input type="hidden" name="locationId" value={props.locationId} />
+        {all.map((o) => (
+          <>
+            <input type="hidden" name="orderId" value={o.id} />
+            <input type="hidden" name="orderVersion" value={String(o.version)} />
+          </>
+        ))}
+        {check.short.map((o) => (
+          <input type="hidden" name="excludeId" value={o.id} />
+        ))}
+        {check.tooEarly.map((o) => (
+          <input type="hidden" name="excludeEarlyId" value={o.id} />
+        ))}
+        {n === 0 ? (
+          <>
+            <p>この発送日で発送できる受注がありません。</p>
+            {check.tooEarly.length > 0 ? dateField : null}
             <a class="btn btn-secondary btn-lg" href={cancel}>
               中止
             </a>
-          </div>
-        </form>
-      )}
+          </>
+        ) : (
+          <>
+            <p class="confirm-count">
+              <strong>{n} 件</strong>
+              の受注を発送します。引当を外して在庫を減らし、納品書を発行します。
+            </p>
+            <p class="small">
+              {check.shippable.map((o) => `${o.number}（${o.customerName}）`).join("、")}
+            </p>
+            {dateField}
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary btn-lg">
+                {continueLabel(check)}
+              </button>
+              <a class="btn btn-secondary btn-lg" href={cancel}>
+                中止
+              </a>
+            </div>
+          </>
+        )}
+      </form>
     </div>
   );
 }
@@ -314,12 +428,23 @@ function DeliveryNotesButton(props: {
   );
 }
 
-function ShippedPanel(props: { shipped: readonly ShipResult[]; excluded: number; name: string }) {
+function ShippedPanel(props: {
+  shipped: readonly ShipResult[];
+  /** 外した受注の件数（在庫が足りない・受注日が発送日より後） */
+  excluded: { short: number; tooEarly: number };
+  name: string;
+}) {
+  const reasons = [
+    ...(props.excluded.short > 0 ? [`在庫が足りない ${props.excluded.short} 件`] : []),
+    ...(props.excluded.tooEarly > 0
+      ? [`受注日が発送日より後の ${props.excluded.tooEarly} 件`]
+      : []),
+  ];
   return (
     <div class="card" role="status">
       <Alert kind="success">
         {props.shipped.length} 件を発送しました
-        {props.excluded > 0 ? `（在庫が足りない ${props.excluded} 件は外しました）` : ""}。納品書：
+        {reasons.length > 0 ? `（${reasons.join("・")}は外しました）` : ""}。納品書：
         {props.shipped.map((s) => s.deliveryNoteNumber).join("、")}
       </Alert>
       <DeliveryNotesButton
@@ -355,11 +480,17 @@ function Results(props: {
         <>
           <div class="toolbar">
             <p class="shipping-summary">
-              {jaDate(list.date)}・{list.locationName}：受注 {list.orders.length} 件・販売先{" "}
-              {list.customers.length} 件
+              {jaDate(list.date)}までの出荷予定・{list.locationName}：受注 {list.orders.length}{" "}
+              件・販売先 {list.customers.length} 件
               {list.shippedShipmentIds.length > 0
                 ? `（発送済み ${list.shippedShipmentIds.length} 件）`
                 : ""}
+              {list.overdueOrders.length > 0 ? (
+                <>
+                  {" "}
+                  <Badge kind="danger">遅れ {list.overdueOrders.length} 件</Badge>
+                </>
+              ) : null}
             </p>
             <a
               class="btn btn-secondary btn-lg"
@@ -384,9 +515,10 @@ function Results(props: {
             />
           </div>
           {list.orders.length === 0 ? (
-            <EmptyState message="この日に発送する受注はありません" />
+            <EmptyState message="この日までに発送する受注はありません" />
           ) : (
             <>
+              <OverdueSummary list={list} />
               <Matrix list={list} />
               <h2>一括発送</h2>
               {props.canShip ? (
@@ -426,7 +558,11 @@ function ShippingPage(props: {
         hx-push-url="true"
         hx-trigger="change"
       >
-        <Field label="出荷予定日" name="date">
+        <Field
+          label="出荷予定日"
+          name="date"
+          hint="この日までに出荷予定日が来た未発送の受注を出します（過ぎたものは「遅れ」）"
+        >
           <Input name="date" type="date" value={props.date} />
         </Field>
         <Field label="保管場所" name="locationId">
@@ -466,13 +602,19 @@ shippingRoutes.get("/", async (c) => {
   );
 });
 
-/** 一括発送の確認（部分 HTML）。選んだ受注のうち在庫が足りないものを示す */
+/**
+ * 一括発送の確認（部分 HTML）。選んだ受注のうち在庫が足りないものと、受注日が発送日より後のものを示す。
+ * 発送日は確認の画面で変えたもの（初めは今日）
+ */
 shippingRoutes.post("/bulk/confirm", async (c) => {
   const form = await readForm(c);
   const orderIds = strs(form, "orderId");
   if (orderIds.length === 0)
     return c.html(<Alert kind="warning">発送する受注を選んでください。</Alert>);
-  const check = await queryAs(c.env, c.get("actorRef"), "shipping.check", { orderIds });
+  const check = await queryAs(c.env, c.get("actorRef"), "shipping.check", {
+    orderIds,
+    shippedOn: str(form, "shippedOn"),
+  });
   if (!check.ok) return c.html(<Alert kind="error">{check.error.message}</Alert>);
   return c.html(
     <ConfirmPanel
@@ -494,10 +636,13 @@ shippingRoutes.post("/bulk/ship", async (c) => {
   const date = str(form, "date");
   const locationId = str(form, "locationId");
   const orders = versionsFrom(form);
+  const short = strs(form, "excludeId");
+  const early = strs(form, "excludeEarlyId");
+  const shippedOn = str(form, "shippedOn");
   const result = await runCommand(
     c,
     "shipments.bulkShip",
-    { orders, exclude: strs(form, "excludeId"), shippedOn: str(form, "shippedOn") },
+    { orders, exclude: [...short, ...early], shippedOn },
     formKey(form),
   );
   const canShip = hasPermission(c.get("actor").roles, "shipments.manage");
@@ -507,13 +652,14 @@ shippingRoutes.post("/bulk/ship", async (c) => {
     panel = (
       <ShippedPanel
         shipped={result.value.shipped}
-        excluded={result.value.excluded.length}
+        excluded={{ short: short.length, tooEarly: early.length }}
         name={notesName({ date, locationName: list?.locationName ?? "" })}
       />
     );
   } else {
     const check = await queryAs(c.env, c.get("actorRef"), "shipping.check", {
       orderIds: orders.map((o) => o.id),
+      shippedOn,
     });
     panel = check.ok ? (
       <ConfirmPanel check={check.value} date={date} locationId={locationId} error={result.error} />
@@ -614,7 +760,8 @@ shippingRoutes.get("/print", async (c) => {
         <section class="print-page">
           <h1>発送リスト</h1>
           <p>
-            出荷予定日 {jaDate(list.date)}・{list.locationName}：この日に発送する受注はありません。
+            出荷予定日 {jaDate(list.date)}まで・{list.locationName}
+            ：この日までに発送する受注はありません。
           </p>
         </section>
       ) : (
@@ -623,16 +770,27 @@ shippingRoutes.get("/print", async (c) => {
             <header class="print-header">
               <h1>発送リスト</h1>
               <p>
-                出荷予定日 {jaDate(list.date)}　保管場所 {list.locationName}　{p + 1} / {total}
+                出荷予定日 {jaDate(list.date)}まで　保管場所 {list.locationName}　{p + 1} / {total}
                 ページ
               </p>
+              {list.overdueOrders.length > 0 ? (
+                <p class="overdue">
+                  【遅れ】出荷予定日を過ぎた受注 {list.overdueOrders.length} 件を含みます：
+                  {list.overdueOrders
+                    .map((o) => `${o.number}（${o.customerName}、出荷予定日 ${o.shipPlannedOn}）`)
+                    .join("、")}
+                </p>
+              ) : null}
             </header>
             <table class="print-table">
               <thead>
                 <tr>
                   <th class="item">商品</th>
                   {cols.map(({ cu }) => (
-                    <th class="qty">{cu.name}</th>
+                    <th class={cu.overdue ? "qty overdue" : "qty"}>
+                      {cu.overdue ? "【遅れ】" : ""}
+                      {cu.name}
+                    </th>
                   ))}
                   <th class="qty total">合計</th>
                 </tr>
@@ -682,7 +840,8 @@ shippingRoutes.get("/sorting", async (c) => {
         <section class="print-page">
           <h1>仕分けリスト</h1>
           <p>
-            出荷予定日 {jaDate(list.date)}・{list.locationName}：この日に発送する受注はありません。
+            出荷予定日 {jaDate(list.date)}まで・{list.locationName}
+            ：この日までに発送する受注はありません。
           </p>
         </section>
       ) : (
@@ -694,8 +853,12 @@ shippingRoutes.get("/sorting", async (c) => {
                 {cu.name} {cu.honorific}
               </p>
               <p>
-                出荷予定日 {jaDate(list.date)}　保管場所 {list.locationName}　受注{" "}
-                {cu.orders.map((o) => o.number).join("・")}
+                出荷予定日 {jaDate(list.date)}まで　保管場所 {list.locationName}　受注{" "}
+                {cu.orders
+                  .map((o) =>
+                    o.overdue ? `${o.number}【遅れ：出荷予定日 ${o.shipPlannedOn}】` : o.number,
+                  )
+                  .join("・")}
               </p>
             </header>
             <table class="print-table sorting">

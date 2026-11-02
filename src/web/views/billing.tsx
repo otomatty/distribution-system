@@ -134,11 +134,16 @@ export function DocumentLinks(props: { document: InvoiceDocumentRef | null; labe
   );
 }
 
-/** 受注詳細の「返品伝票」の欄（返品伝票の一覧と、登録へのリンク） */
+/**
+ * 受注詳細の「返品伝票」の欄（返品伝票の一覧と、登録へのリンク）。どの請求書にも載っていない返品伝票には、
+ * 請求書で差し引けないときの返還請求書の発行（返品伝票の詳細の返還請求書の欄）へのリンクを出す
+ */
 export function SalesReturnsSection(props: {
   orderId: string;
   data: OrderReturns;
   canManage: boolean;
+  /** 返還請求書を発行できる（経理・管理者） */
+  canIssueCreditNote?: boolean;
 }) {
   const { data } = props;
   return (
@@ -190,11 +195,23 @@ export function SalesReturnsSection(props: {
                   <td>
                     {r.invoiceId ? (
                       <a href={paths.invoice(r.invoiceId)}>{r.invoiceNumber}</a>
-                    ) : r.cancelled ? null : (
+                    ) : r.cancelled ? null : r.creditPaymentId ? (
+                      "返還請求書で精算（請求書では差し引かない）"
+                    ) : (
                       "未請求（次の請求書に載せる）"
                     )}
                     {r.creditNoteNumber ? (
                       <div class="small">返還請求書 {r.creditNoteNumber}</div>
+                    ) : null}
+                    {r.unbilledCreditIssuable && props.canIssueCreditNote ? (
+                      <div>
+                        <a
+                          class="btn btn-secondary btn-sm"
+                          href={paths.salesReturnCreditNote(r.id)}
+                        >
+                          返還請求書を発行（請求書で差し引けない返品）
+                        </a>
+                      </div>
                     ) : null}
                   </td>
                 </tr>

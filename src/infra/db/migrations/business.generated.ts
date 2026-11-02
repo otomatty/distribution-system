@@ -50,29 +50,36 @@ export const businessMigrations: {
       {
         "idx": 6,
         "version": "6",
-        "when": 1793629729268,
-        "tag": "0006_supplier_invoice_partial_payment",
+        "when": 1793627675502,
+        "tag": "0006_credit_notes_for_unbilled_returns",
         "breakpoints": true
       },
       {
         "idx": 7,
         "version": "6",
-        "when": 1793629730127,
-        "tag": "0007_purchase_return_cancel",
+        "when": 1793632283018,
+        "tag": "0007_supplier_invoice_partial_payment",
         "breakpoints": true
       },
       {
         "idx": 8,
         "version": "6",
-        "when": 1793629730946,
-        "tag": "0008_disposal_cancel",
+        "when": 1793632283884,
+        "tag": "0008_purchase_return_cancel",
         "breakpoints": true
       },
       {
         "idx": 9,
         "version": "6",
-        "when": 1793629731708,
-        "tag": "0009_cancel_reasons",
+        "when": 1793632284760,
+        "tag": "0009_disposal_cancel",
+        "breakpoints": true
+      },
+      {
+        "idx": 10,
+        "version": "6",
+        "when": 1793632285744,
+        "tag": "0010_cancel_reasons",
         "breakpoints": true
       }
     ]
@@ -84,9 +91,10 @@ export const businessMigrations: {
     "m0003": "CREATE INDEX `purchase_orders_sales_order` ON `purchase_orders` (`sales_order_id`);",
     "m0004": "CREATE INDEX `audit_logs_employee` ON `audit_logs` (`employee_id`,`occurred_at`);--> statement-breakpoint\nCREATE INDEX `audit_logs_action` ON `audit_logs` (`action`,`occurred_at`);",
     "m0005": "CREATE INDEX `purchase_orders_ordered` ON `purchase_orders` (`ordered_on`,`number`);--> statement-breakpoint\nCREATE INDEX `receipts_received` ON `receipts` (`received_on`);--> statement-breakpoint\nCREATE INDEX `customer_payments_customer_amount` ON `customer_payments` (`customer_id`,`cancelled`,`amount`);--> statement-breakpoint\nCREATE INDEX `invoices_issued` ON `invoices` (`issued_on`,`number`);--> statement-breakpoint\nCREATE INDEX `payment_allocations_payment_amount` ON `payment_allocations` (`payment_id`,`cancelled`,`amount`);--> statement-breakpoint\nCREATE INDEX `sales_orders_split_from` ON `sales_orders` (`split_from_id`);--> statement-breakpoint\nCREATE INDEX `sales_orders_ship_planned` ON `sales_orders` (`ship_planned_on`,`number`);--> statement-breakpoint\nCREATE INDEX `shipments_unbilled` ON `shipments` (`invoice_id`,`shipped_on`);--> statement-breakpoint\nCREATE INDEX `documents_status` ON `documents` (`status`);",
-    "m0006": "ALTER TABLE `supplier_invoices` ADD `paid_amount` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nUPDATE `supplier_invoices` SET `paid_amount` = coalesce((SELECT sum(p.`amount`) FROM `supplier_payments` p WHERE p.`supplier_invoice_id` = `supplier_invoices`.`id` AND p.`cancelled` = 0), 0);\n",
-    "m0007": "ALTER TABLE `purchase_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_by` text;",
-    "m0008": "ALTER TABLE `disposals` ADD `cancelled` integer DEFAULT false NOT NULL;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_by` text;",
-    "m0009": "ALTER TABLE `customer_payments` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `customer_payments` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `customer_payments` ADD `cancelled_by` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancelled_by` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancelled_by` text;--> statement-breakpoint\nUPDATE `customer_payments` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT json_extract(a.`after_json`, '$.reason') FROM `audit_logs` a WHERE a.`entity_type` = 'customer_payment' AND a.`entity_id` = `customer_payments`.`id` AND a.`action` = 'cancel' ORDER BY a.`occurred_at` DESC LIMIT 1) WHERE `cancelled` = 1;--> statement-breakpoint\nUPDATE `sales_returns` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT json_extract(a.`after_json`, '$.reason') FROM `audit_logs` a WHERE a.`entity_type` = 'sales_return' AND a.`entity_id` = `sales_returns`.`id` AND a.`action` = 'cancel' ORDER BY a.`occurred_at` DESC LIMIT 1) WHERE `cancelled` = 1;--> statement-breakpoint\nUPDATE `payment_allocations` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT '入金の取消：' || json_extract(a.`after_json`, '$.reason') FROM `audit_logs` a, json_each(a.`after_json`, '$.cancelledAllocationIds') j WHERE a.`entity_type` = 'customer_payment' AND a.`entity_id` = `payment_allocations`.`payment_id` AND a.`action` = 'cancel' AND j.`value` = `payment_allocations`.`id` LIMIT 1) WHERE `cancelled` = 1;\n"
+    "m0006": "CREATE TABLE `customer_refunds` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`payment_id` text NOT NULL,\n\t`customer_id` text NOT NULL,\n\t`refunded_on` text NOT NULL,\n\t`amount` integer NOT NULL,\n\t`memo` text,\n\t`cancelled` integer DEFAULT false NOT NULL,\n\t`cancel_reason` text,\n\t`created_at` text NOT NULL,\n\t`created_by` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`updated_by` text NOT NULL,\n\t`version` integer DEFAULT 1 NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `customer_refunds_payment` ON `customer_refunds` (`payment_id`,`cancelled`,`amount`);--> statement-breakpoint\nCREATE INDEX `customer_refunds_customer_amount` ON `customer_refunds` (`customer_id`,`cancelled`,`amount`);--> statement-breakpoint\nALTER TABLE `customer_payments` ADD `sales_return_id` text;--> statement-breakpoint\nCREATE INDEX `customer_payments_sales_return` ON `customer_payments` (`sales_return_id`);",
+    "m0007": "ALTER TABLE `supplier_invoices` ADD `paid_amount` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nUPDATE `supplier_invoices` SET `paid_amount` = coalesce((SELECT sum(p.`amount`) FROM `supplier_payments` p WHERE p.`supplier_invoice_id` = `supplier_invoices`.`id` AND p.`cancelled` = 0), 0);\n",
+    "m0008": "ALTER TABLE `purchase_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_by` text;",
+    "m0009": "ALTER TABLE `disposals` ADD `cancelled` integer DEFAULT false NOT NULL;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_by` text;",
+    "m0010": "ALTER TABLE `customer_payments` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `customer_payments` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `customer_payments` ADD `cancelled_by` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `payment_allocations` ADD `cancelled_by` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `sales_returns` ADD `cancelled_by` text;--> statement-breakpoint\nUPDATE `customer_payments` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT CASE a.`action` WHEN 'cancel_credit' THEN '返還請求書の取消：' || json_extract(a.`after_json`, '$.reason') ELSE json_extract(a.`after_json`, '$.reason') END FROM `audit_logs` a WHERE a.`entity_type` = 'customer_payment' AND a.`entity_id` = `customer_payments`.`id` AND a.`action` IN ('cancel', 'cancel_credit') ORDER BY a.`occurred_at` DESC LIMIT 1) WHERE `cancelled` = 1;--> statement-breakpoint\nUPDATE `sales_returns` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT json_extract(a.`after_json`, '$.reason') FROM `audit_logs` a WHERE a.`entity_type` = 'sales_return' AND a.`entity_id` = `sales_returns`.`id` AND a.`action` = 'cancel' ORDER BY a.`occurred_at` DESC LIMIT 1) WHERE `cancelled` = 1;--> statement-breakpoint\nUPDATE `payment_allocations` SET `cancelled_at` = `updated_at`, `cancelled_by` = `updated_by`, `cancel_reason` = (SELECT '入金の取消：' || json_extract(a.`after_json`, '$.reason') FROM `audit_logs` a, json_each(a.`after_json`, '$.cancelledAllocationIds') j WHERE a.`entity_type` = 'customer_payment' AND a.`entity_id` = `payment_allocations`.`payment_id` AND a.`action` = 'cancel' AND j.`value` = `payment_allocations`.`id` LIMIT 1) WHERE `cancelled` = 1;\n"
   }
 };

@@ -926,6 +926,14 @@ body.touch .picker-table td {
   min-width: 6.5rem;
   white-space: normal;
 }
+/* 出荷予定日を過ぎた受注のある販売先の列（遅れ） */
+.shipping-matrix thead .overdue-col {
+  background: var(--danger-soft);
+  border-top: 3px solid var(--danger);
+}
+.overdue-list {
+  margin: 0.3rem 0 0;
+}
 .shipping-matrix .total-col {
   font-weight: 700;
   background: var(--surface-2);

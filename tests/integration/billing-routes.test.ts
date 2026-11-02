@@ -273,7 +273,9 @@ describe("返品伝票の画面", () => {
     expect(detail).toContain("在庫に戻した");
     expect(detail).toContain("廃棄");
     expect(detail).toContain("返品伝票を取り消す");
-    expect(detail).toContain("請求書に載せた（請求済みの）返品伝票について発行できます");
+    // 未請求の返品は、請求書で差し引けない返品として返還請求書を発行できる（受注・出荷担当には発行の操作を出さない）
+    expect(detail).toContain("この返品はどの請求書にも載っていません");
+    expect(detail).toContain("返還請求書を発行する権限がありません");
 
     const ret = await systemQuery("salesReturns.get", { id: returnId });
     await issuePerShipment(shipped, { returns: [{ id: returnId, version: ret!.ret.version }] });

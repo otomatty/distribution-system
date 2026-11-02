@@ -189,6 +189,13 @@ export function settledOrderStatus(
   return unpaidAcceptedReceipts > 0 ? "received" : "paid";
 }
 
+/** 入荷日は発注日より前にできない（発注日より前の入荷日は入力の誤りとして受け付けない） */
+export function validateReceivedOn(receivedOn: string, orderedOn: string): Result<void> {
+  if (receivedOn >= orderedOn) return ok(undefined);
+  const message = `入荷日は発注日（${orderedOn}）以降にしてください`;
+  return err("validation", message, { fields: [{ field: "receivedOn", message }] });
+}
+
 /**
  * 入荷の記録を検証し、記録後の明細の状態と発注の状態を返す。
  * 全明細の残りが 0 になれば入荷済み、そうでなければ発注済みのまま（分納）。

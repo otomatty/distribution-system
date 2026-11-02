@@ -250,4 +250,58 @@ describe("返還請求書のテンプレート", () => {
     expect(standard).not.toContain("※は軽減税率");
     expect(standard).not.toContain("<th>請求書番号</th>");
   });
+
+  it("請求書で差し引けない返品の返還請求書（請求書に載っていない返品。請求書番号なし）も記載事項を載せる（スナップショット）", async () => {
+    const unbilled: CreditNoteSnapshot = {
+      ...creditNote,
+      number: "CN-2026-000008",
+      invoiceNumber: null,
+      lines: [
+        creditNote.lines[0]!,
+        {
+          itemCode: "IT000002",
+          name: "紙袋（大）",
+          quantity: 2,
+          unitName: "枚",
+          unitPriceCenti: 10_000,
+          amount: 200,
+          taxCategory: "standard",
+          reduced: false,
+        },
+      ],
+      taxGroups: [
+        { category: "standard", rateBps: 1000, subtotal: 200, tax: 20 },
+        { category: "reduced", rateBps: 800, subtotal: 150, tax: 12 },
+      ],
+      subtotal: 350,
+      tax: 32,
+      total: 382,
+    };
+    const result = unwrap(
+      await renderDocumentsHtml([
+        { meta: { ...creditMeta, number: unbilled.number }, snapshot: unbilled },
+      ]),
+    );
+    const html = result.html;
+    expect(result.orientation).toBe("portrait");
+    // 発行者の名称と登録番号、返品日と元の取引年月日、内容（軽減税率の対象である旨）、
+    // 税率ごとの返還額の合計と適用税率、税率ごとの消費税額、宛名
+    expect(html).toContain("架空菓子流通株式会社");
+    expect(html).toContain("登録番号：T1234567890123");
+    expect(html).toContain("返品日");
+    expect(html).toContain("2026年10月10日");
+    expect(html).toContain("元の取引年月日");
+    expect(html).toContain("2026年10月5日");
+    expect(html).toContain("テスト銘菓 うみねこサブレ 10枚入 ※");
+    expect(html).toContain("※は軽減税率（8%）の対象です");
+    expect(html).toContain("標準税率（10%）対象");
+    expect(html).toContain("軽減税率（8%）対象");
+    expect(html).toContain("消費税 ¥20");
+    expect(html).toContain("消費税 ¥12");
+    expect(html).toContain("返還額（税込） ¥382");
+    expect(html).toContain("サンプル商店 &lt;本店&gt; 御中");
+    expect(html).toContain("DN-2026-000010");
+    expect(html).not.toContain("<th>請求書番号</th>");
+    expect(html.replace(PRINT_CSS, "")).toMatchSnapshot();
+  });
 });

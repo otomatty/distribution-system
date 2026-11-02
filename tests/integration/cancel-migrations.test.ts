@@ -1,5 +1,5 @@
 /**
- * マイグレーションのデータの移し替え（0006 の仕入先請求書の支払済みの額、0009 の取消の理由・日時・操作者）。
+ * マイグレーションのデータの移し替え（0007 の仕入先請求書の支払済みの額、0010 の取消の理由・日時・操作者）。
  * 列を足す前に記録した取消（理由は操作履歴だけにあった）と支払を、マイグレーションの UPDATE で写せることを確かめる。
  * 列を足す ALTER は業務 DB の起動のたびに適用済みなので、ここでは列を空に戻してから UPDATE だけを流し直す。
  */
@@ -38,8 +38,8 @@ function exec(statements: readonly string[]): Promise<void> {
 }
 
 describe("マイグレーションのデータの移し替え", () => {
-  it("0009：取り消した入金・消込・返品伝票の理由を操作履歴から写し、日時・操作者は最後の更新から写す", async () => {
-    expect(updates("m0009")).toHaveLength(3);
+  it("0010：取り消した入金・消込・返品伝票の理由を操作履歴から写し、日時・操作者は最後の更新から写す", async () => {
+    expect(updates("m0010")).toHaveLength(3);
     const setup = await billingSetup();
     const shipped = await shipOrder(setup);
     const invoice = await issuePerShipment(shipped);
@@ -63,6 +63,22 @@ describe("マイグレーションのデータの移し替え", () => {
       version: await returnVersion(ret.id),
       reason: "数え間違い",
     });
+    // 返還請求書の取消で取り消した返還額（入金）は「返還請求書の取消：（理由）」
+    const third = await shipOrder(setup);
+    const credited = await recordReturn(third.order.id, { quantity: 1, restockTo: null });
+    const credit = await systemCommand("creditNotes.issueUnbilled", {
+      salesReturnId: credited.id,
+      version: await returnVersion(credited.id),
+      issuedOn: today(),
+    });
+    await systemCommand("creditNotes.cancelUnbilled", {
+      salesReturnId: credited.id,
+      version: await returnVersion(credited.id),
+      reason: "発行の誤り",
+    });
+    expect(
+      (await systemQuery("customerPayments.get", { id: credit.paymentId }))?.payment.cancelReason,
+    ).toBe("返還請求書の取消：発行の誤り");
     // 列を足す前の記録と同じ状態（理由・日時・操作者が空）にする
     await exec([
       "UPDATE customer_payments SET cancel_reason = NULL, cancelled_at = NULL, cancelled_by = NULL",
@@ -73,7 +89,7 @@ describe("マイグレーションのデータの移し替え", () => {
       (await systemQuery("customerPayments.get", { id: payment.id }))?.payment.cancelReason,
     ).toBeNull();
 
-    await exec(updates("m0009"));
+    await exec(updates("m0010"));
     const restored = await systemQuery("customerPayments.get", { id: payment.id });
     expect(restored?.payment).toMatchObject({
       cancelReason: "二重に記録した",
@@ -87,10 +103,16 @@ describe("マイグレーションのデータの移し替え", () => {
       cancelReason: "数え間違い",
       cancelledAt: expect.any(String),
     });
+    expect(
+      (await systemQuery("customerPayments.get", { id: credit.paymentId }))?.payment,
+    ).toMatchObject({
+      cancelReason: "返還請求書の取消：発行の誤り",
+      cancelledAt: expect.any(String),
+    });
   });
 
-  it("0006：仕入先請求書の支払済みの額を、取り消していない支払の合計から写す", async () => {
-    expect(updates("m0006")).toHaveLength(1);
+  it("0007：仕入先請求書の支払済みの額を、取り消していない支払の合計から写す", async () => {
+    expect(updates("m0007")).toHaveLength(1);
     const supplierId = await createSupplier();
     const locationId = await createLocation();
     const item = await createItem(supplierId);
@@ -126,7 +148,7 @@ describe("マイグレーションのデータの移し替え", () => {
     });
     await exec([`UPDATE supplier_invoices SET paid_amount = 0 WHERE id = '${inv.id}'`]);
     expect((await systemQuery("supplierInvoices.get", { id: inv.id }))?.invoice.paidAmount).toBe(0);
-    await exec(updates("m0006"));
+    await exec(updates("m0007"));
     expect((await systemQuery("supplierInvoices.get", { id: inv.id }))?.invoice.paidAmount).toBe(
       500,
     );

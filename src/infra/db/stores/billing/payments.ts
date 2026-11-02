@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lte, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 
 import type {
@@ -6,9 +6,18 @@ import type {
   CustomerPaymentFilter,
   CustomerPaymentRecord,
   CustomerPaymentStore,
+  RefundRecord,
 } from "../../../../usecases/billing/payments.port";
 import { auditInsert, type Db } from "../../client";
-import { customerPayments, employees, invoices, partners, paymentAllocations } from "../../schema";
+import {
+  customerPayments,
+  customerRefunds,
+  employees,
+  invoices,
+  partners,
+  paymentAllocations,
+  salesReturns,
+} from "../../schema";
 import { inList, insertBatches } from "../../sql-helpers";
 
 /** 消込の1行あたりの列数（INSERT を分ける単位の計算に使う） */
@@ -22,6 +31,8 @@ const ALLOCATION_COLUMNS = 12;
 /** 入金ごとの、有効な消込の入金額の合計 */
 const allocatedAmount = sql<number>`(SELECT COALESCE(SUM(a.amount), 0) FROM ${paymentAllocations} a WHERE a.payment_id = "customer_payments"."id" AND a.cancelled = 0)`;
 const allocationCount = sql<number>`(SELECT COUNT(*) FROM ${paymentAllocations} a WHERE a.payment_id = "customer_payments"."id" AND a.cancelled = 0)`;
+/** 入金（返還請求書の返還額）ごとの、有効な返金の合計 */
+const refundedAmount = sql<number>`(SELECT COALESCE(SUM(r.amount), 0) FROM ${customerRefunds} r WHERE r.payment_id = "customer_payments"."id" AND r.cancelled = 0)`;
 
 function paymentConditions(filter: CustomerPaymentFilter): SQL | undefined {
   const conds: SQL[] = [];
@@ -30,7 +41,9 @@ function paymentConditions(filter: CustomerPaymentFilter): SQL | undefined {
   if (filter.receivedTo) conds.push(lte(customerPayments.receivedOn, filter.receivedTo));
   if (!filter.includeCancelled || filter.unallocatedOnly)
     conds.push(eq(customerPayments.cancelled, false));
-  if (filter.unallocatedOnly) conds.push(sql`${allocatedAmount} < ${customerPayments.amount}`);
+  if (filter.unallocatedOnly)
+    conds.push(sql`${allocatedAmount} + ${refundedAmount} < ${customerPayments.amount}`);
+  if (filter.creditOnly) conds.push(isNotNull(customerPayments.salesReturnId));
   return conds.length > 0 ? and(...conds) : undefined;
 }
 
@@ -48,8 +61,24 @@ const paymentColumns = {
   cancelReason: customerPayments.cancelReason,
   cancelledAt: customerPayments.cancelledAt,
   cancelledByName: cancelledBy.name,
+  salesReturnId: customerPayments.salesReturnId,
+  salesReturnNumber: salesReturns.number,
   version: customerPayments.version,
   createdAt: customerPayments.createdAt,
+  createdByName: employees.name,
+};
+
+const refundColumns = {
+  id: customerRefunds.id,
+  paymentId: customerRefunds.paymentId,
+  customerId: customerRefunds.customerId,
+  refundedOn: customerRefunds.refundedOn,
+  amount: customerRefunds.amount,
+  memo: customerRefunds.memo,
+  cancelled: customerRefunds.cancelled,
+  cancelReason: customerRefunds.cancelReason,
+  version: customerRefunds.version,
+  createdAt: customerRefunds.createdAt,
   createdByName: employees.name,
 };
 
@@ -123,7 +152,23 @@ function receivableSources(
     .where(and(...paidConds, eq(paymentAllocations.cancelled, false)))
     .groupBy(customerPayments.customerId)
     .as("used");
-  return { open, paid, used };
+  // 返還請求書の返還額のうち返金した額。返金は少ないので、返金の側から読んで入金（取り消していないもの）を確かめる
+  // （入金と結びつけると、すべての入金を読んでから返金を探す計画になる）
+  const refundConds: SQL[] = [
+    eq(customerRefunds.cancelled, false),
+    sql`EXISTS (SELECT 1 FROM ${customerPayments} p WHERE p.id = "customer_refunds"."payment_id" AND p.cancelled = 0)`,
+  ];
+  if (filter.customerId) refundConds.push(eq(customerRefunds.customerId, filter.customerId));
+  const refunded = db
+    .select({
+      customerId: sql<string>`${customerRefunds.customerId}`.as("refunded_customer_id"),
+      amount: sql<number>`sum(${customerRefunds.amount})`.as("refunded_amount"),
+    })
+    .from(customerRefunds)
+    .where(and(...refundConds))
+    .groupBy(customerRefunds.customerId)
+    .as("refunded");
+  return { open, paid, used, refunded };
 }
 
 function bump(meta: { at: string; by: string }) {
@@ -141,18 +186,36 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
         .select(paymentColumns)
         .from(customerPayments)
         .innerJoin(partners, eq(partners.id, customerPayments.customerId))
+        .leftJoin(salesReturns, eq(salesReturns.id, customerPayments.salesReturnId))
         .leftJoin(employees, eq(employees.id, customerPayments.createdBy))
         .leftJoin(cancelledBy, eq(cancelledBy.id, customerPayments.cancelledBy))
         .where(eq(customerPayments.id, id))
+        .get();
+    },
+    activeCreditFor(salesReturnId) {
+      return db
+        .select(paymentColumns)
+        .from(customerPayments)
+        .innerJoin(partners, eq(partners.id, customerPayments.customerId))
+        .leftJoin(salesReturns, eq(salesReturns.id, customerPayments.salesReturnId))
+        .leftJoin(employees, eq(employees.id, customerPayments.createdBy))
+        .where(
+          and(
+            eq(customerPayments.salesReturnId, salesReturnId),
+            eq(customerPayments.cancelled, false),
+          ),
+        )
+        .orderBy(desc(customerPayments.id))
         .get();
     },
     list(filter, page, pageSize) {
       const where = paymentConditions(filter);
       const total = db.select({ n: count() }).from(customerPayments).where(where).get()?.n ?? 0;
       const rows = db
-        .select({ ...paymentColumns, allocatedAmount, allocationCount })
+        .select({ ...paymentColumns, allocatedAmount, allocationCount, refundedAmount })
         .from(customerPayments)
         .innerJoin(partners, eq(partners.id, customerPayments.customerId))
+        .leftJoin(salesReturns, eq(salesReturns.id, customerPayments.salesReturnId))
         .leftJoin(employees, eq(employees.id, customerPayments.createdBy))
         .leftJoin(cancelledBy, eq(cancelledBy.id, customerPayments.cancelledBy))
         .where(where)
@@ -242,13 +305,57 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
         .all();
       return rows.length === 1;
     },
+    refunds(paymentId): RefundRecord[] {
+      return db
+        .select(refundColumns)
+        .from(customerRefunds)
+        .leftJoin(employees, eq(employees.id, customerRefunds.createdBy))
+        .where(eq(customerRefunds.paymentId, paymentId))
+        .orderBy(desc(customerRefunds.id))
+        .all();
+    },
+    getRefund(id) {
+      return db
+        .select(refundColumns)
+        .from(customerRefunds)
+        .leftJoin(employees, eq(employees.id, customerRefunds.createdBy))
+        .where(eq(customerRefunds.id, id))
+        .get();
+    },
+    insertRefund(record, meta) {
+      db.insert(customerRefunds)
+        .values({ ...record, cancelled: false, cancelReason: null, ...auditInsert(meta) })
+        .run();
+    },
+    cancelRefund(id, expectedVersion, reason, meta) {
+      const rows = db
+        .update(customerRefunds)
+        .set({
+          cancelled: true,
+          cancelReason: reason,
+          version: sql`${customerRefunds.version} + 1`,
+          updatedAt: meta.at,
+          updatedBy: meta.by,
+        })
+        .where(
+          and(
+            eq(customerRefunds.id, id),
+            eq(customerRefunds.version, expectedVersion),
+            eq(customerRefunds.cancelled, false),
+          ),
+        )
+        .returning({ id: customerRefunds.id })
+        .all();
+      return rows.length === 1;
+    },
     receivables(filter, page, pageSize) {
-      const { open, paid, used } = receivableSources(db, filter);
+      const { open, paid, used, refunded } = receivableSources(db, filter);
       const paymentTotal = sql<number>`coalesce(${paid.amount}, 0)`;
       const paymentAllocated = sql<number>`coalesce(${used.amount}, 0)`;
+      const paymentRefunded = sql<number>`coalesce(${refunded.amount}, 0)`;
       const conds: SQL[] = [
         eq(partners.isCustomer, true),
-        sql`(coalesce(${open.count}, 0) > 0 OR ${paymentTotal} > ${paymentAllocated})`,
+        sql`(coalesce(${open.count}, 0) > 0 OR ${paymentTotal} > ${paymentAllocated} + ${paymentRefunded})`,
       ];
       if (filter.customerId) conds.push(eq(partners.id, filter.customerId));
       // 販売先の数だけの行なので、すべて読んでからページに分ける（件数のための2回目の集計をしない）
@@ -265,11 +372,13 @@ export function customerPaymentStore(db: Db): CustomerPaymentStore {
           nextDueOn: sql<string | null>`${open.nextDueOn}`,
           paymentTotal,
           paymentAllocated,
+          paymentRefunded,
         })
         .from(partners)
         .leftJoin(open, eq(open.customerId, partners.id))
         .leftJoin(paid, eq(paid.customerId, partners.id))
         .leftJoin(used, eq(used.customerId, partners.id))
+        .leftJoin(refunded, eq(refunded.customerId, partners.id))
         .where(and(...conds))
         .orderBy(asc(partners.kana), asc(partners.id))
         .all();

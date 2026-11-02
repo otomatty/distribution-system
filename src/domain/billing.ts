@@ -432,14 +432,155 @@ export const PAYMENT_METHOD_LABELS: Readonly<Record<PaymentMethod, string>> = {
   other: "その他",
 };
 
-/** 入金の未消込残高 = 入金額 − 有効な消込の入金額の合計 */
-export function paymentUnallocated(amount: number, allocatedAmounts: readonly number[]): number {
-  return amount - allocatedAmounts.reduce((s, a) => s + a, 0);
+/**
+ * 入金の未消込残高 = 入金額 − 有効な消込の入金額の合計 − 有効な返金の合計
+ * （返金は返還請求書の返還額だけにある。普通の入金では 0）
+ */
+export function paymentUnallocated(
+  amount: number,
+  allocatedAmounts: readonly number[],
+  refunded = 0,
+): number {
+  return amount - allocatedAmounts.reduce((s, a) => s + a, 0) - refunded;
 }
 
-export function cancelPayment(payment: { readonly cancelled: boolean }): Result<"cancelled"> {
-  return payment.cancelled
-    ? err("invalid_state", "この入金はすでに取り消されています")
+/**
+ * 入金の取消。返還請求書の返還額（salesReturnId のある入金）は、入金の取消ではなく返還請求書の取消で取り消す
+ * （返品伝票を精算済みのまま、返還額だけがなくなるのを防ぐ）
+ */
+export function cancelPayment(payment: {
+  readonly cancelled: boolean;
+  readonly salesReturnId?: string | null;
+}): Result<"cancelled"> {
+  if (payment.cancelled) return err("invalid_state", "この入金はすでに取り消されています");
+  if (payment.salesReturnId)
+    return err(
+      "invalid_state",
+      "返還請求書の返還額は、入金の取消では取り消せません。返品伝票の画面で返還請求書を取り消してください",
+    );
+  return ok("cancelled");
+}
+
+// ---- 返還請求書の返還額（請求書で差し引けない返品）と返金 ------------------------------------
+
+/** 返還請求書の返還額の使い道（請求書に充てた額と、返金した額） */
+export interface CreditUsage {
+  /** 返還額（税込） */
+  readonly amount: number;
+  /** 有効な消込で請求書に充てた額の合計 */
+  readonly allocated: number;
+  /** 有効な返金の合計 */
+  readonly refunded: number;
+}
+
+/** 返還額の残り（請求書に充てるか、返金にできる額） */
+export function creditRemaining(c: CreditUsage): number {
+  return c.amount - c.allocated - c.refunded;
+}
+
+/**
+ * 請求書で差し引けない返品（どの請求書にも載っていない返品伝票）の返還請求書を発行できるか。
+ * 取り消していない、請求書に載っていない、返還請求書をまだ発行していない返品伝票だけ。
+ * 発行すると返品伝票は精算済みになり、以後の請求書・締め処理には載せない。返還額は販売先への返還額
+ * （方法「相殺」の入金で、未消込）として売掛残高を減らし、後の請求書に充てるか返金済みにする
+ */
+export function unbilledCreditNoteIssuable(ret: {
+  readonly cancelled: boolean;
+  readonly invoiceId: string | null;
+  readonly creditNoteNumber: string | null;
+}): Result<void> {
+  if (ret.cancelled) return err("invalid_state", "取り消した返品伝票です");
+  if (ret.creditNoteNumber !== null)
+    return err("invalid_state", "返還請求書はすでに発行しています");
+  if (ret.invoiceId !== null)
+    return err(
+      "invalid_state",
+      "請求書に載せた返品伝票です。請求済みの返品として返還請求書を発行してください",
+    );
+  return ok(undefined);
+}
+
+/** 返還額（税込）。0円以下の返品は返す額がないので、返還請求書で精算しない */
+export function creditAmount(totalWithTax: number): Result<number> {
+  if (!Number.isSafeInteger(totalWithTax) || totalWithTax <= 0)
+    return err("validation", "返還額が0円の返品伝票は、返還請求書で精算できません");
+  return ok(totalWithTax);
+}
+
+/**
+ * 請求書で差し引けない返品の返還請求書の取消。返還額を請求書に充てていたり返金済みにしていたりすれば取り消せない
+ * （先に消込・返金を取り消す）。取り消すと返還額の入金を取消済みにし、返品伝票は未請求に戻る。
+ * 請求書に載せた返品の返還請求書（credit が null）は取り消せない
+ */
+export function cancelUnbilledCreditNote(
+  ret: { readonly cancelled: boolean; readonly creditNoteNumber: string | null },
+  credit: CreditUsage | null,
+): Result<void> {
+  if (ret.cancelled) return err("invalid_state", "取り消した返品伝票です");
+  if (ret.creditNoteNumber === null || credit === null)
+    return err(
+      "invalid_state",
+      "取り消せる返還請求書（請求書で差し引けない返品のもの）がありません",
+    );
+  if (credit.allocated > 0)
+    return err(
+      "invalid_state",
+      "返還額を請求書に充てているため、返還請求書を取り消せません。先に消込を取り消してください",
+    );
+  if (credit.refunded > 0)
+    return err(
+      "invalid_state",
+      "返還額を返金済みにしているため、返還請求書を取り消せません。先に返金を取り消してください",
+    );
+  return ok(undefined);
+}
+
+/**
+ * 返還額の残りを返金済みにできるか（状態）：返還請求書の返還額で、取り消していなくて、残り（請求書に充てていない額）があること。
+ * 返金する額は、そのときの残りすべて
+ */
+export function refundableAmount(
+  credit: CreditUsage & { readonly cancelled: boolean; readonly salesReturnId: string | null },
+): Result<number> {
+  if (!credit.salesReturnId)
+    return err("invalid_state", "返金済みにできるのは、返還請求書の返還額だけです");
+  if (credit.cancelled) return err("invalid_state", "取り消した返還額は返金済みにできません");
+  const remaining = creditRemaining(credit);
+  if (remaining <= 0)
+    return err("invalid_state", "返金済みにできる残り（請求書に充てていない返還額）がありません");
+  return ok(remaining);
+}
+
+/**
+ * 返金の記録の確かめ（refundableAmount に加えて返金日）。返金日は返還請求書の発行日（返還額の入金日）より前にも、
+ * 今日より後にもできない
+ */
+export function planRefund(
+  credit: CreditUsage & {
+    readonly cancelled: boolean;
+    readonly salesReturnId: string | null;
+    readonly receivedOn: string;
+  },
+  refundedOn: string,
+  today: string,
+): Result<number> {
+  const amount = refundableAmount(credit);
+  if (!amount.ok) return amount;
+  const field = "refundedOn";
+  if (refundedOn > today) {
+    const message = "今日より後の日付は入力できません";
+    return err("validation", message, { fields: [{ field, message }] });
+  }
+  if (refundedOn < credit.receivedOn) {
+    const message = `返金日は返還請求書の発行日（${credit.receivedOn}）以降にしてください`;
+    return err("validation", message, { fields: [{ field, message }] });
+  }
+  return amount;
+}
+
+export function cancelRefund(refund: { readonly cancelled: boolean }): Result<"cancelled"> {
+  return refund.cancelled
+    ? err("invalid_state", "この返金はすでに取り消されています")
     : ok("cancelled");
 }
 
@@ -452,9 +593,11 @@ export interface ReceivableSums {
   /** そのうち支払期限を過ぎたもの */
   readonly overdueTotal: number;
   readonly overdueAllocated: number;
-  /** 取り消していない入金の合計と、そこからの消込（入金額）の合計 */
+  /** 取り消していない入金（返還請求書の返還額を含む）の合計と、そこからの消込（入金額）の合計 */
   readonly paymentTotal: number;
   readonly paymentAllocated: number;
+  /** 取り消していない入金からの、取り消していない返金の合計（返還請求書の返還額を販売先に返した額） */
+  readonly paymentRefunded: number;
 }
 
 export interface Receivable {
@@ -462,16 +605,19 @@ export interface Receivable {
   readonly billed: number;
   /** 支払期限を過ぎた請求残高 */
   readonly overdue: number;
-  /** 入金の未消込残高（請求書に消し込んでいない入金） */
+  /** 入金の未消込残高（請求書に消し込んでいない入金と、返金していない返還請求書の返還額） */
   readonly unallocated: number;
   /** 売掛残高 = 請求残高 − 入金の未消込残高 */
   readonly balance: number;
 }
 
-/** 販売先ごとの売掛残高。未請求の発送は含めない（請求書を発行してから売掛残高に入る） */
+/**
+ * 販売先ごとの売掛残高。未請求の発送は含めない（請求書を発行してから売掛残高に入る）。
+ * 返還請求書の返還額は、請求書に充てるまで未消込の入金として売掛残高を減らす。返金した分は減らさない
+ */
 export function receivable(s: ReceivableSums): Receivable {
   const billed = s.openTotal - s.openAllocated;
-  const unallocated = s.paymentTotal - s.paymentAllocated;
+  const unallocated = s.paymentTotal - s.paymentAllocated - s.paymentRefunded;
   return {
     billed,
     overdue: s.overdueTotal - s.overdueAllocated,
@@ -551,17 +697,27 @@ export function returnSubtotal(lines: readonly { readonly amount: number }[]): n
   return lines.reduce((s, l) => s + l.amount, 0);
 }
 
-/** 返品伝票の取消：請求書にも返還請求書にも載っていないものだけ（在庫は打ち消しの行で戻す） */
+/**
+ * 返品伝票の取消：請求書にも返還請求書にも載っていないものだけ（在庫は打ち消しの行で戻す）。
+ * 返還請求書で精算した返品伝票（creditPaymentId あり）は、先に返還請求書を取り消す
+ * （返還額を請求書に充てた・返金済みにした返品は、返還請求書も取り消せないので、返品伝票も取り消せない）
+ */
 export function cancelSalesReturn(ret: {
   readonly cancelled: boolean;
   readonly invoiceId: string | null;
   readonly creditNoteNumber: string | null;
+  readonly creditPaymentId?: string | null;
 }): Result<"cancelled"> {
   if (ret.cancelled) return err("invalid_state", "この返品伝票はすでに取り消されています");
   if (ret.invoiceId !== null)
     return err(
       "invalid_state",
       "請求書に載せた返品伝票は取り消せません。先に請求書を取り消してください",
+    );
+  if (ret.creditPaymentId)
+    return err(
+      "invalid_state",
+      "返還請求書で精算した返品伝票は取り消せません。先に返還請求書を取り消してください",
     );
   if (ret.creditNoteNumber !== null)
     return err("invalid_state", "返還請求書を発行した返品伝票は取り消せません");
@@ -570,6 +726,7 @@ export function cancelSalesReturn(ret: {
 
 /**
  * 返還請求書を発行できるか：請求書（取消済みでないもの）に載せた返品伝票で、まだ発行していないもの。
+ * どの請求書にも載っていない返品伝票は、unbilledCreditNoteIssuable（請求書で差し引けない返品）で扱う
  */
 export function creditNoteIssuable(ret: {
   readonly cancelled: boolean;
@@ -582,7 +739,7 @@ export function creditNoteIssuable(ret: {
   if (ret.invoiceStatus === null || ret.invoiceStatus === "cancelled")
     return err(
       "invalid_state",
-      "返還請求書は、請求書に載せた（請求済みの）返品伝票について発行できます",
+      "未請求の返品伝票です。次の請求書で差し引くか、「返還請求書を発行（請求書で差し引けない返品）」で精算してください",
     );
   return ok(undefined);
 }

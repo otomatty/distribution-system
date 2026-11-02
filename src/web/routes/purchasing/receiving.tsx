@@ -176,8 +176,20 @@ function ReceiveForm(props: {
           : "この発注は在庫に入れません（メーカー直・その他の届け先）。届いた数を「納品済み」として記録します。"}
       </p>
       <div class="grid-2">
-        <Field label="入荷日" name="receivedOn" required error={errors["receivedOn"]}>
-          <Input name="receivedOn" type="date" value={props.receivedOn} />
+        <Field
+          label="入荷日"
+          name="receivedOn"
+          required
+          error={errors["receivedOn"]}
+          hint={`発注日（${order.orderedOn}）から今日まで`}
+        >
+          <Input
+            name="receivedOn"
+            type="date"
+            value={props.receivedOn}
+            min={order.orderedOn}
+            error={errors["receivedOn"]}
+          />
         </Field>
         <Field label="メモ" name="memo" error={errors["memo"]}>
           <Input name="memo" value={props.memo} maxlength={500} />

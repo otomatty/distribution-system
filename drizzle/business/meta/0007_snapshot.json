@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5200ba51-ea4a-4279-8c06-c86cad430097",
-  "prevId": "2a508bf0-5b4d-47cc-9b5d-35d13db84948",
+  "id": "a5eeb191-8030-4101-b52b-ceb57f73ef51",
+  "prevId": "857b5b24-f651-45be-8346-80da75220191",
   "tables": {
     "company_settings": {
       "name": "company_settings",
@@ -1581,27 +1581,6 @@
           "autoincrement": false,
           "default": false
         },
-        "cancel_reason": {
-          "name": "cancel_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cancelled_at": {
-          "name": "cancelled_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cancelled_by": {
-          "name": "cancelled_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "memo": {
           "name": "memo",
           "type": "text",
@@ -2332,6 +2311,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "sales_return_id": {
+          "name": "sales_return_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -2380,6 +2366,135 @@
         },
         "customer_payments_customer_amount": {
           "name": "customer_payments_customer_amount",
+          "columns": [
+            "customer_id",
+            "cancelled",
+            "amount"
+          ],
+          "isUnique": false
+        },
+        "customer_payments_sales_return": {
+          "name": "customer_payments_sales_return",
+          "columns": [
+            "sales_return_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "customer_refunds": {
+      "name": "customer_refunds",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_id": {
+          "name": "payment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refunded_on": {
+          "name": "refunded_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "memo": {
+          "name": "memo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cancelled": {
+          "name": "cancelled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "customer_refunds_payment": {
+          "name": "customer_refunds_payment",
+          "columns": [
+            "payment_id",
+            "cancelled",
+            "amount"
+          ],
+          "isUnique": false
+        },
+        "customer_refunds_customer_amount": {
+          "name": "customer_refunds_customer_amount",
           "columns": [
             "customer_id",
             "cancelled",

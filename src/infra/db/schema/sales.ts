@@ -206,12 +206,41 @@ export const customerPayments = sqliteTable(
     cancelledAt: text("cancelled_at"),
     cancelledBy: text("cancelled_by"),
     memo: text("memo"),
+    /**
+     * 返還請求書の返還額（請求書で差し引けない返品を、返還請求書で精算したもの）なら、その返品伝票。
+     * 方法は相殺（offset）で、請求書に充てるか返金済みにする。普通の入金は null
+     */
+    salesReturnId: text("sales_return_id"),
     ...auditColumns,
   },
   (t) => [
     index("customer_payments_customer").on(t.customerId, t.receivedOn),
     // 売掛残高の未消込の入金の集計（表を読まずに索引だけで足す）
     index("customer_payments_customer_amount").on(t.customerId, t.cancelled, t.amount),
+    // 返品伝票の返還額（返品伝票の詳細と、未請求の返品伝票から精算済みのものを除くとき）
+    index("customer_payments_sales_return").on(t.salesReturnId),
+  ],
+);
+
+/** 返還請求書の返還額のうち、請求書に充てずに販売先へ返した額（返金）。取消は cancelled で表す */
+export const customerRefunds = sqliteTable(
+  "customer_refunds",
+  {
+    id: id(),
+    /** 返金した返還額（customer_payments の行） */
+    paymentId: text("payment_id").notNull(),
+    customerId: text("customer_id").notNull(),
+    refundedOn: text("refunded_on").notNull(),
+    amount: integer("amount").notNull(),
+    memo: text("memo"),
+    cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    cancelReason: text("cancel_reason"),
+    ...auditColumns,
+  },
+  (t) => [
+    index("customer_refunds_payment").on(t.paymentId, t.cancelled, t.amount),
+    // 売掛残高の返金の集計（表を読まずに索引だけで足す）
+    index("customer_refunds_customer_amount").on(t.customerId, t.cancelled, t.amount),
   ],
 );
 

@@ -3,6 +3,7 @@
  * - 分納：複数回に分けて記録できる。全数がそろうか「残りは打ち切り」で入荷済みになる
  * - 明細ごとに受入数と返品数（その場で返したもの）を分ける。在庫に入るのは「受入数 × 入数」
  * - 保管場所は発注の納入先から決まる。メーカー直・その他の届け先は「納品済み」の確認だけで在庫を動かさない
+ * - 入荷日は発注日より前にも、今日より後にもできない
  * - 取消は、支払（一部を含む）を記録した請求書に含まれていなければできる（在庫は打ち消しの行で戻す）
  */
 import { z } from "zod";
@@ -15,6 +16,7 @@ import {
   remainingQuantity,
   revertReceipt,
   stockQuantity,
+  validateReceivedOn,
 } from "../../domain/purchasing";
 import { err, ok } from "../../domain/result";
 import { defineCommand, defineQuery, STALE_VERSION_MESSAGE } from "../core";
@@ -57,6 +59,8 @@ export const recordPurchaseReceipt = defineCommand({
     if (!po) return err("not_found", "発注が見つかりません");
     const future = checkNotFuture(ctx, input.receivedOn, "receivedOn");
     if (future) return future;
+    const dated = validateReceivedOn(input.receivedOn, po.orderedOn);
+    if (!dated.ok) return dated;
     const recorded = recordReceipt(
       po.status,
       po.lines,

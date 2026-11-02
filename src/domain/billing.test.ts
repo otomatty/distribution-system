@@ -7,12 +7,16 @@ import {
   buildInvoiceLines,
   cancelDisposal,
   cancelPayment,
+  cancelRefund,
   cancelSalesReturn,
+  cancelUnbilledCreditNote,
   canRecordReturn,
   closingDueDate,
   closingTarget,
+  creditAmount,
   creditNoteIssuable,
   creditNoteObligation,
+  creditRemaining,
   disposalRateBps,
   invoiceOutstanding,
   isOpenInvoice,
@@ -21,12 +25,15 @@ import {
   paymentUnallocated,
   planAllocations,
   planInvoice,
+  planRefund,
   ratesForDates,
   receivable,
+  refundableAmount,
   releaseAllocation,
   returnableQuantity,
   returnLineAmount,
   summarizeDisposalRates,
+  unbilledCreditNoteIssuable,
   validateClosing,
   validateDisposalLines,
   validateIssueDates,
@@ -509,18 +516,37 @@ describe("請求書の状態と消込", () => {
 
   it("入金の未消込残高と取消、売掛残高", () => {
     expect(paymentUnallocated(10_000, [3000, 2000])).toBe(5000);
+    // 返金した返還額は未消込残高から除く
+    expect(paymentUnallocated(10_000, [3000], 2000)).toBe(5000);
     expect(cancelPayment({ cancelled: false }).ok).toBe(true);
+    expect(cancelPayment({ cancelled: false, salesReturnId: null }).ok).toBe(true);
     expect(cancelPayment({ cancelled: true }).ok).toBe(false);
-    expect(
-      receivable({
-        openTotal: 30_000,
-        openAllocated: 5000,
-        overdueTotal: 10_000,
-        overdueAllocated: 2000,
-        paymentTotal: 9000,
-        paymentAllocated: 5000,
-      }),
-    ).toEqual({ billed: 25_000, overdue: 8000, unallocated: 4000, balance: 21_000 });
+    // 返還請求書の返還額は入金の取消では取り消さない
+    expect(unwrapErr(cancelPayment({ cancelled: false, salesReturnId: "rt" })).message).toContain(
+      "返還請求書を取り消してください",
+    );
+    const sums = {
+      openTotal: 30_000,
+      openAllocated: 5000,
+      overdueTotal: 10_000,
+      overdueAllocated: 2000,
+      paymentTotal: 9000,
+      paymentAllocated: 5000,
+      paymentRefunded: 0,
+    };
+    expect(receivable(sums)).toEqual({
+      billed: 25_000,
+      overdue: 8000,
+      unallocated: 4000,
+      balance: 21_000,
+    });
+    // 返還額を返金すると、その分は売掛残高を減らさない
+    expect(receivable({ ...sums, paymentRefunded: 1500 })).toEqual({
+      billed: 25_000,
+      overdue: 8000,
+      unallocated: 2500,
+      balance: 22_500,
+    });
   });
 });
 
@@ -620,6 +646,11 @@ describe("返品伝票と返還請求書", () => {
       "先に請求書を",
     );
     expect(cancelSalesReturn({ ...base, creditNoteNumber: "CN-1" }).ok).toBe(false);
+    // 返還請求書で精算した返品伝票は、先に返還請求書を取り消す
+    expect(
+      unwrapErr(cancelSalesReturn({ ...base, creditNoteNumber: "CN-1", creditPaymentId: "p" }))
+        .message,
+    ).toContain("先に返還請求書を取り消してください");
 
     const ret = {
       cancelled: false,
@@ -627,12 +658,103 @@ describe("返品伝票と返還請求書", () => {
       creditNoteNumber: null,
     };
     expect(creditNoteIssuable(ret).ok).toBe(true);
-    expect(creditNoteIssuable({ ...ret, invoiceStatus: null }).ok).toBe(false);
+    expect(unwrapErr(creditNoteIssuable({ ...ret, invoiceStatus: null })).message).toContain(
+      "請求書で差し引けない返品",
+    );
     expect(creditNoteIssuable({ ...ret, invoiceStatus: "cancelled" }).ok).toBe(false);
     expect(creditNoteIssuable({ ...ret, creditNoteNumber: "CN-1" }).ok).toBe(false);
     expect(creditNoteIssuable({ ...ret, cancelled: true }).ok).toBe(false);
     expect(creditNoteObligation(9999)).toBe("optional");
     expect(creditNoteObligation(10_000)).toBe("required");
+  });
+
+  it("請求書で差し引けない返品の返還請求書：どの請求書にも載っていない返品伝票で、返還額が1円以上", () => {
+    const ret = { cancelled: false, invoiceId: null, creditNoteNumber: null };
+    expect(unbilledCreditNoteIssuable(ret).ok).toBe(true);
+    expect(unbilledCreditNoteIssuable({ ...ret, cancelled: true }).ok).toBe(false);
+    expect(
+      unwrapErr(unbilledCreditNoteIssuable({ ...ret, creditNoteNumber: "CN-1" })).message,
+    ).toBe("返還請求書はすでに発行しています");
+    expect(unwrapErr(unbilledCreditNoteIssuable({ ...ret, invoiceId: "inv" })).message).toContain(
+      "請求済みの返品",
+    );
+    expect(unwrap(creditAmount(325))).toBe(325);
+    expect(creditAmount(0).ok).toBe(false);
+    expect(creditAmount(-1).ok).toBe(false);
+    expect(creditAmount(1.5).ok).toBe(false);
+  });
+
+  it("返還請求書の取消は、返還額を請求書に充てていない・返金していないときだけ", () => {
+    const ret = { cancelled: false, creditNoteNumber: "CN-1" };
+    const unused = { amount: 1000, allocated: 0, refunded: 0 };
+    expect(cancelUnbilledCreditNote(ret, unused).ok).toBe(true);
+    expect(cancelUnbilledCreditNote({ ...ret, cancelled: true }, unused).ok).toBe(false);
+    // 請求書に載せた返品の返還請求書（返還額がない）は取り消せない
+    expect(cancelUnbilledCreditNote(ret, null).ok).toBe(false);
+    expect(cancelUnbilledCreditNote({ ...ret, creditNoteNumber: null }, unused).ok).toBe(false);
+    expect(unwrapErr(cancelUnbilledCreditNote(ret, { ...unused, allocated: 1 })).message).toContain(
+      "先に消込を取り消してください",
+    );
+    expect(unwrapErr(cancelUnbilledCreditNote(ret, { ...unused, refunded: 1 })).message).toContain(
+      "先に返金を取り消してください",
+    );
+  });
+
+  it("返金：返還額の残りすべてを、発行日から今日までの日付で返金済みにする", () => {
+    const credit = {
+      amount: 1000,
+      allocated: 300,
+      refunded: 0,
+      cancelled: false,
+      salesReturnId: "rt",
+      receivedOn: "2026-10-20",
+    };
+    expect(creditRemaining(credit)).toBe(700);
+    expect(unwrap(refundableAmount(credit))).toBe(700);
+    expect(unwrap(planRefund(credit, "2026-10-20", "2026-11-02"))).toBe(700);
+    expect(unwrap(planRefund(credit, "2026-11-02", "2026-11-02"))).toBe(700);
+    expect(firstField(planRefund(credit, "2026-10-19", "2026-11-02"))).toBe("refundedOn");
+    expect(firstField(planRefund(credit, "2026-11-03", "2026-11-02"))).toBe("refundedOn");
+    // 返還額でない入金・取り消した返還額・残りのない返還額は返金済みにできない
+    expect(refundableAmount({ ...credit, salesReturnId: null }).ok).toBe(false);
+    expect(refundableAmount({ ...credit, cancelled: true }).ok).toBe(false);
+    expect(refundableAmount({ ...credit, refunded: 700 }).ok).toBe(false);
+    expect(planRefund({ ...credit, allocated: 1000 }, "2026-10-20", "2026-11-02").ok).toBe(false);
+    expect(cancelRefund({ cancelled: false }).ok).toBe(true);
+    expect(cancelRefund({ cancelled: true }).ok).toBe(false);
+  });
+
+  it("返還額は、消込と返金を合わせても返還額を超えない（性質）", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.array(fc.integer({ min: 1, max: 300_000 }), { maxLength: 5 }),
+        (amount, uses) => {
+          // 返還額の残りまでを順に消し込み、最後に残りを返金すると、残りは 0 になる
+          let allocated = 0;
+          for (const u of uses) {
+            const left = creditRemaining({ amount, allocated, refunded: 0 });
+            allocated += Math.min(u, left);
+          }
+          const credit = {
+            amount,
+            allocated,
+            refunded: 0,
+            cancelled: false,
+            salesReturnId: "rt",
+            receivedOn: "2026-10-01",
+          };
+          const refund = planRefund(credit, "2026-10-01", "2026-10-01");
+          // 残りがあれば残りすべてを返金でき、なければ返金できない。どちらでも消込 + 返金 = 返還額になる
+          expect(refund.ok).toBe(allocated < amount);
+          const refunded = refund.ok ? refund.value : 0;
+          expect(allocated + refunded).toBe(amount);
+          expect(creditRemaining({ amount, allocated, refunded })).toBe(0);
+          expect(paymentUnallocated(amount, [allocated], refunded)).toBe(0);
+        },
+      ),
+      { seed: SEED },
+    );
   });
 });
 

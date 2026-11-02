@@ -57,6 +57,8 @@ export interface InvoiceAllocationRow {
   readonly paymentId: string;
   readonly receivedOn: string;
   readonly method: "transfer" | "cash" | "offset" | "other";
+  /** 返還請求書の返還額から消し込んだなら、その返品伝票（普通の入金は null） */
+  readonly salesReturnId: string | null;
   readonly amount: number;
   readonly adjustment: number;
   readonly adjustmentKind: "bank_fee" | "discount" | "other" | null;

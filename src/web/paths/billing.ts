@@ -24,7 +24,15 @@ export const billingPaths = {
   salesReturnNew: (orderId: string) => withQuery("/sales-returns/new", { orderId }),
   salesReturn: (id: string, query?: Query) => withQuery(`/sales-returns/${enc(id)}`, query),
   salesReturnCancel: (id: string) => `/sales-returns/${enc(id)}/cancel`,
+  /** 返品伝票の詳細の「返還請求書」の欄（受注詳細から移る） */
+  salesReturnCreditNote: (id: string) => `/sales-returns/${enc(id)}#credit-note`,
   creditNoteIssue: (returnId: string) => `/sales-returns/${enc(returnId)}/credit-note`,
+  /** 請求書で差し引けない返品の返還請求書の発行（POST） */
+  creditNoteIssueUnbilled: (returnId: string) =>
+    `/sales-returns/${enc(returnId)}/credit-note/unbilled`,
+  /** 請求書で差し引けない返品の返還請求書の取消（POST） */
+  creditNoteCancelUnbilled: (returnId: string) =>
+    `/sales-returns/${enc(returnId)}/credit-note/cancel`,
 
   customerReceipts: (query?: Query) => withQuery("/receipts", query),
   customerReceiptsCsv: () => "/receipts/csv",
@@ -34,7 +42,10 @@ export const billingPaths = {
   customerReceipt: (id: string, query?: Query) => withQuery(`/receipts/${enc(id)}`, query),
   customerReceiptAllocate: (id: string) => `/receipts/${enc(id)}/allocate`,
   customerReceiptCancel: (id: string) => `/receipts/${enc(id)}/cancel`,
+  /** 返還請求書の返還額の残りを返金済みにする（POST） */
+  customerReceiptRefund: (id: string) => `/receipts/${enc(id)}/refund`,
   allocationCancel: (id: string) => `/receipts/allocations/${enc(id)}/cancel`,
+  refundCancel: (id: string) => `/receipts/refunds/${enc(id)}/cancel`,
 
   receivables: (query?: Query) => withQuery("/receivables", query),
   receivablesCsv: () => "/receivables/csv",

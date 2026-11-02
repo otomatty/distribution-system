@@ -20,6 +20,7 @@ import {
   salesCharges,
   salesOrderLines,
   salesOrders,
+  shipments,
   stockBalances,
 } from "../../schema";
 import { inList, insertBatches } from "../../sql-helpers";
@@ -402,21 +403,26 @@ export function salesOrderStore(db: Db): SalesOrderStore {
         db.insert(salesCharges).values(batch).run();
     },
 
-    forShipping(shipPlannedOn, locationId) {
+    forShipping(date, locationId) {
+      // 受注済みの受注は発送されると減るので、(状態, 出荷予定日) の索引の「受注済み・この日まで」は小さい
       return shippingOrders(
-        and(eq(salesOrders.shipPlannedOn, shipPlannedOn), eq(salesOrders.locationId, locationId)),
+        and(lte(salesOrders.shipPlannedOn, date), eq(salesOrders.locationId, locationId)),
       );
     },
 
-    shippedIds(shipPlannedOn, locationId) {
+    shippedIds(date, locationId) {
+      // その日の発送（発送日の索引）から受注をたどる。発送済みの受注は年々増えるので、受注の側からは探さない
       return db
         .select({ id: salesOrders.id })
-        .from(salesOrders)
+        .from(shipments)
+        .innerJoin(salesOrders, eq(salesOrders.id, shipments.salesOrderId))
         .where(
           and(
-            eq(salesOrders.status, "shipped"),
-            eq(salesOrders.shipPlannedOn, shipPlannedOn),
-            eq(salesOrders.locationId, locationId),
+            eq(shipments.shippedOn, date),
+            eq(shipments.cancelled, false),
+            sql`+${salesOrders.status} = 'shipped'`,
+            sql`+${salesOrders.locationId} = ${locationId}`,
+            sql`+${salesOrders.shipPlannedOn} <= ${date}`,
           ),
         )
         .orderBy(asc(salesOrders.number))
@@ -425,15 +431,17 @@ export function salesOrderStore(db: Db): SalesOrderStore {
     },
 
     dashboard(today) {
+      const overdueCount = sql<number>`sum(CASE WHEN ${salesOrders.shipPlannedOn} < ${today} THEN 1 ELSE 0 END)`;
       const shipPlanned = db
         .select({
           locationId: salesOrders.locationId,
           locationName: locations.name,
           count: count(),
+          overdue: overdueCount,
         })
         .from(salesOrders)
         .leftJoin(locations, eq(locations.id, salesOrders.locationId))
-        .where(and(eq(salesOrders.status, "received"), eq(salesOrders.shipPlannedOn, today)))
+        .where(and(eq(salesOrders.status, "received"), lte(salesOrders.shipPlannedOn, today)))
         .groupBy(salesOrders.locationId)
         .orderBy(
           sql`${salesOrders.locationId} IS NULL`,
@@ -445,6 +453,7 @@ export function salesOrderStore(db: Db): SalesOrderStore {
           locationId: r.locationId,
           locationName: r.locationId === null ? "メーカー直" : (r.locationName ?? ""),
           count: r.count,
+          overdue: r.overdue,
         }));
       const shortage =
         db.select({ n: count() }).from(salesOrders).where(shortageCondition).get()?.n ?? 0;

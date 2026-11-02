@@ -218,26 +218,32 @@ describe("返還請求書", () => {
     const setup = await billingSetup();
     const shipped = await shipOrder(setup);
     const ret = await recordReturn(shipped.order.id, { quantity: 2, restockTo: null });
+    // 未請求の返品伝票は、請求書で差し引けない返品として発行する（billing-credit-notes.test.ts）。
+    // 請求済みの返品の発行（帳票だけ）はできない
     const notYet = await systemQuery("salesReturns.get", { id: ret.id });
-    expect(notYet?.creditNote).toMatchObject({ issuable: false, obligation: "optional" });
-    expect(notYet?.creditNote.blocker).toContain("請求書に載せた");
+    expect(notYet?.creditNote).toMatchObject({ kind: "unbilled", obligation: "optional" });
     expect(
       await systemCommandResult("creditNotes.issue", {
         salesReturnId: ret.id,
         version: notYet!.ret.version,
         issuedOn: today(),
       }),
-    ).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    ).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state", message: expect.stringContaining("未請求の返品伝票です") },
+    });
 
     const invoice = await issuePerShipment(shipped, {
       returns: [{ id: ret.id, version: await returnVersion(ret.id) }],
     });
     const view = await systemQuery("salesReturns.get", { id: ret.id });
     expect(view?.creditNote).toMatchObject({
+      kind: "billed",
       issuable: true,
       blocker: null,
       obligation: "optional",
     });
+    expect(view?.credit).toBeNull();
     expect(view?.creditNote.preview).toMatchObject({ subtotal: 301, tax: 24, total: 325 });
     const input = { salesReturnId: ret.id, version: view!.ret.version, issuedOn: today() };
     const sales = await createEmployee(["sales"]);
@@ -307,17 +313,21 @@ describe("返還請求書", () => {
       { shipmentId: shipped.shipmentId, shipmentVersion: shipped.shipmentVersion },
       { returns: [] },
     );
-    expect((await systemQuery("salesReturns.get", { id: ret.id }))?.creditNote.issuable).toBe(
-      false,
-    );
+    // 請求書に載せなかった返品は、請求書で差し引けない返品として発行できる
     const r = await systemQuery("salesReturns.get", { id: ret.id });
+    expect(r?.creditNote).toMatchObject({ kind: "unbilled", issuable: true });
     expect(r?.creditNote.obligation).toBe("required");
     expect(
-      await systemCommandResult("creditNotes.issue", {
+      await systemCommandResult("creditNotes.issueUnbilled", {
         salesReturnId: ret.id,
         version: r!.ret.version,
         issuedOn: addDays(today(), -1),
       }),
-    ).toMatchObject({ ok: false });
+    ).toMatchObject({
+      ok: false,
+      error: {
+        fields: [{ field: "issuedOn", message: `発行日は返品日（${today()}）以降にしてください` }],
+      },
+    });
   });
 });

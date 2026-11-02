@@ -37,6 +37,11 @@ export interface SalesReturnRecord {
   readonly invoiceStatus: InvoiceStatus | null;
   /** 返還請求書の番号（CN-2026-000001） */
   readonly creditNoteNumber: string | null;
+  /**
+   * 返還請求書で精算した（請求書で差し引けない返品の）返品伝票なら、取り消していない返還額の入金。
+   * 精算した返品伝票は未請求の返品伝票に含めない
+   */
+  readonly creditPaymentId: string | null;
   readonly cancelled: boolean;
   /** 取消の理由・日時（UTC）・操作者（取り消していなければ null） */
   readonly cancelReason: string | null;
@@ -91,8 +96,10 @@ export interface SalesReturnStore {
   cancel(id: string, expectedVersion: number, reason: string, meta: WriteMeta): boolean;
   /** 版番号が一致したときだけ返還請求書の番号を記録する。更新できたら true */
   setCreditNote(id: string, expectedVersion: number, number: string, meta: WriteMeta): boolean;
+  /** 版番号が一致したときだけ返還請求書の番号を消す（返還請求書の取消）。更新できたら true */
+  clearCreditNote(id: string, expectedVersion: number, meta: WriteMeta): boolean;
   /**
-   * 未請求（請求書に載せていない・取り消していない）の返品伝票。返品日・番号の順。
+   * 未請求（請求書に載せていない・取り消していない・返還請求書で精算していない）の返品伝票。返品日・番号の順。
    * 請求書を取り消した返品伝票は、返還請求書を発行していても未請求に戻る（次の請求書に載せる）
    */
   unbilled(filter: UnbilledReturnFilter, limit: number): SalesReturnRecord[];

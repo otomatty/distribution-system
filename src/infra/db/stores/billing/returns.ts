@@ -8,6 +8,7 @@ import type {
 } from "../../../../usecases/billing/returns.port";
 import { auditInsert, type Db } from "../../client";
 import {
+  customerPayments,
   employees,
   invoices,
   items,
@@ -36,11 +37,20 @@ export function salesReturnStore(db: Db): SalesReturnStore {
         invoiceStatus: invoices.status,
         createdByName: employees.name,
         cancelledByName: cancelledBy.name,
+        creditPaymentId: customerPayments.id,
       })
       .from(salesReturns)
       .innerJoin(salesOrders, eq(salesOrders.id, salesReturns.salesOrderId))
       .innerJoin(partners, eq(partners.id, salesReturns.customerId))
       .leftJoin(invoices, eq(invoices.id, salesReturns.invoiceId))
+      // 返還請求書で精算した返品伝票の、取り消していない返還額（1件だけ。発行と取消で守る）
+      .leftJoin(
+        customerPayments,
+        and(
+          eq(customerPayments.salesReturnId, salesReturns.id),
+          eq(customerPayments.cancelled, false),
+        ),
+      )
       .leftJoin(employees, eq(employees.id, salesReturns.createdBy))
       .leftJoin(cancelledBy, eq(cancelledBy.id, salesReturns.cancelledBy))
       .where(where)
@@ -93,6 +103,7 @@ export function salesReturnStore(db: Db): SalesReturnStore {
       invoiceNumber: h.invoiceNumber,
       invoiceStatus: h.invoiceStatus,
       creditNoteNumber: h.ret.creditNoteNumber,
+      creditPaymentId: h.creditPaymentId,
       cancelled: h.ret.cancelled,
       cancelReason: h.ret.cancelReason,
       cancelledAt: h.ret.cancelledAt,
@@ -205,11 +216,27 @@ export function salesReturnStore(db: Db): SalesReturnStore {
         .all();
       return rows.length === 1;
     },
+    clearCreditNote(id, expectedVersion, meta) {
+      const rows = db
+        .update(salesReturns)
+        .set({
+          creditNoteNumber: null,
+          version: sql`${salesReturns.version} + 1`,
+          updatedAt: meta.at,
+          updatedBy: meta.by,
+        })
+        .where(and(eq(salesReturns.id, id), eq(salesReturns.version, expectedVersion)))
+        .returning({ id: salesReturns.id })
+        .all();
+      return rows.length === 1;
+    },
     unbilled(filter, limit) {
       const conds: SQL[] = [
         eq(salesReturns.customerId, filter.customerId),
         isNull(salesReturns.invoiceId),
         eq(salesReturns.cancelled, false),
+        // 返還請求書で精算した返品伝票は、請求書で差し引かない
+        isNull(customerPayments.id),
       ];
       if (filter.returnedTo) conds.push(lte(salesReturns.returnedOn, filter.returnedTo));
       return load(and(...conds), [asc(salesReturns.returnedOn), asc(salesReturns.number)], limit);

@@ -245,6 +245,7 @@ export function invoiceStore(db: Db): InvoiceStore {
           paymentId: paymentAllocations.paymentId,
           receivedOn: customerPayments.receivedOn,
           method: customerPayments.method,
+          salesReturnId: customerPayments.salesReturnId,
           amount: paymentAllocations.amount,
           adjustment: paymentAllocations.adjustment,
           adjustmentKind: paymentAllocations.adjustmentKind,

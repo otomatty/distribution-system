@@ -19,14 +19,14 @@
 
 ### Cloudflare のリソースの作成（環境ごとに1回。配置は「アジア太平洋」）
 
-要件定義書 7章のとおり、Durable Objects・D1・R2 は「アジア太平洋」（`apac`）の配置を指定します。
+要件定義書 7章のとおり、Durable Objects・D1・R2 は「アジア太平洋」の配置を指定します。Durable Objects はアジア太平洋の中でも日本に近い「北東アジア」（`apac-ne`：日本・韓国など）を指定し、D1 と R2 は `apac` を指定します（D1・R2 には北東アジアの指定がない）。
 配置の指定は**作るときだけ**効き、後から変えられません（日本国内は保証されません）。作り直すと中身が消えるので、最初に正しく作ります。
 
-| 対象                      | 配置の指定のしかた                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------ |
-| Durable Object（業務 DB） | コードで指定済み（`src/infra/do/client.ts` の `locationHint: "apac"`）。最初の呼び出しで作られる |
-| D1（ログイン情報）        | `wrangler d1 create … --location apac`                                                           |
-| R2（ファイル）            | `wrangler r2 bucket create … --location apac`                                                    |
+| 対象                      | 配置の指定のしかた                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| Durable Object（業務 DB） | コードで指定済み（`src/infra/do/client.ts` の `locationHint: "apac-ne"`）。最初の呼び出しで作られる |
+| D1（ログイン情報）        | `wrangler d1 create … --location apac`                                                              |
+| R2（ファイル）            | `wrangler r2 bucket create … --location apac`                                                       |
 
 ```sh
 # <環境> は staging か production。Cloudflare の API トークン（D1・R2・Queues の編集権限）で実行する
@@ -42,7 +42,7 @@ npx wrangler r2 bucket info distribution-files-<環境>
 - `wrangler d1 create` が表示する `database_id` を、`wrangler.jsonc` の `env.<環境>.d1_databases[0].database_id` に書きます。
   **`wrangler.jsonc` の `database_id` はすべて `00000000-0000-0000-0000-000000000000`（仮の値）なので、最初に CI からデプロイする前に、検証と本番の両方を本物の ID に書き換えてコミットしてください**
   （仮の値のままだと、CI の D1 のマイグレーションとデプロイが失敗します。トップレベルの `distribution-auth-dev` は手元の開発用で、`--local` でしか使わないので仮の値のままでよい）
-- Durable Object は、デプロイ後に最初に画面を開いた（または Cron が動いた）ときに `apac` に作られます。後から配置は変わりません
+- Durable Object は、デプロイ後に最初に画面を開いた（または Cron が動いた）ときに `apac-ne` に作られます（指定は目安で、近くの別の地域に作られることもあります）。後から配置は変わりません
 - 作った後に、R2 のバケットロック（2章）と Secrets（README の「初回の準備」）を設定し、`DEPLOY_ENABLED` を `true` にします
 
 ### メールの送信元（Email Service）

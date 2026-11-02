@@ -242,6 +242,10 @@ export const csvExports = {
       { header: "取消の理由", value: (p) => p.cancelReason },
       { header: "メモ", value: (p) => p.memo },
       { header: "記録日時", value: (p) => dateTime(p.createdAt) },
+      // 返還請求書の返還額（請求書で差し引けない返品を精算したもの）。今までの列の並びは変えずに後ろに足す
+      { header: "返還請求書の返還額", value: (p) => (p.salesReturnId ? "返還額" : "") },
+      { header: "返品伝票", value: (p) => p.salesReturnNumber },
+      { header: "返金済み", value: (p) => p.refundedAmount },
     ],
   }),
   receivables: defineCsvExport({
