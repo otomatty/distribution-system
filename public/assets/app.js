@@ -2,6 +2,8 @@
 // - 通信が途切れたときの表示と再送信（同じ受付番号で送り直すので二重登録にならない）
 // - 入力途中の内容を端末に下書きとして保存（data-draft を付けたフォーム）
 // - 数量の「−」「＋」ボタン（タブレット向け）
+// - ダイアログ（商品選択など）の開閉。<dialog> の showModal は htmx ではできないため
+// - 明細の行を外すボタン（倉庫の Wi-Fi が途切れても使えるよう、通信せずに消す）
 (function () {
   "use strict";
 
@@ -112,12 +114,60 @@
     return DRAFT_PREFIX + form.getAttribute("data-draft");
   }
 
+  // 明細の行（data-draft-lines を付けたフォーム）：商品 ID と数量を行の順に保存し、
+  // 開き直したときはサーバーから行を取り直してから数量を戻す
+  var LINE_ITEM = "lineItemId";
+  var LINE_QUANTITY = "lineQuantity";
+  // 入力の name と重ならない、下書きの中の明細の置き場所
+  var LINES_KEY = "@lines";
+
+  function serializeLines(form) {
+    var lines = [];
+    var rows = form.querySelectorAll("[data-line-item]");
+    for (var i = 0; i < rows.length; i++) {
+      var qtyInput = rows[i].querySelector("input[name=" + LINE_QUANTITY + "]");
+      lines.push({
+        itemId: rows[i].getAttribute("data-line-item"),
+        quantity: qtyInput ? qtyInput.value : "",
+      });
+    }
+    return lines;
+  }
+
+  function restoreLines(form, lines) {
+    var url = form.getAttribute("data-draft-lines");
+    var target = form.getAttribute("data-draft-lines-target");
+    if (!url || !target || !window.htmx || !Array.isArray(lines) || lines.length === 0) return;
+    var ids = lines.map(function (l) {
+      return l.itemId;
+    });
+    window.htmx
+      .ajax("POST", url, {
+        source: form,
+        target: target,
+        swap: "beforeend",
+        values: { itemIds: ids },
+      })
+      .then(function () {
+        lines.forEach(function (l) {
+          var row = form.querySelector('[data-line-item="' + CSS.escape(l.itemId) + '"]');
+          var qtyInput = row ? row.querySelector("input[name=" + LINE_QUANTITY + "]") : null;
+          if (qtyInput && typeof l.quantity === "string") qtyInput.value = l.quantity;
+        });
+        saveDraft(form);
+        return null;
+      });
+  }
+
   function serialize(form) {
     var data = {};
+    var withLines = form.hasAttribute("data-draft-lines");
+    if (withLines) data[LINES_KEY] = serializeLines(form);
     var elements = form.elements;
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
       if (!el.name || el.disabled) continue;
+      if (withLines && (el.name === LINE_ITEM || el.name === LINE_QUANTITY)) continue;
       if (el.type === "checkbox" || el.type === "radio") {
         data[el.name + "|" + el.value] = el.checked;
       } else if (el.tagName === "SELECT" && el.multiple) {
@@ -189,6 +239,7 @@
           var parsed = JSON.parse(raw);
           if (parsed && parsed.data) {
             restore(form, parsed.data);
+            restoreLines(form, parsed.data[LINES_KEY]);
             var note = document.createElement("div");
             note.className = "alert alert-info";
             note.setAttribute("role", "status");
@@ -269,6 +320,55 @@
     input.value = String(next);
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  // ---- ダイアログ（data-dialog-open="<dialog の id>" で開き、data-dialog-close で閉じる） ----
+  // 開いたときに dialog へ picker-open を送る（商品選択ダイアログはこれで検索結果を読み込む）
+  document.addEventListener("click", function (event) {
+    var opener = event.target.closest ? event.target.closest("[data-dialog-open]") : null;
+    if (opener) {
+      var dialog = document.getElementById(opener.getAttribute("data-dialog-open"));
+      if (!dialog || typeof dialog.showModal !== "function") return;
+      if (!dialog.open) dialog.showModal();
+      dialog.dispatchEvent(new CustomEvent("picker-open"));
+      var search = dialog.querySelector("input[type=search]");
+      if (search) search.focus();
+      return;
+    }
+    var closer = event.target.closest ? event.target.closest("[data-dialog-close]") : null;
+    if (closer) {
+      var owner = closer.closest("dialog");
+      if (owner) owner.close();
+    }
+  });
+
+  // data-dialog-close-on-success：送信が成功したら、選択を外してダイアログを閉じる
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var elt = event.detail.elt;
+    if (!elt || !event.detail.successful || !elt.hasAttribute) return;
+    if (!elt.hasAttribute("data-dialog-close-on-success")) return;
+    var dialog = elt.closest("dialog");
+    if (!dialog) return;
+    var checks = dialog.querySelectorAll("input[type=checkbox]");
+    for (var i = 0; i < checks.length; i++) checks[i].checked = false;
+    dialog.close();
+  });
+
+  // ---- 明細の行を外す（data-remove-row） ---------------------------------------
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest ? event.target.closest("[data-remove-row]") : null;
+    if (!button) return;
+    var row = button.closest("tr");
+    var form = button.closest("form");
+    if (row) row.remove();
+    if (form && form.hasAttribute("data-draft")) saveDraft(form);
+  });
+
+  // 行を追加したフォームの下書きも保存し直す
+  document.addEventListener("htmx:afterSwap", function (event) {
+    var target = event.detail.target;
+    var form = target && target.closest ? target.closest("form[data-draft]") : null;
+    if (form && readyForms.has(form)) saveDraft(form);
   });
 
   // ---- 初期化 ---------------------------------------------------------------

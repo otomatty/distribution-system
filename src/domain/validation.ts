@@ -13,6 +13,16 @@ export function isValidJan(code: string): boolean {
   return (10 - (sum % 10)) % 10 === check;
 }
 
+/**
+ * JAN の入力チェック。問題がなければ undefined、あれば理由を返す。
+ * - format：8桁または13桁の数字でない
+ * - check_digit：桁数は正しいがチェックディジットが合わない
+ */
+export function janError(code: string): "format" | "check_digit" | undefined {
+  if (!/^(\d{8}|\d{13})$/.test(code)) return "format";
+  return isValidJan(code) ? undefined : "check_digit";
+}
+
 /** 郵便番号を「1234567」に正規化する。不正なら undefined。 */
 export function normalizePostalCode(text: string): string | undefined {
   const t = text.replace(/[‐－\-ー\s]/g, "");

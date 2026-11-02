@@ -6,6 +6,7 @@ import {
   formatPostalCode,
   isValidEmail,
   isValidJan,
+  janError,
   normalizePhone,
   normalizePostalCode,
   normalizeRegistrationNumber,
@@ -17,6 +18,13 @@ describe("validation", () => {
     expect(isValidJan("4901234567890")).toBe(false);
     expect(isValidJan("49123456")).toBe(true);
     expect(isValidJan("12345")).toBe(false);
+  });
+  it("JAN の入力チェックは桁数とチェックディジットを区別する", () => {
+    expect(janError("4901234567894")).toBeUndefined();
+    expect(janError("49123456")).toBeUndefined();
+    expect(janError("4901234567890")).toBe("check_digit");
+    expect(janError("12345")).toBe("format");
+    expect(janError("490123456789A")).toBe("format");
   });
   it("郵便番号", () => {
     expect(normalizePostalCode("022-0002")).toBe("0220002");

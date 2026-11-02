@@ -6,6 +6,7 @@ import { normalizeRegistrationNumber } from "../../domain/validation";
 import { defineCommand, defineQuery, STALE_VERSION_MESSAGE } from "../core";
 import { businessDate, optionalText, requiredText, version } from "../schemas";
 import { emailInput, faxInput, phoneInput, postalCodeInput } from "./contact";
+import type { TaxRateRecord } from "./settings.port";
 
 export const updateCompanySettings = defineCommand({
   permission: "settings.manage",
@@ -58,8 +59,12 @@ export const updateCompanySettings = defineCommand({
 export const addTaxRate = defineCommand({
   permission: "settings.manage",
   input: z.object({
-    category: z.enum(["standard", "reduced"]),
-    ratePercent: z.number().min(0, "0以上で入力してください").max(100, "100以下で入力してください"),
+    category: z.enum(["standard", "reduced"], { error: "税区分を選んでください" }),
+    ratePercent: z
+      .number({ error: "税率は数字で入力してください" })
+      .min(0, "0以上で入力してください")
+      .max(100, "100以下で入力してください")
+      .refine((v) => Number.isInteger(v * 100), "税率は小数第2位までで入力してください"),
     effectiveFrom: businessDate,
   }),
   run(ctx, input) {
@@ -86,9 +91,18 @@ export const getSettings = defineQuery({
   permission: "view",
   input: z.object({}),
   run(ctx) {
-    return {
-      company: ctx.stores.settings.getCompany(),
-      taxRates: ctx.stores.settings.listTaxRates(),
-    };
+    const taxRates = ctx.stores.settings.listTaxRates();
+    const today = ctx.clock.today();
+    // 税区分ごとに、今日の時点で適用されている税率（適用開始日が今日以前で最も新しいもの）
+    const activeTaxRateIds = (["standard", "reduced"] as const).flatMap((category) => {
+      const current = taxRates
+        .filter((r) => r.category === category && r.effectiveFrom <= today)
+        .reduce<TaxRateRecord | undefined>(
+          (best, r) => (!best || r.effectiveFrom > best.effectiveFrom ? r : best),
+          undefined,
+        );
+      return current ? [current.id] : [];
+    });
+    return { company: ctx.stores.settings.getCompany(), taxRates, activeTaxRateIds };
   },
 });

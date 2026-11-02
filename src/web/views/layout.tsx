@@ -39,6 +39,8 @@ const NAV: readonly { readonly title: string; readonly items: readonly NavItem[]
     items: [
       { label: "在庫一覧", href: paths.stock() },
       { label: "在庫操作", href: paths.stockOperationNew() },
+      { label: "在庫操作の履歴", href: paths.stockOperations() },
+      { label: "棚卸", href: paths.stocktaking() },
     ],
   },
   {
