@@ -42,8 +42,10 @@ export const receivingRoutes = new Hono<AppEnv>();
 receivingRoutes.get("/", async (c) => {
   const locationId = c.req.query("locationId") ?? "";
   const overdue = c.req.query("overdue") === "1";
+  // 納品希望日（ダッシュボードの「今日の入荷予定」から開くと今日）。空ならすべて
+  const on = c.req.query("on") ?? "";
   const [groups, locations] = await Promise.all([
-    runQuery(c, "receipts.schedule", { locationId: locationId || undefined, overdue }),
+    runQuery(c, "receipts.schedule", { locationId: locationId || undefined, overdue, on }),
     runQuery(c, "locations.options", {}),
   ]);
   return c.html(
@@ -71,6 +73,9 @@ receivingRoutes.get("/", async (c) => {
             options={locations.map((l) => ({ value: l.id, label: l.name }))}
             empty="すべて"
           />
+        </Field>
+        <Field label="納品希望日" name="on" hint="空ならすべての日">
+          <Input name="on" type="date" value={on} />
         </Field>
         <Checkbox name="overdue" value="1" label="納品希望日を過ぎたものだけ" checked={overdue} />
         <noscript>

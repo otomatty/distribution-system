@@ -1,5 +1,5 @@
 /** 仕入（発注・入荷・仕入返品・仕入先請求書・支払）のユースケース。追加したら下の一覧に1行ずつ登録する */
-import { purchasingDashboard } from "./dashboard";
+import { purchasingDashboard, receiptsDueToday } from "./dashboard";
 import {
   cancelPurchaseOrder,
   confirmPurchaseOrder,
@@ -47,6 +47,7 @@ export const purchasingQueries = {
   "purchaseOrders.get": getPurchaseOrder,
   "purchaseOrders.preview": previewPurchaseOrder,
   "receipts.schedule": receivingSchedule,
+  "receipts.dueToday": receiptsDueToday,
   "supplierInvoices.list": listSupplierInvoices,
   "supplierInvoices.get": getSupplierInvoice,
   "supplierInvoices.candidates": supplierInvoiceCandidates,
