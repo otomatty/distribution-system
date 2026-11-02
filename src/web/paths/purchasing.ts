@@ -33,6 +33,10 @@ export const purchasingPaths = {
   supplierInvoicePay: (id: string) => `/supplier-invoices/${enc(id)}/pay`,
   supplierInvoiceCancelPayment: (id: string) => `/supplier-invoices/${enc(id)}/cancel-payment`,
   supplierInvoiceCancel: (id: string) => `/supplier-invoices/${enc(id)}/cancel`,
+  /** 仕入先請求書の PDF の添付（POST、multipart）と、添付した版のダウンロード */
+  supplierInvoiceAttachments: (id: string) => `/supplier-invoices/${enc(id)}/attachments`,
+  supplierInvoiceAttachment: (id: string, attachmentId: string) =>
+    `/supplier-invoices/${enc(id)}/attachments/${enc(attachmentId)}`,
 
   payables: (query?: Query) => withQuery("/payables", query),
   payablesCsv: () => "/payables/csv",

@@ -14,6 +14,10 @@ import {
 import { createPurchaseReturn } from "./purchase-returns";
 import { cancelPurchaseReceipt, receivingSchedule, recordPurchaseReceipt } from "./receipts";
 import {
+  attachSupplierInvoicePdf,
+  getSupplierInvoiceAttachment,
+} from "./supplier-invoice-attachments";
+import {
   cancelSupplierInvoiceCommand,
   cancelSupplierPaymentCommand,
   createSupplierInvoice,
@@ -41,6 +45,7 @@ export const purchasingCommands = {
   "supplierInvoices.pay": paySupplierInvoiceCommand,
   "supplierInvoices.payBulk": payBulkSupplierInvoices,
   "supplierInvoices.cancelPayment": cancelSupplierPaymentCommand,
+  "supplierInvoices.attach": attachSupplierInvoicePdf,
 } as const;
 
 export const purchasingQueries = {
@@ -55,6 +60,7 @@ export const purchasingQueries = {
   "supplierInvoices.get": getSupplierInvoice,
   "supplierInvoices.candidates": supplierInvoiceCandidates,
   "supplierInvoices.preview": previewSupplierInvoice,
+  "supplierInvoices.attachment": getSupplierInvoiceAttachment,
   "payables.list": listPayables,
   "payables.balances": payableBalancesQuery,
   "purchasing.dashboard": purchasingDashboard,

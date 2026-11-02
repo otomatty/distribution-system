@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { canAttachToSupplierInvoice } from "../../domain/attachments";
 import {
   addDays,
   addMonths,
@@ -58,6 +59,7 @@ import type { ReceiptRecord } from "./receipts.port";
 import type {
   InvoiceReceiptRow,
   InvoiceReturnRow,
+  SupplierInvoiceAttachmentRecord,
   SupplierInvoiceFilter,
   SupplierInvoiceRecord,
   SupplierPaymentRecord,
@@ -563,6 +565,8 @@ export interface SupplierInvoiceView {
   readonly receipts: readonly (InvoiceReceiptRow & { subtotal: number })[];
   readonly returns: readonly (InvoiceReturnRow & { subtotal: number })[];
   readonly payments: readonly SupplierPaymentRecord[];
+  /** 添付した PDF のすべての版（新しい順。先頭が今の版）。versionNo は1から数えた版 */
+  readonly attachments: readonly (SupplierInvoiceAttachmentRecord & { versionNo: number })[];
   /** 今の結びつきで計算した税率ごとの内訳（税率表にない日付なら null） */
   readonly amounts: InvoiceAmounts | null;
   /** 操作者が今できる操作（状態と権限から決める） */
@@ -570,6 +574,8 @@ export interface SupplierInvoiceView {
     readonly pay: boolean;
     readonly cancelPayment: boolean;
     readonly cancel: boolean;
+    /** PDF を添付できるか（新しい版の追加を含む） */
+    readonly attach: boolean;
   };
 }
 
@@ -582,6 +588,7 @@ export const getSupplierInvoice = defineQuery({
     const manage = can(ctx.actor.roles, "supplierInvoices.manage");
     const receipts = ctx.stores.supplierInvoices.linkedReceipts(id);
     const returns = ctx.stores.supplierInvoices.linkedReturns(id);
+    const attachments = ctx.stores.supplierInvoices.attachments(id);
     const amounts = computeAmounts(
       ctx,
       invoice.invoiceDate,
@@ -594,11 +601,15 @@ export const getSupplierInvoice = defineQuery({
       receipts: receipts.map((r) => Object.assign(r, { subtotal: sumAmounts(r.amounts) })),
       returns: returns.map((r) => Object.assign(r, { subtotal: sumAmounts(r.amounts) })),
       payments: ctx.stores.supplierInvoices.payments(id),
+      attachments: attachments.map((a, i) =>
+        Object.assign(a, { versionNo: attachments.length - i }),
+      ),
       amounts: amounts.ok ? amounts.value : null,
       actions: {
         pay: manage && paySupplierInvoice(invoice.status, 1).ok,
         cancelPayment: manage && cancelSupplierPayment(invoice.status, "取消").ok,
         cancel: manage && cancelSupplierInvoice(invoice.status, "取消").ok,
+        attach: manage && canAttachToSupplierInvoice(invoice.status).ok,
       },
     };
   },
