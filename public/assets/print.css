@@ -1,0 +1,137 @@
+/*
+ * 印刷用のページ（発送リスト：A4 横、販売先ごとの仕分けリスト：A4 縦）。
+ * 画面の CSP（style-src 'self'）のまま使えるよう、埋め込みのスタイルではなくこのファイルに置く。
+ */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+@page portrait {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+body.print {
+  margin: 0;
+  background: #fff;
+  color: #111;
+  font-family:
+    "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic",
+    Meiryo, sans-serif;
+  font-size: 9pt;
+  line-height: 1.4;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+body.print.portrait .print-page {
+  page: portrait;
+}
+
+.print-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #eef2f7;
+  border-bottom: 1px solid #c8d0db;
+  font-size: 15px;
+}
+.print-button {
+  min-height: 3rem;
+  padding: 0 1.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: #1f5fae;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.print-page {
+  break-after: page;
+}
+.print-page:last-child {
+  break-after: auto;
+}
+.print-header h1 {
+  margin: 0 0 1mm;
+  font-size: 15pt;
+}
+.print-header p {
+  margin: 0 0 2mm;
+}
+.print-header .customer {
+  font-size: 14pt;
+  font-weight: 700;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.print-table thead {
+  display: table-header-group;
+}
+.print-table th,
+.print-table td {
+  padding: 1mm 1.5mm;
+  border: 0.25mm solid #555;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.print-table thead th {
+  background: #eee;
+}
+.print-table tr {
+  break-inside: avoid;
+}
+.print-table .item {
+  width: 60mm;
+  text-align: left;
+}
+.print-table .qty {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.print-table .total {
+  background: #f3f3f3;
+  font-weight: 700;
+}
+.print-table .check {
+  width: 12mm;
+  text-align: center;
+}
+.print-table.sorting .item {
+  width: auto;
+}
+.memo {
+  margin-top: 3mm;
+  padding: 2mm;
+  border: 0.25mm solid #999;
+  white-space: pre-wrap;
+}
+
+@media screen {
+  body.print {
+    background: #e5e7eb;
+  }
+  .print-page {
+    max-width: 277mm;
+    margin: 8mm auto;
+    padding: 6mm;
+    background: #fff;
+    box-shadow: 0 1mm 3mm rgba(0, 0, 0, 0.2);
+  }
+  body.print.portrait .print-page {
+    max-width: 186mm;
+  }
+}
+
+@media print {
+  .print-toolbar {
+    display: none;
+  }
+}
