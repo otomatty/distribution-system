@@ -48,6 +48,9 @@ export function createApp(): Hono<AppEnv> {
     if (error instanceof HTTPException) return error.getResponse();
     if (error instanceof QueryError && error.code === "forbidden")
       return c.text(error.message, 403);
+    // URL の ID が長すぎるなど、照会の条件の誤りは利用者の入力の問題として扱う（通知しない）
+    if (error instanceof QueryError && error.code === "validation")
+      return c.text("ページが見つかりません", 404);
     // 想定外のエラーはログに残し、管理者にメールで知らせる（同じエラーは1時間に1回まで）
     const report = reportCritical(c.env, "unhandled error", error, {
       method: c.req.method,
