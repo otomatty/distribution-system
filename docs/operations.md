@@ -14,6 +14,7 @@
 | 定期処理         | `wrangler dev` では自動で動かない | Cron `0 18 * * *`（毎日 03:00 日本時間）と `30 * * * *`（毎時） |
 
 - バインディングは `wrangler.jsonc` の `env.staging` / `env.production` にあります。変えたら `bun run cf-typegen` で型を作り直します
+- デプロイ（`.github/workflows/deploy.yml`）は、GitHub のリポジトリの変数 `DEPLOY_ENABLED` が `true` のときだけ動きます。Cloudflare 側の準備（D1・R2・Queues の作成と `wrangler.jsonc` の ID、Secrets）と、GitHub の Secrets（`CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID`）、Environments（`production` に必須レビュー）を設定してから有効にします
 - 開発環境で定期処理を試すには、`wrangler dev` の実行中に `curl "http://localhost:8787/cdn-cgi/local/scheduled?cron=0+18+*+*+*"` を実行します
 
 ### メールの送信元（Email Service）

@@ -12,7 +12,6 @@ export const centiPlain = (n: number | null | undefined): string =>
 export const rate = formatRate;
 export const qty = (n: number | null | undefined): string =>
   n === null || n === undefined ? "" : n.toLocaleString("ja-JP");
-export const date = (d: string | null | undefined): string => d ?? "";
 export const jaDate = (d: string | null | undefined): string => (d ? formatJapaneseDate(d) : "");
 export const postal = (p: string | null | undefined): string =>
   p ? `〒${formatPostalCode(p)}` : "";
