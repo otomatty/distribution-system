@@ -101,9 +101,16 @@ test("月締めの販売先の締め処理で、締め期間の発送をまと�
   await expect(page).toHaveURL(/notice=updated$/);
   await expect(page.getByLabel("締め日")).toHaveValue("31");
 
-  // 前の月に2回発送する（締め期間を過ぎている）
+  // 前の月に2回受注して発送する（締め期間を過ぎている。発送日は受注日より前にできない）
   for (const day of [5, 20]) {
-    await registerSalesOrder(page, { customer, location, itemName, quantity: 2 });
+    await registerSalesOrder(page, {
+      customer,
+      location,
+      itemName,
+      quantity: 2,
+      orderedOn: lastMonthDay(day),
+      shipPlannedOn: lastMonthDay(day),
+    });
     await page.getByLabel(/^発送日/).fill(lastMonthDay(day));
     await page.getByRole("button", { name: "発送する" }).click();
     await expect(page.getByText(/^発送しました/)).toBeVisible();
@@ -131,4 +138,54 @@ test("月締めの販売先の締め処理で、締め期間の発送をまと�
   await page.goto(`/invoices?customerId=${customerId}`);
   await expect(page.locator("#results")).toContainText(`${period.from}〜${period.to}`);
   await expect(page.locator("#results")).toContainText("未入金");
+});
+
+test("請求書で差し引けない返品の返還請求書を発行し、返還額を入金の画面で返金済みにする", async ({
+  page,
+}) => {
+  page.on("dialog", (dialog) => void dialog.accept());
+  await login(page);
+  const { itemName, location } = await setupItemAndStock(page, "E2E返還商品");
+  const customer = await registerCustomer(page, "E2E返還先");
+  await registerSalesOrder(page, { customer, location, itemName, quantity: 4 });
+  await page.getByRole("button", { name: "発送する" }).click();
+  await expect(page.getByText(/^発送しました/)).toBeVisible();
+  const orderUrl = page.url().replace(/\?.*$/, "");
+
+  // 返品伝票（2個を廃棄）。どの請求書にも載っていない
+  await page.getByRole("link", { name: "返品伝票を登録" }).click();
+  await page.getByLabel(new RegExp(`^${itemName}の返品数`)).fill("2");
+  await page.getByLabel(`${itemName}の扱い`).selectOption("dispose");
+  await page.getByRole("button", { name: "返品伝票を登録する" }).click();
+  await expect(page.getByRole("heading", { name: /^返品伝票 RT-\d{4}-\d{6}$/ })).toBeVisible();
+
+  // 受注詳細から、返品伝票の返還請求書の欄へ移る
+  await page.goto(orderUrl);
+  await expect(page.locator("#so-returns")).toContainText("未請求（次の請求書に載せる）");
+  await page
+    .locator("#so-returns")
+    .getByRole("link", { name: "返還請求書を発行（請求書で差し引けない返品）" })
+    .click();
+  await expect(page).toHaveURL(/\/sales-returns\/[0-9A-Z]{26}#credit-note$/);
+  await page.getByRole("button", { name: "返還請求書を発行（請求書で差し引けない返品）" }).click();
+  await expect(page.getByText(/返品は精算済みにし/)).toBeVisible();
+  // 123.45円 × 2 = 246.9 → 246円、軽減税率 8% の消費税 19円
+  await expect(page.locator("#return-detail")).toContainText("返還請求書で精算");
+  await expect(page.locator(".credit-summary")).toContainText("¥265");
+
+  // 返還額の入金：返還額と示し、残りを返金済みにする
+  await page
+    .getByRole("link", { name: "返還額の入金を開く（請求書に消し込む・返金済みにする）" })
+    .click();
+  await expect(page.getByRole("heading", { name: /^返還請求書の返還額 / })).toBeVisible();
+  await expect(page.locator("#receipt-detail")).toContainText("未消込");
+  await page.getByLabel(/^メモ/).last().fill("振込で返金");
+  await page.getByRole("button", { name: "残りを返金済みにする" }).click();
+  await expect(page.getByText("返還額の残りを返金済みにしました")).toBeVisible();
+  await expect(page.locator("#receipt-detail")).toContainText("振込で返金");
+  await expect(page.getByRole("button", { name: "残りを返金済みにする" })).toHaveCount(0);
+
+  // 返金したので、返還請求書は取り消せない（先に返金を取り消す）
+  await page.getByRole("link", { name: /^RT-\d{4}-\d{6}$/ }).click();
+  await expect(page.locator("#credit-note")).toContainText("先に返金を取り消してください");
 });
