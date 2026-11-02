@@ -112,6 +112,15 @@ docs/requirements.md 要件定義書の写し
 - ダッシュボード：`web/dashboard/<区分>.ts` に欄（`DashboardSection`）を書き、`web/dashboard/sections.ts` の一覧に1行で登録する。件数は照会（ユースケース）で数え、項目は絞り込み済みの一覧の URL を持つ
 - 運用（バックアップと復元、バケットロック、失敗に気づく方法）は `docs/operations.md`
 
+### テストデータ（bun run db:seed）
+
+- 投入の処理は `src/infra/seed/`。業務 DB の Durable Object の `seed`（`/dev/seed`）から呼び、開発用ログインと同じく ENVIRONMENT が development / test のときだけ動く
+- 書き込みは必ず本物のユースケースを通す（`session.run(コマンド, 入力, 社員, 時刻)`。過去の業務日の時刻で実行する）。テーブルに直接書かない
+- 乱数は `session.random(対象のキー…)` を使う。キーには番号・名前・日付を使い、ID（ULID は毎回変わる）を使わない
+- 手順を足すときは `src/infra/seed/index.ts` の `STEPS`、毎日の操作を足すときは `operations.ts` の `DAILY`（発注・入荷・受注・発送・在庫・仕入先請求書・支払）か `billing.ts`（返品伝票・請求書・締め処理・返還請求書・入金と消込・販売先廃棄。取引の手順の後に同じ期間を進める）に追加する
+- 整合の確認（`verify.ts`）と結合テスト（`tests/integration/seed.test.ts`）も更新する
+- 一覧・集計を追加・変更したら、full のデータで速さを確かめる（`bun run perf`、`docs/performance.md`）
+
 ## 3. コマンド
 
 `package.json` に次の名前で定義しています。
@@ -127,7 +136,8 @@ docs/requirements.md 要件定義書の写し
 | `bun run test:e2e`                  | E2E テスト（Playwright）                                                                    |
 | `bun run knip`                      | 使われていないコードと依存の検出                                                            |
 | `bun run db:generate`               | Drizzle のマイグレーションを生成                                                            |
-| `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定）                                                |
+| `bun run db:seed`                   | 開発用のテストデータを投入（乱数の種は固定。`-- --scale=full` で本番の約5倍）               |
+| `bun run perf`                      | テストデータを入れた wrangler dev で、主な画面の速さを測る（docs/performance.md）           |
 | `bun run db:migrate:local`          | ログイン情報（D1）のマイグレーションを手元に適用                                            |
 | `bun run cf-typegen`                | `wrangler.jsonc` からバインディングの型を生成                                               |
 
