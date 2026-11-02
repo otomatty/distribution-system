@@ -17,7 +17,8 @@
     "src/infra/db/migrations/*.generated.ts",
     "public/assets/vendor/**",
     "playwright-report/**",
-    "coverage/**"
+    "coverage/**",
+    ".claude/**"
   ],
   "rules": {
     "eqeqeq": "error",
