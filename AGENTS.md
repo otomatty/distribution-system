@@ -104,7 +104,7 @@ docs/requirements.md 要件定義書の写し
 
 ### 帳票・一括 PDF・CSV・ダッシュボードを追加する手順
 
-- 帳票：発行するユースケースの側にスナップショットの zod スキーマを書き、`web/views/documents/<帳票>.tsx` に `defineTemplate({ schema, render })` でテンプレートを書いて、`web/views/documents/registry.ts` の `documentTemplates` に1行で登録する。テンプレートは値を表示するだけで、金額を計算しない。テンプレートがない帳票やスキーマに合わない帳票は、PDF 化が失敗し理由が画面に残る
+- 帳票：発行するユースケースの側にスナップショットの zod スキーマを書き、`web/views/documents/<帳票>.tsx` に `defineTemplate({ schema, render })`（`template.ts` から読み込む。`registry.ts` から読み込むと循環する）でテンプレートを書いて、`web/views/documents/registry.ts` の `documentTemplates` に1行で登録する。テンプレートは値を表示するだけで、金額を計算しない。テンプレートがない帳票やスキーマに合わない帳票は、PDF 化が失敗し理由が画面に残る
 - 帳票の送付・検索・再送は共通の仕組み（`documents.*`）が受け持つ。各区分は `ctx.documents.issue(...)`（発行）と `ctx.documents.cancel(...)`（取消）だけを呼ぶ。画面からは `paths.document(id)`（詳細と送付）と `paths.documentDownload(id)` に移る
 - 一括 PDF：`jobs.bulkDocuments`（帳票の ID、または `documentType` と元の伝票の ID）を呼ぶか、ユースケースの中で `ctx.jobs.enqueue("bulk_documents", { documentIds, name }, documentIds.length)` で登録し、処理状況（`paths.jobs()`）へ移る
 - CSV：`web/csv-exports.ts` の `csvExports` に定義（名前 → `{ fileName, fetch, columns }`）を足し、一覧の `#results` の中に `<CsvButton>` を置き、POST のルートで `exportCsv(c, 名前, 絞り込み条件, formKey(form))` を返す。2,000件を超えると自動で非同期になる。小さな表をその場で返すだけなら `web/csv.ts` の `csvResponse`

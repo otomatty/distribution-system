@@ -22,6 +22,7 @@ import {
 import { err, ok, type Result } from "../../../domain/result";
 import { deliveryNoteTemplate } from "./delivery-note";
 import { PrintDocument } from "./layout";
+import { purchaseOrderTemplate } from "./purchase-order";
 import type { DocumentMeta, DocumentTemplate, RenderedSheet } from "./template";
 
 // テンプレートの定義（defineTemplate）は template.ts にある（テンプレートとこの一覧が互いに import しないように）
@@ -34,6 +35,7 @@ export { defineTemplate } from "./template";
  */
 export const documentTemplates: Partial<Record<DocumentType, DocumentTemplate>> = {
   delivery_note: deliveryNoteTemplate,
+  purchase_order: purchaseOrderTemplate,
 };
 
 export interface DocumentSource {
