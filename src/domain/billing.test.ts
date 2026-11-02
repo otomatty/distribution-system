@@ -126,6 +126,14 @@ describe("請求書の明細と金額", () => {
     ]);
     expect(plan.summary.total).toBe(1865);
     expect(plan.lastTransactionDate).toBe("2026-10-10");
+    // 最後の取引日は、渡した順ではなく日付で決まる
+    const earlier = returned("r0", "2026-10-01", [
+      { quantity: 1, unitPriceCenti: 100, taxCategory: "standard" },
+    ]);
+    expect(
+      unwrap(planInvoice({ shipments: [s], returns: [earlier], taxRates: RATES, mode: "floor" }))
+        .lastTransactionDate,
+    ).toBe("2026-10-05");
   });
 
   it("発送がない・合計がマイナス・税率がない・税率が変わる日をまたぐ請求書は作らない", () => {

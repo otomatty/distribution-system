@@ -86,7 +86,6 @@ export const createSalesReturn = defineCommand({
     if (input.returnedOn > ctx.clock.today())
       return fieldError("returnedOn", "今日より後の日付は入力できません");
     const returned = ctx.stores.salesReturns.returnedQuantities(order.id);
-    const orderLines = new Map(order.lines.map((l) => [l.id, l]));
     const returnable = new Map(
       order.lines.map((l) => [l.id, { shipped: l.quantity, returned: returned.get(l.id) ?? 0 }]),
     );
@@ -101,22 +100,25 @@ export const createSalesReturn = defineCommand({
     const mode = ctx.stores.settings.getCompany().roundingMode;
     const id = ctx.ids.next();
     const number = ctx.sequences.next("salesReturn", input.returnedOn);
-    const lines = checked.value.flatMap((l) => {
-      const line = orderLines.get(l.salesOrderLineId);
-      if (!line) return [];
-      return [
-        {
-          id: ctx.ids.next(),
-          salesOrderLineId: line.id,
-          itemId: line.itemId,
-          quantity: l.quantity,
-          restock: l.restock,
-          locationId: l.locationId,
-          unitPriceCenti: line.unitPriceCenti,
-          amount: returnLineAmount(line.unitPriceCenti, l.quantity, mode),
-          taxCategory: line.taxCategory,
-        },
-      ];
+    // 返品する明細を受注の明細の順に並べる（検証済みの明細は必ず受注の明細のどれか）
+    const requested = new Map(checked.value.map((l) => [l.salesOrderLineId, l]));
+    const lines = order.lines.flatMap((line) => {
+      const l = requested.get(line.id);
+      return l
+        ? [
+            {
+              id: ctx.ids.next(),
+              salesOrderLineId: line.id,
+              itemId: line.itemId,
+              quantity: l.quantity,
+              restock: l.restock,
+              locationId: l.locationId,
+              unitPriceCenti: line.unitPriceCenti,
+              amount: returnLineAmount(line.unitPriceCenti, l.quantity, mode),
+              taxCategory: line.taxCategory,
+            },
+          ]
+        : [];
     });
     ctx.stores.salesReturns.insert(
       {

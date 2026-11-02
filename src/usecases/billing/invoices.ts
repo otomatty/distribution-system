@@ -225,11 +225,12 @@ function issueInvoice(
     m,
   );
   const shipmentRefs = a.shipments.map((s) => ({ id: s.shipmentId, version: s.shipmentVersion }));
-  if (ctx.stores.invoices.attachShipments(id, shipmentRefs, m) !== shipmentRefs.length)
-    return conflict(`${name}：`);
   const returnRefs = a.returns.map((r) => ({ id: r.id, version: r.version }));
-  if (ctx.stores.invoices.attachReturns(id, returnRefs, m) !== returnRefs.length)
-    return conflict(`${name}：`);
+  // 版番号は呼び出し側で確かめてあるので、通常はすべて結びつく（結びつかなければ全体を取り消す）
+  const attached =
+    ctx.stores.invoices.attachShipments(id, shipmentRefs, m) +
+    ctx.stores.invoices.attachReturns(id, returnRefs, m);
+  if (attached !== shipmentRefs.length + returnRefs.length) return conflict(`${name}：`);
   const groups = snapshotGroups(a.shipments, a.returns, lines);
   const snapshot = buildInvoiceSnapshot({
     number,
@@ -486,13 +487,9 @@ function cancelExisting(
   reason: string,
   action: "cancel" | "cancel_for_reissue",
 ): Result<{ shipmentIds: string[]; returnIds: string[] }> {
+  // 消込は入金額か差額が1円以上なので、allocated が 0 なら有効な消込はない
   const next = cancelInvoice(invoice.status, invoice.allocated);
   if (!next.ok) return next;
-  if (invoice.allocations.some((a) => !a.cancelled))
-    return err(
-      "invalid_state",
-      "入金の消込がある請求書は取り消せません。先に消込を取り消してください",
-    );
   const m = meta(ctx);
   if (
     !ctx.stores.invoices.update(

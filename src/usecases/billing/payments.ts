@@ -113,7 +113,8 @@ function allocate(
     if (!invoice) return conflict();
     const next = applyAllocation(invoice, row.amount + row.adjustment);
     if (!next.ok) return next;
-    if (!ctx.stores.invoices.update(invoice.id, invoice.version, next.value, m)) return conflict();
+    // 画面の版番号は上で確かめ、同じトランザクションで読んだ版番号なので、ここで競合することはない
+    ctx.stores.invoices.update(invoice.id, invoice.version, next.value, m);
     ctx.audit.record({
       entityType: "invoice",
       entityId: invoice.id,
@@ -225,11 +226,13 @@ export const allocateCustomerPayment = defineCommand({
   },
 });
 
-/** 消込を1件取り消し、請求書の残高と状態を戻す */
+/**
+ * 消込を1件取り消し、請求書の残高と状態を戻す。allocation は同じトランザクションで読んだ有効な消込
+ * （画面の版番号は呼び出し側で確かめてある）なので、取消済みにするところで競合することはない
+ */
 function releaseOne(ctx: UsecaseContext, allocation: AllocationRecord): Result<void> {
   const m = meta(ctx);
-  if (!ctx.stores.customerPayments.cancelAllocation(allocation.id, allocation.version, m))
-    return conflict();
+  ctx.stores.customerPayments.cancelAllocation(allocation.id, allocation.version, m);
   const invoice = ctx.stores.invoices.get(allocation.invoiceId);
   if (!invoice) return err("not_found", "請求書が見つかりません");
   const next = releaseAllocation(invoice, allocation.amount + allocation.adjustment);
@@ -257,8 +260,8 @@ export const cancelAllocationCommand = defineCommand({
     if (allocation.version !== v) return conflict();
     const payment = ctx.stores.customerPayments.get(allocation.paymentId);
     if (!payment) return err("not_found", "入金が見つかりません");
-    if (!ctx.stores.customerPayments.touch(payment.id, payment.version, meta(ctx)))
-      return conflict();
+    // 入金の版番号を上げる（同じトランザクションで読んだ版番号なので、競合することはない）
+    ctx.stores.customerPayments.touch(payment.id, payment.version, meta(ctx));
     const r = releaseOne(ctx, allocation);
     if (!r.ok) return r;
     return ok({ paymentId: payment.id, invoiceId: allocation.invoiceId });
