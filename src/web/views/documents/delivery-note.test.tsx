@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { unwrap, unwrapErr } from "../../../../tests/support/result";
-import type { DeliveryNoteSnapshot } from "../../../usecases/sales/snapshots";
+import type {
+  DeliveryNoteSnapshot,
+  StoredDeliveryNoteSnapshot,
+} from "../../../usecases/sales/snapshots";
 import { PRINT_CSS } from "./layout";
 import { renderDocumentsHtml } from "./registry";
 
 const snapshot: DeliveryNoteSnapshot = {
-  version: 1,
+  version: 2,
   number: "DN-2026-000123",
-  shippedOn: "2026-11-02",
+  shippedOn: "2026-10-28",
+  // 月締め（月末締め）の販売先：発行日の初期値は締め日
+  issuedOn: "2026-10-31",
   salesOrderNumber: "SO-2026-000045",
   issuer: {
     name: "大船渡食品流通株式会社",
@@ -87,7 +92,9 @@ describe("納品書のテンプレート", () => {
     const html = unwrap(await renderDocumentsHtml([{ meta, snapshot }])).html;
     expect(html).toContain("大船渡食品流通株式会社");
     expect(html).toContain("登録番号：T1234567890123");
-    expect(html).toContain("2026年11月2日");
+    // 取引年月日（納品日）と発行日
+    expect(html).toContain("<th>納品日</th><td>2026年10月28日</td>");
+    expect(html).toContain("<th>発行日</th><td>2026年10月31日</td>");
     expect(html).toContain("かもめの玉子 10個入 ※");
     expect(html).toContain("※は軽減税率（8%）の対象です");
     expect(html).toContain("標準税率（10%）対象");
@@ -100,6 +107,19 @@ describe("納品書のテンプレート", () => {
     expect(html).toContain("さかり商店 &lt;本店&gt; 御中");
     expect(html).toContain("ご担当：佐藤 様");
     expect(html).toContain("¥150.50");
+  });
+
+  it("発行日を持たない古い形（version 1）の納品書も読み、発行日は発送日にする", async () => {
+    const { issuedOn: _issuedOn, ...rest } = snapshot;
+    const v1: StoredDeliveryNoteSnapshot = { ...rest, version: 1 };
+    const html = unwrap(await renderDocumentsHtml([{ meta, snapshot: v1 }])).html;
+    expect(html).toContain("<th>発行日</th><td>2026年10月28日</td>");
+    expect(html).toContain("<th>納品日</th><td>2026年10月28日</td>");
+    expect(html).toContain("合計金額（税込） ¥2,027");
+    const missing = unwrapErr(
+      await renderDocumentsHtml([{ meta, snapshot: { ...rest, version: 2 } }]),
+    );
+    expect(missing.message).toContain("帳票の内容がテンプレートの形式と合いません");
   });
 
   it("軽減税率の明細がなければ注記を出さない。スキーマに合わない内容は PDF にしない", async () => {

@@ -1,8 +1,8 @@
 /** 在庫一覧（要件定義書 3.4）：商品×保管場所の現在庫・引当数・出荷可能数。CSV 出力つき */
 import { Hono, type Context } from "hono";
 
-import { toBusinessDate } from "../../../domain/dates";
-import { csvResponse } from "../../csv";
+import { exportCsv } from "../../csv-exports";
+import { formKey, readForm, str } from "../../form";
 import { hasPermission } from "../../middleware";
 import { paths } from "../../paths";
 import type { AppEnv } from "../../types";
@@ -17,18 +17,24 @@ import {
   Pagination,
   Select,
 } from "../../views/components";
+import { CsvButton } from "../../views/csv-button";
 import { qty } from "../../views/format";
 import { Layout } from "../../views/layout";
 
 export const stockListRoutes = new Hono<AppEnv>();
 
-function filterFromQuery(c: Context<AppEnv>) {
+/** URL のクエリ・CSV のフォームから、絞り込み条件を作る（名前は画面と CSV で共通） */
+function filterFrom(get: (name: string) => string) {
   return {
-    q: c.req.query("q") ?? "",
-    locationId: c.req.query("locationId") ?? "",
-    genreId: c.req.query("genreId") ?? "",
-    belowReorder: c.req.query("reorder") === "1",
+    q: get("q"),
+    locationId: get("locationId"),
+    genreId: get("genreId"),
+    belowReorder: get("reorder") === "1",
   };
+}
+
+function filterFromQuery(c: Context<AppEnv>) {
+  return filterFrom((name) => c.req.query(name) ?? "");
 }
 
 function queryOf(f: ReturnType<typeof filterFromQuery>) {
@@ -64,16 +70,11 @@ stockListRoutes.get("/", async (c) => {
       <PageHeader
         title="在庫一覧"
         actions={
-          <>
-            <a class="btn btn-secondary" href={paths.stockCsv(queryOf(f))} id="csv-link">
-              CSV 出力
+          canManage ? (
+            <a class="btn btn-primary" href={paths.stockOperationNew()}>
+              在庫操作
             </a>
-            {canManage ? (
-              <a class="btn btn-primary" href={paths.stockOperationNew()}>
-                在庫操作
-              </a>
-            ) : null}
-          </>
+          ) : null
         }
       >
         <p class="hint">
@@ -120,6 +121,9 @@ stockListRoutes.get("/", async (c) => {
         </noscript>
       </form>
       <section id="results">
+        <div class="toolbar">
+          <CsvButton action={paths.stockCsv()} filters={queryOf(f)} />
+        </div>
         {result.rows.length === 0 ? (
           <EmptyState message="条件に合う在庫はありません" />
         ) : (
@@ -177,42 +181,11 @@ stockListRoutes.get("/", async (c) => {
   );
 });
 
-/** 在庫一覧の CSV（一覧と同じ絞り込み）。BOM 付き UTF-8、日本語の列名 */
-stockListRoutes.get("/export.csv", async (c) => {
-  const f = filterFromQuery(c);
-  const rows = await runQuery(c, "stock.export", usecaseFilter(f));
-  return csvResponse(
-    c,
-    `在庫一覧_${toBusinessDate(new Date())}.csv`,
-    [
-      "商品コード",
-      "JAN",
-      "商品名",
-      "ジャンル",
-      "保管場所",
-      "販売単位",
-      "現在庫",
-      "引当数",
-      "出荷可能数",
-      "入荷予定数",
-      "発注点在庫数",
-      "発注点割れ",
-      "取扱終了",
-    ],
-    rows.map((r) => [
-      r.itemCode,
-      r.jan,
-      r.itemName,
-      r.genreName,
-      r.locationName,
-      r.salesUnitName,
-      r.onHand,
-      r.allocated,
-      r.available,
-      r.incoming,
-      r.reorderEnabled ? r.reorderPoint : null,
-      r.belowReorderPoint ? "発注点割れ" : "",
-      r.discontinued ? "取扱終了" : "",
-    ]),
-  );
+/**
+ * 在庫一覧の CSV（一覧と同じ絞り込み）。BOM 付き UTF-8、日本語の列名。
+ * 件数が多い（2,000件を超える）と非同期で作り、処理状況の画面へ移る（csv-exports.ts の stock）
+ */
+stockListRoutes.post("/csv", async (c) => {
+  const form = await readForm(c);
+  return exportCsv(c, "stock", usecaseFilter(filterFrom((name) => str(form, name))), formKey(form));
 });

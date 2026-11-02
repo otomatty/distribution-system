@@ -141,6 +141,11 @@ export function summarizeTax(
   return { groups, subtotal, tax, total: subtotal + tax };
 }
 
+/** 金額（円）の合計。明細の金額・伝票の小計・請求書の合計などを足し上げる（画面や帳票では足さない） */
+export function sumAmounts(lines: readonly { readonly amount: number }[]): number {
+  return lines.reduce((sum, l) => sum + l.amount, 0);
+}
+
 /** 画面入力の「1234.56」形式の円を centi-yen の整数に変換する。不正なら undefined。 */
 export function parseYenToCenti(text: string): number | undefined {
   const t = text.replaceAll(",", "").trim();

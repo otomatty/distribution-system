@@ -1,7 +1,7 @@
 /**
  * 納品書（要件定義書 3.10）。A4 縦。発送のときに保存したスナップショット（usecases/sales/snapshots.ts）を表示するだけで、
- * 金額は計算しない。インボイスの記載事項に合わせて、発行者の登録番号・取引年月日・軽減税率の対象である旨（※）・
- * 税率ごとの合計と消費税額・宛名を載せる。
+ * 金額は計算しない。インボイスの記載事項に合わせて、発行者の登録番号・取引年月日（納品日）・軽減税率の対象である旨（※）・
+ * 税率ごとの合計と消費税額・宛名を載せる。発行日は発送の操作で決めた日（古い形の納品書は発送日）。
  */
 import { TAX_CATEGORY_LABELS } from "../../../domain/money";
 import {
@@ -26,6 +26,7 @@ function DeliveryNoteDocument(props: { snapshot: DeliveryNoteSnapshot }) {
       <DocumentMeta
         items={[
           ["納品書番号", d.number],
+          ["発行日", <DocumentDate date={d.issuedOn} />],
           ["納品日", <DocumentDate date={d.shippedOn} />],
           ["受注番号", d.salesOrderNumber],
         ]}

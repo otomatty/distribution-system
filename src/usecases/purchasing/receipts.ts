@@ -57,7 +57,12 @@ export const recordPurchaseReceipt = defineCommand({
     if (!po) return err("not_found", "発注が見つかりません");
     const future = checkNotFuture(ctx, input.receivedOn, "receivedOn");
     if (future) return future;
-    const recorded = recordReceipt(po.status, po.lines, input.lines);
+    const recorded = recordReceipt(
+      po.status,
+      po.lines,
+      input.lines,
+      ctx.stores.supplierInvoices.unpaidReceiptCount(po.id),
+    );
     if (!recorded.ok) return recorded;
     const mode = ctx.stores.settings.getCompany().roundingMode;
     const receiptLines: (ReceiptLineFields & { id: string })[] = recorded.value.changes.map(
@@ -137,7 +142,10 @@ export const recordPurchaseReceipt = defineCommand({
   },
 });
 
-/** 入荷の取消。在庫を打ち消しの行で戻し、発注を発注済みに戻す */
+/**
+ * 入荷の取消。在庫を打ち消しの行で戻し、発注の状態を取り消した後の明細から決め直す
+ * （ほかの入荷の打ち切りで残りが 0 なら入荷済みのまま、支払うものが残っていなければ支払済み）
+ */
 export const cancelPurchaseReceipt = defineCommand({
   permission: "receipts.manage",
   input: z.object({ id: idSchema, version, reason: requiredText(500) }),
@@ -147,10 +155,17 @@ export const cancelPurchaseReceipt = defineCommand({
     if (receipt.cancelled) return err("invalid_state", "この入荷はすでに取り消されています");
     const po = ctx.stores.purchaseOrders.get(receipt.purchaseOrderId);
     if (!po) return err("not_found", "発注が見つかりません");
-    const next = cancelReceipt(po.status, receipt.supplierInvoiceStatus === "paid");
-    if (!next.ok) return next;
     const reverted = revertReceipt(po.lines, receipt.lines);
     if (!reverted.ok) return reverted;
+    // 取り消す入荷は支払済みの請求書に入っていない（cancelReceipt で確かめる）ので、受入があれば未払いの件数に数えてある
+    const own = receipt.lines.some((l) => l.accepted > 0) ? 1 : 0;
+    const next = cancelReceipt(
+      po.status,
+      receipt.supplierInvoiceStatus === "paid",
+      reverted.value,
+      ctx.stores.supplierInvoices.unpaidReceiptCount(po.id) - own,
+    );
+    if (!next.ok) return next;
     const accepted = countBy(ctx.stores.receipts.acceptedByLine(po.id), (a) => a.accepted);
     const returned = countBy(ctx.stores.purchaseReturns.returnedByLine(po.id), (r) => r.units);
     const blocked = receiptCancelBlockedByReturns(

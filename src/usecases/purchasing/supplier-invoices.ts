@@ -18,19 +18,18 @@ import {
   monthsBetween,
   paymentDueDate,
 } from "../../domain/dates";
-import type { TaxSummary } from "../../domain/money";
+import { sumAmounts, type TaxSummary } from "../../domain/money";
 import {
   cancelSupplierInvoice,
   cancelSupplierPayment,
   invoiceDifference,
-  orderStatusAfterInvoicePaid,
-  orderStatusAfterPaymentCancelled,
+  isSettlementInvoice,
+  orderStatusAfterPaymentChange,
   payableBalances,
   paySupplierInvoice,
   registerSupplierInvoice,
   supplierInvoiceAmount,
   type PayableMonth,
-  type PurchaseOrderStatus,
   type SupplierInvoiceStatus,
 } from "../../domain/purchasing";
 import { err, ok, type Result } from "../../domain/result";
@@ -78,10 +77,6 @@ const signedYen = z
   .min(-9_999_999_999, "金額が大きすぎます")
   .max(9_999_999_999, "金額が大きすぎます");
 
-function sumAmounts(amounts: readonly { amount: number }[]): number {
-  return amounts.reduce((s, a) => s + a.amount, 0);
-}
-
 export interface InvoiceAmounts {
   readonly summary: TaxSummary;
   readonly computedAmount: number;
@@ -114,8 +109,8 @@ function computeAmounts(
   return ok({
     summary,
     computedAmount,
-    receiptsSubtotal: receiptLines.reduce((s, l) => s + l.amount, 0),
-    returnsSubtotal: returnLines.reduce((s, l) => s + l.amount, 0),
+    receiptsSubtotal: sumAmounts(receiptLines),
+    returnsSubtotal: sumAmounts(returnLines),
     shippingFee,
   });
 }
@@ -320,18 +315,25 @@ export const createSupplierInvoice = defineCommand({
 });
 
 /**
- * 請求書の発注の状態を、支払・支払の取消に合わせて変える（domain の遷移関数で次の状態を決める）。
- * 変えた発注の ID を返す。
+ * 請求書の支払・支払の取消・取消のあとに、発注の状態を決め直す（domain の orderStatusAfterPaymentChange）。
+ * 支払済みの請求書に入っていない、受入のある入荷の件数は、請求書の状態を変えた後の値で数える。
+ * orderIds は請求書に結びついていた入荷の発注（取消では、入荷を外す前に読んでおく）。変えた発注の ID を返す。
  */
 function updateOrders(
   ctx: UsecaseContext,
   invoiceId: string,
-  next: (status: PurchaseOrderStatus, orderId: string) => PurchaseOrderStatus,
+  orderIds: readonly string[],
   action: string,
 ): string[] {
   const changed: string[] = [];
-  for (const po of ctx.stores.supplierInvoices.ordersOf(invoiceId)) {
-    const status = next(po.status, po.id);
+  for (const orderId of orderIds) {
+    const po = ctx.stores.purchaseOrders.get(orderId);
+    if (!po) continue;
+    const status = orderStatusAfterPaymentChange(
+      po.status,
+      po.lines,
+      ctx.stores.supplierInvoices.unpaidReceiptCount(po.id),
+    );
     if (status === po.status) continue;
     ctx.stores.purchaseOrders.setStatus(po.id, status, writeMeta(ctx));
     ctx.audit.record({
@@ -346,13 +348,17 @@ function updateOrders(
   return changed;
 }
 
+function orderIdsOf(ctx: UsecaseContext, invoiceId: string): string[] {
+  return ctx.stores.supplierInvoices.ordersOf(invoiceId).map((o) => o.id);
+}
+
 function applyPayment(
   ctx: UsecaseContext,
   invoice: SupplierInvoiceRecord,
   expectedVersion: number,
   payment: { paidOn: string; amount: number; memo: string | null },
 ): Result<{ paymentId: string }> {
-  const next = paySupplierInvoice(invoice.status, payment.amount);
+  const next = paySupplierInvoice(invoice.status, invoice.invoicedAmount, payment.amount);
   if (!next.ok) return next;
   if (
     !ctx.stores.supplierInvoices.update(
@@ -365,16 +371,7 @@ function applyPayment(
     return err("conflict", STALE_VERSION_MESSAGE);
   const paymentId = ctx.ids.next();
   ctx.stores.supplierInvoices.insertPayment(paymentId, invoice.id, payment, writeMeta(ctx));
-  const orders = updateOrders(
-    ctx,
-    invoice.id,
-    (status, orderId) =>
-      orderStatusAfterInvoicePaid(
-        status,
-        ctx.stores.supplierInvoices.unpaidReceiptCount(orderId) === 0,
-      ),
-    "pay",
-  );
+  const orders = updateOrders(ctx, invoice.id, orderIdsOf(ctx, invoice.id), "pay");
   ctx.audit.record({
     entityType: "supplier_invoice",
     entityId: invoice.id,
@@ -385,14 +382,17 @@ function applyPayment(
   return ok({ paymentId });
 }
 
-/** 支払（支払日と支払額を記録する） */
+/**
+ * 支払（支払日と支払額を記録する）。請求額が 0 円以下の請求書は、請求額と同じ額（0 円・マイナス）で精算する
+ * （domain の paySupplierInvoice。マイナスの支払額は「相殺・返金を受ける額」）
+ */
 export const paySupplierInvoiceCommand = defineCommand({
   permission: "supplierInvoices.manage",
   input: z.object({
     id: idSchema,
     version,
     paidOn: businessDate,
-    amount: yen,
+    amount: signedYen,
     memo: optionalText(500),
   }),
   run(ctx, { id, version: v, paidOn, amount, memo }) {
@@ -407,6 +407,7 @@ export const paySupplierInvoiceCommand = defineCommand({
 /**
  * 一括支払い：選んだ請求書を、それぞれの請求額で支払済みにする。1つのトランザクションで処理し、
  * 1件でも支払えないもの（支払済み・取消・ほかの人の更新）があれば、どれも支払わずに理由を返す。
+ * 請求額が 0 円以下の請求書も、請求額（0 円・マイナス）で精算する（個別の支払と同じ規則）。amount は差し引きの合計
  */
 export const payBulkSupplierInvoices = defineCommand({
   permission: "supplierInvoices.manage",
@@ -431,7 +432,11 @@ export const payBulkSupplierInvoices = defineCommand({
         continue;
       }
       const label = `${invoice.supplierName} ${invoice.invoiceNumber ?? "（番号なし）"}`;
-      const check = paySupplierInvoice(invoice.status, invoice.invoicedAmount);
+      const check = paySupplierInvoice(
+        invoice.status,
+        invoice.invoicedAmount,
+        invoice.invoicedAmount,
+      );
       if (!check.ok) problems.push(`${label}：${check.error.message}`);
       else if (invoice.version !== t.version) problems.push(`${label}：${STALE_VERSION_MESSAGE}`);
       else targets.push({ invoice, version: t.version });
@@ -466,12 +471,7 @@ export const cancelSupplierPaymentCommand = defineCommand({
     if (!ctx.stores.supplierInvoices.update(id, v, { status: next.value }, writeMeta(ctx)))
       return err("conflict", STALE_VERSION_MESSAGE);
     ctx.stores.supplierInvoices.cancelPayments(id, reason, writeMeta(ctx));
-    const orders = updateOrders(
-      ctx,
-      id,
-      (status) => orderStatusAfterPaymentCancelled(status),
-      "cancel_payment",
-    );
+    const orders = updateOrders(ctx, id, orderIdsOf(ctx, id), "cancel_payment");
     ctx.audit.record({
       entityType: "supplier_invoice",
       entityId: id,
@@ -503,14 +503,17 @@ export const cancelSupplierInvoiceCommand = defineCommand({
       return err("conflict", STALE_VERSION_MESSAGE);
     const receiptIds = ctx.stores.supplierInvoices.linkedReceipts(id).map((r) => r.id);
     const returnIds = ctx.stores.supplierInvoices.linkedReturns(id).map((r) => r.id);
+    const orderIds = orderIdsOf(ctx, id);
     ctx.stores.supplierInvoices.setReceiptInvoice(receiptIds, null);
     ctx.stores.supplierInvoices.setReturnInvoice(returnIds, null);
+    // 未払いの請求書の入荷は未払いのままなので、通常は発注の状態は変わらない（遷移の規則を1か所にするため決め直す）
+    const orders = updateOrders(ctx, id, orderIds, "cancel_supplier_invoice");
     ctx.audit.record({
       entityType: "supplier_invoice",
       entityId: id,
       action: "cancel",
       before: { status: invoice.status, receiptIds, returnIds },
-      after: { status: next.value, reason },
+      after: { status: next.value, reason, orderIds: orders },
     });
     return ok({ id });
   },
@@ -569,6 +572,8 @@ export interface SupplierInvoiceView {
   readonly attachments: readonly (SupplierInvoiceAttachmentRecord & { versionNo: number })[];
   /** 今の結びつきで計算した税率ごとの内訳（税率表にない日付なら null） */
   readonly amounts: InvoiceAmounts | null;
+  /** 請求額が 0 円以下で、支払ではなく請求額での精算（相殺・返金を受ける）になる */
+  readonly settlement: boolean;
   /** 操作者が今できる操作（状態と権限から決める） */
   readonly actions: {
     readonly pay: boolean;
@@ -605,8 +610,11 @@ export const getSupplierInvoice = defineQuery({
         Object.assign(a, { versionNo: attachments.length - i }),
       ),
       amounts: amounts.ok ? amounts.value : null,
+      settlement: isSettlementInvoice(invoice.invoicedAmount),
       actions: {
-        pay: manage && paySupplierInvoice(invoice.status, 1).ok,
+        pay:
+          manage &&
+          paySupplierInvoice(invoice.status, invoice.invoicedAmount, invoice.invoicedAmount).ok,
         cancelPayment: manage && cancelSupplierPayment(invoice.status, "取消").ok,
         cancel: manage && cancelSupplierInvoice(invoice.status, "取消").ok,
         attach: manage && canAttachToSupplierInvoice(invoice.status).ok,
@@ -615,29 +623,78 @@ export const getSupplierInvoice = defineQuery({
   },
 });
 
-export const supplierInvoiceFilterInput = {
-  status: z.enum(SUPPLIER_INVOICE_STATUSES).optional(),
-  supplierId: z.string().max(64).optional(),
-  from: optionalBusinessDate,
-  to: optionalBusinessDate,
-  q: z.string().trim().max(100).optional(),
-};
+/** 検索の金額（請求額はマイナスもありうる）。未入力は undefined */
+const searchAmount = z
+  .number({ error: "金額は数字で入力してください" })
+  .int("円単位の整数で入力してください")
+  .min(-9_999_999_999, "金額が大きすぎます")
+  .max(9_999_999_999, "金額が大きすぎます")
+  .nullable()
+  .optional()
+  .transform((v) => v ?? undefined);
 
-/** 仕入先請求書の一覧（状態・仕入先・請求日・キーワード） */
+/**
+ * 仕入先請求書の一覧の絞り込み。電子帳簿保存法（要件定義書 7章）の検索の要件に合わせ、取引年月日（請求日）・
+ * 取引金額（請求額）・取引先（仕入先）を、範囲の指定と組み合わせで指定できる
+ */
+const supplierInvoiceSearchInput = pageInput
+  .extend({
+    status: z.enum(SUPPLIER_INVOICE_STATUSES).optional(),
+    supplierId: z.string().max(64).optional(),
+    from: optionalBusinessDate,
+    to: optionalBusinessDate,
+    amountMin: searchAmount,
+    amountMax: searchAmount,
+    q: z.string().trim().max(100).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.from && v.to && v.from > v.to) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: "終わりの日付は始まりの日付以降にしてください",
+      });
+    }
+    if (v.amountMin !== undefined && v.amountMax !== undefined && v.amountMin > v.amountMax) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["amountMax"],
+        message: "上限の金額は下限の金額以上にしてください",
+      });
+    }
+  });
+
+export interface SupplierInvoiceListItem extends SupplierInvoiceRecord {
+  /** 請求額が 0 円以下で、支払ではなく請求額での精算（相殺・返金を受ける）になる */
+  readonly settlement: boolean;
+}
+
+function listItems(page: Page<SupplierInvoiceRecord>): Page<SupplierInvoiceListItem> {
+  return {
+    ...page,
+    rows: page.rows.map((r) => ({ ...r, settlement: isSettlementInvoice(r.invoicedAmount) })),
+  };
+}
+
+/** 仕入先請求書の一覧（状態・仕入先・請求日の範囲・請求額の範囲・キーワード） */
 export const listSupplierInvoices = defineQuery({
   permission: "view",
-  input: pageInput.extend(supplierInvoiceFilterInput),
-  run(ctx, { page, pageSize, ...f }): Page<SupplierInvoiceRecord> {
-    return ctx.stores.supplierInvoices.list(
-      {
-        status: f.status,
-        supplierId: f.supplierId || undefined,
-        from: f.from ?? undefined,
-        to: f.to ?? undefined,
-        q: f.q || undefined,
-      },
-      page,
-      pageSize,
+  input: supplierInvoiceSearchInput,
+  run(ctx, { page, pageSize, ...f }): Page<SupplierInvoiceListItem> {
+    return listItems(
+      ctx.stores.supplierInvoices.list(
+        {
+          status: f.status,
+          supplierId: f.supplierId || undefined,
+          from: f.from ?? undefined,
+          to: f.to ?? undefined,
+          amountMin: f.amountMin,
+          amountMax: f.amountMax,
+          q: f.q || undefined,
+        },
+        page,
+        pageSize,
+      ),
     );
   },
 });
@@ -671,12 +728,12 @@ export const listPayables = defineQuery({
   run(
     ctx,
     { page, pageSize, ...f },
-  ): Page<SupplierInvoiceRecord> & {
+  ): Page<SupplierInvoiceListItem> & {
     totals: { count: number; amount: number };
   } {
     const filter = payablesFilter(ctx, f);
     return {
-      ...ctx.stores.supplierInvoices.list(filter, page, pageSize),
+      ...listItems(ctx.stores.supplierInvoices.list(filter, page, pageSize)),
       totals: ctx.stores.supplierInvoices.totals(filter),
     };
   },

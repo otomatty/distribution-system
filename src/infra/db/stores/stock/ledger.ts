@@ -105,7 +105,13 @@ function listWhere(filter: StockListFilter): SQL | undefined {
   return and(...conds);
 }
 
-const listOrder = [asc(items.code), asc(locations.displayOrder), asc(locations.name)];
+// CSV はページごとに読むので、最後に保管場所の ID で順を決めきる（同じ名前・表示順の保管場所があっても行が重ならない）
+const listOrder = [
+  asc(items.code),
+  asc(locations.displayOrder),
+  asc(locations.name),
+  asc(stockBalances.locationId),
+];
 
 export function stockStore(db: Db): StockStore {
   const listBase = () =>
@@ -207,13 +213,6 @@ export function stockStore(db: Db): StockStore {
         .offset((page - 1) * pageSize)
         .all();
       return { rows, total, page, pageSize };
-    },
-    allBalances(filter, limit) {
-      return listBase()
-        .where(listWhere(filter))
-        .orderBy(...listOrder)
-        .limit(limit)
-        .all();
     },
     reorderCandidates() {
       return db

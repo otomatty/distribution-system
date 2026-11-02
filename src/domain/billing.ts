@@ -321,6 +321,14 @@ interface InvoiceBalance {
   readonly allocated: number;
 }
 
+/** 消込1件で請求書に充てた額 = 入金から充てた額 + 差額（振込手数料・値引きなど） */
+export function allocationTotal(allocation: {
+  readonly amount: number;
+  readonly adjustment: number;
+}): number {
+  return allocation.amount + allocation.adjustment;
+}
+
 /** 消込（入金額 + 差額 = delta）を請求書に反映した後の allocated と状態 */
 export function applyAllocation(
   invoice: InvoiceBalance,

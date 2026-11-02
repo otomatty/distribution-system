@@ -10,14 +10,15 @@ import {
   canEditOrder,
   confirmOrder,
   invoiceDifference,
+  isSettlementInvoice,
   orderAmounts,
   orderLinePrice,
-  orderStatusAfterInvoicePaid,
-  orderStatusAfterPaymentCancelled,
+  orderStatusAfterPaymentChange,
   payableBalances,
   paySupplierInvoice,
   purchaseReturnAmount,
   ratesOn,
+  receiptCancellable,
   receiptCancelBlockedByReturns,
   recordPurchaseReturn,
   recordReceipt,
@@ -25,6 +26,7 @@ import {
   remainingQuantity,
   returnableUnits,
   revertReceipt,
+  settledOrderStatus,
   stockQuantity,
   supplierInvoiceAmount,
   type PurchaseOrderLineState,
@@ -92,79 +94,146 @@ describe("purchase order", () => {
 
 describe("入荷", () => {
   it("分納：一部だけ入荷すると発注済みのまま", () => {
-    const r = recordReceipt("ordered", lines, [
-      { lineId: "l1", accepted: 4, returned: 1, closeRemaining: false },
-    ]);
+    const r = recordReceipt(
+      "ordered",
+      lines,
+      [{ lineId: "l1", accepted: 4, returned: 1, closeRemaining: false }],
+      0,
+    );
     const value = unwrap(r);
     expect(value.status).toBe("ordered");
     expect(remainingQuantity(value.lines[0]!)).toBe(5);
   });
   it("全数入荷または打ち切りで入荷済み", () => {
-    const r = recordReceipt("ordered", lines, [
-      { lineId: "l1", accepted: 10, returned: 0, closeRemaining: false },
-      { lineId: "l2", accepted: 2, returned: 0, closeRemaining: true },
-    ]);
+    const r = recordReceipt(
+      "ordered",
+      lines,
+      [
+        { lineId: "l1", accepted: 10, returned: 0, closeRemaining: false },
+        { lineId: "l2", accepted: 2, returned: 0, closeRemaining: true },
+      ],
+      0,
+    );
     expect(r.ok && r.value.status).toBe("received");
     expect(r.ok && r.value.lines[1]?.closed).toBe(true);
   });
   it("残りのない明細の打ち切りは何もしない", () => {
     const done = [{ id: "l1", quantity: 2, receivedQuantity: 2, closed: false }, lines[1]!];
     expect(
-      recordReceipt("ordered", done, [
-        { lineId: "l1", accepted: 0, returned: 0, closeRemaining: true },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        done,
+        [{ lineId: "l1", accepted: 0, returned: 0, closeRemaining: true }],
+        0,
+      ).ok,
     ).toBe(false);
     const all = unwrap(
-      recordReceipt("ordered", lines, [
-        { lineId: "l2", accepted: 5, returned: 0, closeRemaining: true },
-      ]),
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "l2", accepted: 5, returned: 0, closeRemaining: true }],
+        0,
+      ),
     );
     expect(all.lines[1]?.closed).toBe(false);
   });
   it("残りを超える入荷・負の数・何もしない入力はエラー", () => {
     expect(
-      recordReceipt("ordered", lines, [
-        { lineId: "l2", accepted: 6, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "l2", accepted: 6, returned: 0, closeRemaining: false }],
+        0,
+      ).ok,
     ).toBe(false);
     expect(
-      recordReceipt("ordered", lines, [
-        { lineId: "l2", accepted: -1, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "l2", accepted: -1, returned: 0, closeRemaining: false }],
+        0,
+      ).ok,
     ).toBe(false);
     expect(
-      recordReceipt("ordered", lines, [
-        { lineId: "l2", accepted: 0, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "l2", accepted: 0, returned: 0, closeRemaining: false }],
+        0,
+      ).ok,
     ).toBe(false);
     expect(
-      recordReceipt("ordered", lines, [
-        { lineId: "x", accepted: 1, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "x", accepted: 1, returned: 0, closeRemaining: false }],
+        0,
+      ).ok,
     ).toBe(false);
     expect(
-      recordReceipt("ordered", lines, [
-        { lineId: "l1", accepted: 1, returned: 0, closeRemaining: false },
-        { lineId: "l1", accepted: 1, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "ordered",
+        lines,
+        [
+          { lineId: "l1", accepted: 1, returned: 0, closeRemaining: false },
+          { lineId: "l1", accepted: 1, returned: 0, closeRemaining: false },
+        ],
+        0,
+      ).ok,
     ).toBe(false);
     expect(
-      recordReceipt("draft", lines, [
-        { lineId: "l1", accepted: 1, returned: 0, closeRemaining: false },
-      ]).ok,
+      recordReceipt(
+        "draft",
+        lines,
+        [{ lineId: "l1", accepted: 1, returned: 0, closeRemaining: false }],
+        0,
+      ).ok,
     ).toBe(false);
   });
-  it("入荷の取消", () => {
-    expect(cancelReceipt("received", false)).toEqual({ ok: true, value: "ordered" });
-    expect(cancelReceipt("ordered", false)).toEqual({ ok: true, value: "ordered" });
-    expect(cancelReceipt("received", true).ok).toBe(false);
-    expect(cancelReceipt("paid", false).ok).toBe(false);
+  it("入荷の取消：取り消した後の明細から発注の状態を決める", () => {
+    const open = [{ id: "l1", quantity: 10, receivedQuantity: 6, closed: false }];
+    const closed = [{ id: "l1", quantity: 10, receivedQuantity: 3, closed: true }];
+    expect(cancelReceipt("received", false, open, 1)).toEqual({ ok: true, value: "ordered" });
+    expect(cancelReceipt("ordered", false, open, 0)).toEqual({ ok: true, value: "ordered" });
+    // ほかの入荷の打ち切りが残っていれば、入荷済みのまま
+    expect(cancelReceipt("received", false, closed, 1)).toEqual({ ok: true, value: "received" });
+    // 支払うものが残っていなければ支払済み
+    expect(cancelReceipt("received", false, closed, 0)).toEqual({ ok: true, value: "paid" });
+    expect(cancelReceipt("received", true, open, 0).ok).toBe(false);
+    expect(cancelReceipt("paid", false, open, 0).ok).toBe(false);
+    expect(receiptCancellable("ordered", false)).toEqual({ ok: true, value: true });
+    expect(unwrapErr(receiptCancellable("received", true)).message).toContain("支払済みの請求書");
+    expect(receiptCancellable("draft", false).ok).toBe(false);
+  });
+  it("発注の状態：残りがあれば発注済み、残りがなく未払いの入荷があれば入荷済み、なければ支払済み", () => {
+    const done = [
+      { id: "l1", quantity: 2, receivedQuantity: 2, closed: false },
+      { id: "l2", quantity: 5, receivedQuantity: 1, closed: true },
+    ];
+    expect(settledOrderStatus(lines, 0)).toBe("ordered");
+    expect(settledOrderStatus(done, 2)).toBe("received");
+    expect(settledOrderStatus(done, 0)).toBe("paid");
+  });
+  it("入荷の記録：受入のない入荷で残りがなくなり、未払いの入荷もなければ支払済み", () => {
+    const one = [{ id: "l1", quantity: 10, receivedQuantity: 6, closed: false }];
+    const close = [{ lineId: "l1", accepted: 0, returned: 0, closeRemaining: true }];
+    expect(unwrap(recordReceipt("ordered", one, close, 0)).status).toBe("paid");
+    expect(unwrap(recordReceipt("ordered", one, close, 1)).status).toBe("received");
+    // この入荷に受入があれば、未払いの入荷が1件増える
+    const accept = [{ lineId: "l1", accepted: 4, returned: 0, closeRemaining: false }];
+    expect(unwrap(recordReceipt("ordered", one, accept, 0)).status).toBe("received");
+    // 全数をその場で返品した
+    const back = [{ lineId: "l1", accepted: 0, returned: 4, closeRemaining: false }];
+    expect(unwrap(recordReceipt("ordered", one, back, 0)).status).toBe("paid");
   });
   it("入荷の取消で明細の入荷済みの数と打ち切りを戻す", () => {
     const after = unwrap(
-      recordReceipt("ordered", lines, [
-        { lineId: "l1", accepted: 3, returned: 1, closeRemaining: true },
-      ]),
+      recordReceipt(
+        "ordered",
+        lines,
+        [{ lineId: "l1", accepted: 3, returned: 1, closeRemaining: true }],
+        0,
+      ),
     ).lines;
     const back = unwrap(
       revertReceipt(after, [
@@ -208,7 +277,7 @@ describe("入荷", () => {
             const returned = rem - accepted === 0 ? 0 : r % (rem - accepted + 1);
             return { lineId: l.id, accepted, returned, closeRemaining: close };
           });
-          const recorded = recordReceipt("ordered", ls, inputs);
+          const recorded = recordReceipt("ordered", ls, inputs, 0);
           if (!recorded.ok) return;
           const back = unwrap(
             revertReceipt(
@@ -328,9 +397,13 @@ describe("仕入先請求書と支払", () => {
   it("登録・支払・取消の遷移", () => {
     expect(registerSupplierInvoice(1)).toEqual({ ok: true, value: "unpaid" });
     expect(registerSupplierInvoice(0).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 100)).toEqual({ ok: true, value: "paid" });
-    expect(paySupplierInvoice("paid", 100).ok).toBe(false);
-    expect(paySupplierInvoice("unpaid", 0).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 100)).toEqual({ ok: true, value: "paid" });
+    // 請求額が1円以上なら、請求額と違う額でも1円以上なら支払える
+    expect(paySupplierInvoice("unpaid", 100, 60)).toEqual({ ok: true, value: "paid" });
+    expect(paySupplierInvoice("paid", 100, 100).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 0).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, -100).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 100, 1.5).ok).toBe(false);
     expect(cancelSupplierPayment("paid", "二重払い")).toEqual({ ok: true, value: "unpaid" });
     expect(cancelSupplierPayment("unpaid", "二重払い").ok).toBe(false);
     expect(cancelSupplierPayment("paid", "").ok).toBe(false);
@@ -342,12 +415,29 @@ describe("仕入先請求書と支払", () => {
     expect(cancelSupplierInvoice("cancelled", "x").ok).toBe(false);
     expect(cancelSupplierInvoice("unpaid", " ").ok).toBe(false);
   });
-  it("支払で発注が支払済みになるのは、入荷済みで全部の入荷が支払済みのとき", () => {
-    expect(orderStatusAfterInvoicePaid("received", true)).toBe("paid");
-    expect(orderStatusAfterInvoicePaid("received", false)).toBe("received");
-    expect(orderStatusAfterInvoicePaid("ordered", true)).toBe("ordered");
-    expect(orderStatusAfterPaymentCancelled("paid")).toBe("received");
-    expect(orderStatusAfterPaymentCancelled("ordered")).toBe("ordered");
+  it("請求額が 0 円以下の請求書は、請求額と同じ額で精算する（相殺・返金を受ける）", () => {
+    expect(isSettlementInvoice(0)).toBe(true);
+    expect(isSettlementInvoice(-1296)).toBe(true);
+    expect(isSettlementInvoice(1)).toBe(false);
+    expect(paySupplierInvoice("unpaid", -1296, -1296)).toEqual({ ok: true, value: "paid" });
+    expect(paySupplierInvoice("unpaid", 0, 0)).toEqual({ ok: true, value: "paid" });
+    const wrong = unwrapErr(paySupplierInvoice("unpaid", -1296, 0));
+    expect(wrong.message).toBe(
+      "請求額が -1,296 円の請求書は、請求額と同じ額（-1,296 円）で精算してください",
+    );
+    expect(wrong.fields?.[0]?.field).toBe("amount");
+    expect(paySupplierInvoice("unpaid", -1296, 1296).ok).toBe(false);
+    expect(paySupplierInvoice("unpaid", 0, 1).ok).toBe(false);
+    expect(paySupplierInvoice("paid", 0, 0).ok).toBe(false);
+  });
+  it("支払で発注が支払済みになるのは、入荷済みで全部の入荷が支払済みのとき。支払の取消で入荷済みに戻る", () => {
+    const done = [{ id: "l1", quantity: 2, receivedQuantity: 2, closed: false }];
+    expect(orderStatusAfterPaymentChange("received", done, 0)).toBe("paid");
+    expect(orderStatusAfterPaymentChange("received", done, 1)).toBe("received");
+    expect(orderStatusAfterPaymentChange("ordered", lines, 0)).toBe("ordered");
+    expect(orderStatusAfterPaymentChange("paid", done, 1)).toBe("received");
+    expect(orderStatusAfterPaymentChange("draft", lines, 0)).toBe("draft");
+    expect(orderStatusAfterPaymentChange("cancelled", lines, 0)).toBe("cancelled");
   });
   it("買掛残高は前月末の残高に請求額を足し、支払額を引いて月ごとに求める", () => {
     expect(
