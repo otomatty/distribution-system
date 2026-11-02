@@ -111,7 +111,25 @@ self.addEventListener("install", function (event) {
 });
 
 self.addEventListener("activate", function (event) {
-  event.waitUntil(self.clients.claim());
+  // 古い版の service worker が残したものは消す（名前の版を上げたとき）
+  event.waitUntil(
+    caches
+      .keys()
+      .then(function (keys) {
+        return Promise.all(
+          keys
+            .filter(function (key) {
+              return key.indexOf("offline-snapshots-") === 0 && key !== CACHE;
+            })
+            .map(function (key) {
+              return caches.delete(key);
+            }),
+        );
+      })
+      .then(function () {
+        return self.clients.claim();
+      }),
+  );
 });
 
 // 初めて開いた画面は、登録の前に読み込んだので残っていない。app.js からの知らせで、その画面を読み直して残す
