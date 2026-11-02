@@ -2,5 +2,16 @@
 import { Hono } from "hono";
 
 import type { AppEnv } from "../../types";
+import { disposalRoutes } from "./disposals";
+import { invoiceRoutes } from "./invoices";
+import { receiptRoutes } from "./receipts";
+import { receivableRoutes } from "./receivables";
+import { salesReturnRoutes } from "./returns";
 
 export const billingRoutes = new Hono<AppEnv>();
+
+billingRoutes.route("/invoices", invoiceRoutes);
+billingRoutes.route("/sales-returns", salesReturnRoutes);
+billingRoutes.route("/receipts", receiptRoutes);
+billingRoutes.route("/receivables", receivableRoutes);
+billingRoutes.route("/disposals", disposalRoutes);
