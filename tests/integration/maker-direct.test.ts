@@ -447,3 +447,182 @@ describe("メーカー直の受注からの発注（画面）", () => {
     ).toBe(404);
   });
 });
+
+/** メーカー直の受注と、そこから作った発注（s1 は作成中のまま、s2 は取り消した発注） */
+async function linkedOrders() {
+  const setup = await makerDirectOrder();
+  const po = await systemCommand("purchaseOrders.create", linkedInput(setup));
+  const other = await systemCommand(
+    "purchaseOrders.create",
+    linkedInput(setup, {
+      supplierId: setup.s2,
+      lines: [{ itemId: setup.c.id, quantity: 1, unitPriceCenti: 120_000, memo: "" }],
+    }),
+  );
+  await systemCommand("purchaseOrders.cancel", {
+    id: other.id,
+    version: (await orderView(other.id)).order.version,
+    reason: "仕入先を変える",
+  });
+  const fields = (version: number) => ({
+    id: setup.so.id,
+    version,
+    fields: {
+      customerId: setup.customer.id,
+      orderedOn: today(),
+      makerDirect: true,
+      locationId: null,
+      deliveryRequestedOn: "2026-12-10",
+      shipPlannedOn: "2026-12-10",
+      lines: [
+        { itemId: setup.a.id, quantity: 30, unitPriceCenti: 15_050 },
+        { itemId: setup.c.id, quantity: 3, unitPriceCenti: 15_050 },
+        { itemId: setup.b.id, quantity: 24, unitPriceCenti: 15_050 },
+      ],
+    },
+  });
+  return { ...setup, po, other, fields };
+}
+
+describe("受注の取消・編集・分割と、受注から作った発注", () => {
+  it("受注詳細と結果に、取り消していない発注だけを返す（発注は自動では取り消さない）", async () => {
+    const d = await linkedOrders();
+    const view = await getOrder(d.so.id);
+    expect(view.linkedPurchaseOrders).toEqual([
+      { id: d.po.id, number: d.po.number, status: "draft" },
+    ]);
+    expect(
+      await systemQuery("salesOrders.linkedPurchaseOrders", { salesOrderId: d.so.id }),
+    ).toEqual({
+      salesOrderId: d.so.id,
+      salesOrderNumber: d.so.number,
+      orders: [{ id: d.po.id, number: d.po.number, status: "draft" }],
+    });
+    expect(
+      await systemQuery("salesOrders.linkedPurchaseOrders", {
+        salesOrderId: "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
+      }),
+    ).toBeNull();
+
+    // 編集：結果に発注を返し、発注はそのまま
+    const updated = await systemCommand("salesOrders.update", d.fields(view.order.version));
+    expect(updated.linkedPurchaseOrders.map((o) => o.number)).toEqual([d.po.number]);
+    expect((await orderView(d.po.id)).order.status).toBe("draft");
+
+    // 分割：発注は元の受注に結びついたまま。結果に元の受注の発注を返す
+    const lineA = (await getOrder(d.so.id)).order.lines.find((l) => l.itemId === d.a.id)!;
+    const split = await systemCommand("salesOrders.split", {
+      id: d.so.id,
+      version: (await getOrder(d.so.id)).order.version,
+      moves: [{ lineId: lineA.id, quantity: 10 }],
+    });
+    expect(split.linkedPurchaseOrders.map((o) => o.id)).toEqual([d.po.id]);
+    expect((await getOrder(split.id)).linkedPurchaseOrders).toEqual([]);
+    expect((await orderView(d.po.id)).order.salesOrderId).toBe(d.so.id);
+
+    // 取消：発注は取り消さない
+    const cancelled = await systemCommand("salesOrders.cancel", {
+      id: d.so.id,
+      version: (await getOrder(d.so.id)).order.version,
+      reason: "先方の都合",
+    });
+    expect(cancelled.linkedPurchaseOrders).toEqual([
+      { id: d.po.id, number: d.po.number, status: "draft" },
+    ]);
+    expect((await orderView(d.po.id)).order.status).toBe("draft");
+    // 発注のない受注の結果は空
+    const plain = await createOrder({
+      customerId: d.customer.id,
+      makerDirect: true,
+      locationId: null,
+      lines: [{ itemId: d.a.id, quantity: 1, unitPriceCenti: 15_050 }],
+    });
+    const plainCancel = await systemCommand("salesOrders.cancel", {
+      id: plain.id,
+      version: (await getOrder(plain.id)).order.version,
+      reason: "誤り",
+    });
+    expect(plainCancel.linkedPurchaseOrders).toEqual([]);
+  });
+
+  it("取消の欄・編集・分割の画面で知らせ、操作の後の受注詳細にも同じ知らせを出す", async () => {
+    const user = await createEmployee(["sales"]);
+    const d = await linkedOrders();
+    const notice = `この受注から作った発注が1件あります（`;
+    const detail = await (await as(user).get(`/sales-orders/${d.so.id}`)).text();
+    expect(detail).toContain(notice);
+    expect(detail).toContain(`href="/purchase-orders/${d.po.id}"`);
+    expect(detail).toContain("必要なら発注も取り消してください");
+    expect(detail).not.toContain(d.other.number + "</a>）");
+    expect(detail).toContain(`この受注から作った発注 1 件（${d.po.number}）は取り消しません`);
+    const edit = await (await as(user).get(`/sales-orders/${d.so.id}/edit`)).text();
+    expect(edit).toContain(notice);
+    const splitPage = await (await as(user).get(`/sales-orders/${d.so.id}/split`)).text();
+    expect(splitPage).toContain(notice);
+
+    // 編集の後：受注詳細へ移り、知らせを出す
+    const view = await getOrder(d.so.id);
+    const lines = view.order.lines;
+    const saved = await as(user).post(`/sales-orders/${d.so.id}/edit`, {
+      _key: newKey(),
+      version: String(view.order.version),
+      customerId: d.customer.id,
+      orderedOn: today(),
+      makerDirect: "1",
+      deliveryRequestedOn: "2026-12-10",
+      shipPlannedOn: "2026-12-10",
+      lineItemId: lines.map((l) => l.itemId),
+      lineQuantity: lines.map((l) => String(l.quantity + 1)),
+      linePrice: lines.map(() => "150.50"),
+      linePriceReason: lines.map(() => ""),
+    });
+    const to = saved.headers.get("Location") ?? "";
+    expect(to).toBe(`/sales-orders/${d.so.id}?notice=updated&linked=${d.so.id}`);
+    const afterEdit = await (await as(user).get(to)).text();
+    expect(afterEdit).toContain("受注を保存しました");
+    expect(afterEdit).toContain(notice);
+
+    // 分割の後：分割した受注の詳細で、分割元の受注の発注を知らせる
+    const current = await getOrder(d.so.id);
+    const split = await as(user).post(`/sales-orders/${d.so.id}/split`, {
+      _key: newKey(),
+      version: String(current.order.version),
+      lineId: current.order.lines.map((l) => l.id),
+      moveQuantity: current.order.lines.map((_, i) => (i === 0 ? "1" : "0")),
+    });
+    const splitTo = split.headers.get("Location") ?? "";
+    expect(splitTo).toContain(`notice=split&linked=${d.so.id}`);
+    const afterSplit = await (await as(user).get(splitTo)).text();
+    expect(afterSplit).toContain(
+      `分割元の受注 <a href="/sales-orders/${d.so.id}">${d.so.number}</a> から`,
+    );
+    expect(afterSplit).toContain("作った発注が1件あります");
+
+    // 取消の後（htmx）：詳細の部分に知らせを出す
+    const cancelled = await as(user).hx(`/sales-orders/${d.so.id}/cancel`, {
+      _key: newKey(),
+      version: String((await getOrder(d.so.id)).order.version),
+      reason: "先方の都合",
+    });
+    const html = await cancelled.text();
+    expect(html).toContain("受注を取り消しました");
+    expect(html).toContain(notice);
+    expect((await orderView(d.po.id)).order.status).toBe("draft");
+
+    // 発注のない受注には出さない
+    const plain = await createOrder({
+      customerId: d.customer.id,
+      makerDirect: true,
+      locationId: null,
+      lines: [{ itemId: d.a.id, quantity: 1, unitPriceCenti: 15_050 }],
+    });
+    const plainPage = await (await as(user).get(`/sales-orders/${plain.id}`)).text();
+    expect(plainPage).not.toContain("から作った発注が");
+    const plainCancel = await as(user).post(`/sales-orders/${plain.id}/cancel`, {
+      _key: newKey(),
+      version: String((await getOrder(plain.id)).order.version),
+      reason: "誤り",
+    });
+    expect(plainCancel.headers.get("Location")).toBe(`/sales-orders/${plain.id}?notice=cancelled`);
+  });
+});
