@@ -707,8 +707,16 @@ export class BusinessDb extends DurableObject<Env> {
       this.bootstrap();
       return { ok: true, value: { action: "reset" } };
     }
+    const task = parsed.data;
+    // 手順の1回分は1つの同期の処理なので、書き込みと「済み」の印は一緒に確定する。
+    // wrangler dev の再起動などで応答が届かなくても、やり直しで二重に投入しない
+    const doneKey =
+      task.action === "run" ? `seed:done:${task.scale}:${task.step}:${task.chunk}` : null;
+    const previous = doneKey ? this.ctx.storage.kv.get<SeedResult>(doneKey) : undefined;
+    if (previous) return { ok: true, value: previous };
     const createdJobs: string[] = [];
-    const result = runSeed(this.seedHost(createdJobs), parsed.data, toBusinessDate(new Date()));
+    const result = runSeed(this.seedHost(createdJobs), task, toBusinessDate(new Date()));
+    if (result.ok && doneKey) this.ctx.storage.kv.put(doneKey, result.value);
     if (createdJobs.length > 0) await this.dispatchJobs(createdJobs);
     return result;
   }

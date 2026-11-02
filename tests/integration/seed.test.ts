@@ -14,6 +14,7 @@ import { BusinessDb, SEED_FORBIDDEN_MESSAGE } from "../../src/infra/do/business-
 import { businessDb } from "../../src/infra/do/client";
 import type { SeedPlanResult, SeedRunResult, SeedVerifyResult } from "../../src/infra/seed/request";
 import { createApp } from "../../src/web/app";
+import { createSupplier } from "./fixtures";
 import { ORIGIN } from "./helpers";
 import { readDb } from "./platform-helpers";
 
@@ -37,7 +38,12 @@ async function seedValue<T>(body: unknown): Promise<T> {
 }
 
 /** scripts/seed.mjs と同じ順に、tiny の手順をすべて実行する */
-async function seedTiny(): Promise<{ commands: number; rejected: number; rejections: string[] }> {
+async function seedTiny(): Promise<{
+  plan: SeedPlanResult;
+  commands: number;
+  rejected: number;
+  rejections: string[];
+}> {
   await seedValue({ action: "reset" });
   const plan = await seedValue<SeedPlanResult>({ action: "plan", scale: "tiny", today: TODAY });
   let commands = 0;
@@ -57,7 +63,7 @@ async function seedTiny(): Promise<{ commands: number; rejected: number; rejecti
       rejections.push(...r.rejections);
     }
   }
-  return { commands, rejected, rejections };
+  return { plan, commands, rejected, rejections };
 }
 
 /** 投入したデータの要約（2回の投入で同じになるか比べる） */
@@ -145,9 +151,41 @@ describe("テストデータの投入：本番では使えない", () => {
   });
 });
 
+describe("テストデータの投入：業務データがあるとき", () => {
+  it("画面などで登録した業務データがあれば投入しない", async () => {
+    await seedValue({ action: "reset" });
+    const res = await exports.default.fetch(
+      new Request(`${ORIGIN}/dev/seed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: ORIGIN },
+        body: JSON.stringify({
+          action: "run",
+          scale: "tiny",
+          today: TODAY,
+          step: "settings",
+          chunk: 0,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    await seedValue({ action: "reset" });
+    await createSupplier();
+    const conflict = await seedCall({
+      action: "run",
+      scale: "tiny",
+      today: TODAY,
+      step: "settings",
+      chunk: 0,
+    });
+    expect(conflict.status).toBe(400);
+    expect(await conflict.text()).toContain("業務データがすでにあります");
+  });
+});
+
 describe("テストデータの投入（tiny）", () => {
   it("本物のユースケースで投入し、在庫・引当・状態・採番が整合する。同じ基準日なら毎回同じデータになる", async () => {
     const first = await seedTiny();
+    const { plan } = first;
     expect(first.rejections).toEqual([]);
     expect(first.rejected).toBe(0);
     expect(first.commands).toBeGreaterThan(300);
@@ -242,17 +280,19 @@ describe("テストデータの投入（tiny）", () => {
     expect(shape.rendered).toBe(0);
     expect(shape.documents).toBeGreaterThan(shape.shipments);
 
-    // データがあるときは投入しない
-    const again = await seedCall({
+    // 済んだ回をやり直しても（応答が届かなかったときなど）、前回の結果を返すだけで二重に投入しない
+    const before = await fingerprint();
+    const operations = plan.steps.find((s) => s.name === "operations");
+    const again = await seedValue<SeedRunResult>({
       action: "run",
       scale: "tiny",
       today: TODAY,
-      step: "settings",
-      chunk: 0,
+      step: "operations",
+      chunk: (operations?.chunks ?? 1) - 1,
     });
-    expect(again.status).toBe(400);
+    expect(again.commands).toBeGreaterThan(0);
+    expect(await fingerprint()).toEqual(before);
 
-    const before = await fingerprint();
     const second = await seedTiny();
     expect(second.commands).toBe(first.commands);
     expect(await fingerprint()).toEqual(before);

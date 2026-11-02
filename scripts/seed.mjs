@@ -8,6 +8,7 @@
 //   --today=YYYY-MM-DD   取引の最終日（省略すると今日）。同じ日なら毎回同じデータになる
 //   --url=http://localhost:8787   投入先。動いていなければ、このスクリプトが wrangler dev を起動して、終わったら止める
 //   --persist-to=.wrangler/state  wrangler dev を起動するときのデータの置き場所（bun run dev と同じ場所が既定）
+//   --skip-to=operations:59      途中で止まった投入を、その手順の回から続ける
 import { spawn } from "node:child_process";
 
 const args = Object.fromEntries(
@@ -54,19 +55,45 @@ async function startServer() {
   throw new Error("wrangler dev が起動しませんでした");
 }
 
-async function call(body) {
+class SeedError extends Error {}
+
+async function callOnce(body) {
   const res = await fetch(`${base}/dev/seed`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: base },
     body: JSON.stringify(body),
   });
   if (res.status === 404)
-    throw new Error(
+    throw new SeedError(
       "/dev/seed が見つかりません。ENVIRONMENT が development の wrangler dev か確かめてください",
     );
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error?.message ?? `投入に失敗しました（${res.status}）`);
+  // wrangler dev が途中で再起動すると 503 などの JSON でない応答になる（やり直す）
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`応答が JSON ではありません（${res.status}）`);
+  }
+  if (!json.ok) throw new SeedError(json.error?.message ?? `投入に失敗しました（${res.status}）`);
   return json.value;
+}
+
+/**
+ * 通信の失敗や wrangler dev の再起動は、サーバーが戻るのを待ってやり直す。
+ * 手順の1回分は業務 DB の側で「済み」の印と一緒に確定するので、やり直しても二重に投入しない
+ */
+async function call(body) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await callOnce(body);
+    } catch (e) {
+      if (e instanceof SeedError || attempt >= 5) throw e;
+      console.log(`  （${e instanceof Error ? e.message : String(e)}。やり直します）`);
+      for (let i = 0; i < 60 && !(await reachable(base)); i += 1)
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
 }
 
 function seconds(ms) {
@@ -92,9 +119,14 @@ async function main() {
     );
     let commands = 0;
     let rejected = 0;
+    // --skip-to=operations:59 で、途中の手順から続ける（それより前の手順は実行済みとみなす）
+    const [skipStep, skipChunk] = (args["skip-to"] ?? "").split(":");
+    let skipping = Boolean(skipStep);
     for (const step of plan.steps) {
       const stepStarted = Date.now();
       for (let chunk = 0; chunk < step.chunks; chunk += 1) {
+        if (skipping && step.name === skipStep && chunk >= Number(skipChunk ?? 0)) skipping = false;
+        if (skipping) continue;
         const t = Date.now();
         const r = await call({ action: "run", scale, today, step: step.name, chunk });
         commands += r.commands;
