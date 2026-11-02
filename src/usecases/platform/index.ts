@@ -10,6 +10,7 @@ import {
   sendDocument,
 } from "./documents";
 import { enqueueBulkDocuments, enqueueCsvExport, getJob, jobAttention, listJobs } from "./jobs";
+import { previewRestore } from "./restore";
 
 export const platformCommands = {
   "documents.send": sendDocument,
@@ -28,4 +29,5 @@ export const platformQueries = {
   "jobs.get": getJob,
   "jobs.attention": jobAttention,
   "auditLogs.search": searchAuditLogs,
+  "restore.preview": previewRestore,
 } as const;

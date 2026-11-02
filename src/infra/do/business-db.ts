@@ -9,15 +9,18 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { monotonicFactory } from "ulid";
-import type { z } from "zod";
+import { z } from "zod";
 
 import { toBusinessDate, yearOf } from "../../domain/dates";
 import type { DocumentType, RenderStatus, SendMethod, SendStatus } from "../../domain/documents";
 import { formatDocumentNumber, sequenceKey } from "../../domain/numbering";
+import { confirmsRestore, restoreConfirmationText } from "../../domain/restore";
 import { err, type Result } from "../../domain/result";
 import { can, ROLES } from "../../domain/roles";
 import type { Actor, CommandDef, JobType, QueryDef, UsecaseContext } from "../../usecases/core";
+import { previewRestore } from "../../usecases/platform/restore";
 import { commands, queries } from "../../usecases/registry";
+import { requiredText } from "../../usecases/schemas";
 import { auditInsert, type Db } from "../db/client";
 import { businessMigrations } from "../db/migrations/business.generated";
 import * as schema from "../db/schema";
@@ -32,6 +35,18 @@ import {
   type InternalActorRef,
 } from "./actor-ref";
 import { documentPort, jobPort } from "./document-port";
+import {
+  completeRestore,
+  durableObjectRecovery,
+  getRestore,
+  isRestoreId,
+  listRestores,
+  scheduleRestore,
+  type PointInTimeRecovery,
+  type RestoreDeps,
+  type RestoreProgress,
+  type RestoreRecord,
+} from "./restore";
 
 const commandMap = new Map<string, CommandDef<z.ZodType, unknown>>(Object.entries(commands));
 const queryMap = new Map<string, QueryDef<z.ZodType, unknown>>(Object.entries(queries));
@@ -49,6 +64,13 @@ class Rollback extends Error {
     super("rollback");
   }
 }
+
+/** 特定の時点への復元の入力（戻す日時は照会 restore.preview で確かめる） */
+const restoreInput = z.object({
+  targetAt: z.string().max(40),
+  confirmation: z.string().max(40),
+  reason: requiredText(500),
+});
 
 /** 受付番号（冪等キー）がないか、形が正しくない操作の文言 */
 const MISSING_KEY_MESSAGE =
@@ -135,10 +157,12 @@ function zodFields(error: z.ZodError): { field: string; message: string }[] {
 export class BusinessDb extends DurableObject<Env> {
   private readonly db: Db;
   private readonly ulid = monotonicFactory();
+  private readonly recovery: PointInTimeRecovery;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.db = drizzle(ctx.storage, { schema });
+    this.recovery = durableObjectRecovery(ctx);
     void ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, businessMigrations);
       this.bootstrap();
@@ -398,6 +422,16 @@ export class BusinessDb extends DurableObject<Env> {
   query(name: string, input: unknown, actorRef: ActorRef): Result<unknown> {
     const def = queryMap.get(name);
     if (!def) return err("not_found", "不明な照会です");
+    return this.runQueryDef(def, name, input, actorRef);
+  }
+
+  /** 照会の定義を、権限の判定と入力の検証をしてから実行する */
+  private runQueryDef<S extends z.ZodType, O>(
+    def: QueryDef<S, O>,
+    name: string,
+    input: unknown,
+    actorRef: ActorRef,
+  ): Result<O> {
     const actor = this.resolveActorSync(actorRef);
     if (!actor) return err("unauthenticated", "ログインし直してください");
     if (!can(actor.roles, def.permission))
@@ -417,6 +451,111 @@ export class BusinessDb extends DurableObject<Env> {
       parsed.data,
     );
     return { ok: true, value };
+  }
+
+  // ---- 特定の時点への復元（管理者だけ。手順は docs/operations.md 3章） ----------------------
+
+  private restoreDeps(): RestoreDeps {
+    return {
+      db: this.db,
+      files: this.env.FILES,
+      recovery: this.recovery,
+      environment: this.env.ENVIRONMENT,
+      unlockUntil: this.env.RESTORE_UNLOCK_UNTIL,
+      now: new Date(),
+      nextId: () => this.ulid(),
+    };
+  }
+
+  /** 共通の仕組みの管理者（platform.admin）だけを通す */
+  private platformAdmin(actorRef: ActorRef): Result<Actor> {
+    const actor = this.resolveActorSync(actorRef);
+    if (!actor) return err("unauthenticated", "ログインし直してください");
+    if (!can(actor.roles, "platform.admin")) {
+      return err("forbidden", "この操作を行う権限がありません");
+    }
+    return { ok: true, value: actor };
+  }
+
+  /**
+   * 業務 DB を指定した時刻の状態に戻すよう予約する（戻るのは restartForRestore で作り直した後）。
+   * 権限と時刻は照会 restore.preview で確かめ、確認の入力（戻す日時）と本番の鍵（RESTORE_UNLOCK_UNTIL）も確かめる。
+   * requestId は画面のフォームの受付番号（同じ番号の再送信は、前の依頼の記録を返す）
+   */
+  async restoreToPointInTime(
+    actorRef: ActorRef,
+    input: unknown,
+    requestId: string,
+  ): Promise<Result<RestoreRecord>> {
+    if (!isRestoreId(requestId)) return err("validation", MISSING_KEY_MESSAGE);
+    const parsed = restoreInput.safeParse(input);
+    if (!parsed.success)
+      return err("validation", "入力内容を確認してください", { fields: zodFields(parsed.error) });
+    const preview = this.runQueryDef(
+      previewRestore,
+      "restore.preview",
+      { targetAt: parsed.data.targetAt },
+      actorRef,
+    );
+    if (!preview.ok) return preview;
+    if (!preview.value.ok) return preview.value;
+    const target = new Date(preview.value.value.targetAt);
+    if (!confirmsRestore(target, parsed.data.confirmation)) {
+      const message = `確認のため「${restoreConfirmationText(target)}」と入力してください`;
+      return err("validation", "確認の日時が戻す日時と一致しません", {
+        fields: [{ field: "confirmation", message }],
+      });
+    }
+    const actor = this.platformAdmin(actorRef);
+    if (!actor.ok) return actor;
+    return scheduleRestore(this.restoreDeps(), {
+      id: requestId,
+      target,
+      reason: parsed.data.reason,
+      actor: actor.value,
+    });
+  }
+
+  /**
+   * 予約した復元のために Durable Object を作り直す（ctx.abort）。成功すると、この呼び出しは例外で終わる。
+   * 次に開いたときに、予約した時点の状態に戻る
+   */
+  async restartForRestore(actorRef: ActorRef, requestId: string): Promise<Result<true>> {
+    const actor = this.platformAdmin(actorRef);
+    if (!actor.ok) return actor;
+    const record = await getRestore(this.env.FILES, requestId);
+    if (!record) return err("not_found", "復元の記録が見つかりません");
+    if (record.status !== "scheduled") return err("invalid_state", "この復元は終わっています");
+    log("warn", "restarting business db for point-in-time restore", {
+      restoreId: record.id,
+      by: actor.value.employeeId,
+    });
+    this.recovery.restart(`point-in-time restore ${record.id}`);
+    return { ok: true, value: true };
+  }
+
+  /** 戻った業務 DB に、戻したことを操作履歴として残す。まだ戻っていなければ pending を返す */
+  async completeRestore(actorRef: ActorRef, requestId: string): Promise<Result<RestoreProgress>> {
+    const actor = this.platformAdmin(actorRef);
+    if (!actor.ok) return actor;
+    return completeRestore(this.restoreDeps(), actor.value, requestId);
+  }
+
+  /** 復元の記録（R2 にあるので、業務 DB を戻しても消えない） */
+  async restoreRecord(
+    actorRef: ActorRef,
+    requestId: string,
+  ): Promise<Result<RestoreRecord | null>> {
+    const actor = this.platformAdmin(actorRef);
+    if (!actor.ok) return actor;
+    return { ok: true, value: await getRestore(this.env.FILES, requestId) };
+  }
+
+  /** これまでの復元の記録（新しい順） */
+  async restoreHistory(actorRef: ActorRef): Promise<Result<RestoreRecord[]>> {
+    const actor = this.platformAdmin(actorRef);
+    if (!actor.ok) return actor;
+    return { ok: true, value: await listRestores(this.env.FILES) };
   }
 
   // ---- 非同期処理（outbox） ------------------------------------------------------

@@ -5,12 +5,14 @@ import {
   addMonths,
   closingPeriod,
   formatJapaneseDate,
+  formatJstDateTime,
   isBusinessDate,
   isMonth,
   latestClosedPeriod,
   monthOf,
   monthRange,
   monthsBetween,
+  parseJstDateTime,
   paymentDueDate,
   plannedShipDate,
   startOfBusinessDay,
@@ -104,5 +106,22 @@ describe("dates", () => {
   it("業務日の始まりの時刻（UTC）", () => {
     expect(startOfBusinessDay("2026-11-02")).toBe("2026-11-01T15:00:00.000Z");
     expect(() => startOfBusinessDay("2026-13-01")).toThrow(RangeError);
+  });
+  it("日本時間の日時の読み取りと表示（秒まで）", () => {
+    expect(parseJstDateTime("2026-11-02T09:15")?.toISOString()).toBe("2026-11-02T00:15:00.000Z");
+    expect(parseJstDateTime(" 2026-11-02 00:00:05 ")?.toISOString()).toBe(
+      "2026-11-01T15:00:05.000Z",
+    );
+    for (const bad of [
+      "",
+      "2026-11-02",
+      "2026-02-30T10:00",
+      "2026-11-02T24:00",
+      "2026-11-02T10:60",
+      "2026-11-02T10:00:60",
+    ]) {
+      expect(parseJstDateTime(bad)).toBeUndefined();
+    }
+    expect(formatJstDateTime(new Date("2026-11-01T15:00:05.900Z"))).toBe("2026-11-02 00:00:05");
   });
 });

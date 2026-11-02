@@ -6,6 +6,7 @@
  * - 帳票：documents/<種類>/<取引年>/<番号>-<帳票 ID>.<pdf|html>（バケットロックで7年保持）
  * - 処理結果：jobs/<処理 ID>/<ファイル名>
  * - バックアップ：backups/<YYYY-MM-DD>.json.gz
+ * - 業務 DB を特定の時点に戻した記録：restores/<復元の ID>.json（業務 DB を戻しても消えない）
  * - 仕入先請求書の添付 PDF：supplier-invoices/<請求書 ID>/<ファイル ID>.pdf（版ごとに別のファイル。上書き・削除しない。
  *   キーは domain/attachments.ts の supplierInvoiceAttachmentKey で決める）
  */
@@ -14,6 +15,8 @@ import type { DocumentType } from "../../domain/documents";
 export const DOCUMENTS_PREFIX = "documents/";
 export const JOBS_PREFIX = "jobs/";
 export const BACKUPS_PREFIX = "backups/";
+/** 業務 DB を特定の時点に戻した記録（戻しても消えないよう R2 に置く。docs/operations.md 3章） */
+export const RESTORES_PREFIX = "restores/";
 
 /** キーに使えない文字を置き換える（番号やファイル名は社内で決めたものだが、念のため） */
 function safeSegment(text: string): string {
@@ -37,6 +40,10 @@ export function documentKey(
 
 export function jobResultKey(jobId: string, fileName: string): string {
   return `${JOBS_PREFIX}${jobId}/${safeSegment(fileName)}`;
+}
+
+export function restoreRecordKey(restoreId: string): string {
+  return `${RESTORES_PREFIX}${safeSegment(restoreId)}.json`;
 }
 
 export function backupKey(date: string): string {

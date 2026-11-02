@@ -19,4 +19,9 @@ export const platformPaths = {
 
   /** 操作履歴の検索（管理者だけ） */
   auditLogs: (query?: Query) => withQuery("/audit-logs", query),
+
+  /** 業務 DB を特定の時点に戻す（管理者だけ。docs/operations.md 3章） */
+  restore: (query?: Query) => withQuery("/admin/restore", query),
+  restoreRecord: (id: string) => `/admin/restore/${enc(id)}`,
+  restoreComplete: (id: string) => `/admin/restore/${enc(id)}/complete`,
 };

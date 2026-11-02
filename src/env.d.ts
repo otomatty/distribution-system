@@ -7,4 +7,9 @@ interface __BaseEnv_Env {
   GOOGLE_CLIENT_SECRET: string;
   /** MAIL_PROVIDER が resend のときだけ使う（docs/operations.md 1章） */
   RESEND_API_KEY?: string;
+  /**
+   * 本番で業務 DB を特定の時点に戻すときの追加の鍵（今から24時間以内の時刻、ISO 8601）。
+   * 運用担当が戻す直前に Secrets に入れ、終わったら消す（docs/operations.md 3章）
+   */
+  RESTORE_UNLOCK_UNTIL?: string;
 }
