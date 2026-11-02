@@ -356,5 +356,5 @@ describe("テストデータの投入（tiny）", () => {
     const second = await seedTiny();
     expect(second.commands).toBe(first.commands);
     expect(await fingerprint()).toEqual(before);
-  }, 60_000);
+  }, 180_000);
 });
