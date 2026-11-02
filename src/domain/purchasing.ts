@@ -148,11 +148,6 @@ export function orderAmounts<L extends PricedLine>(
   return { lines: priced, summary: summarizeTax(priced, rates, mode) };
 }
 
-/** 取消の操作を出してよい状態か（入荷の有無は cancelOrder で確かめる） */
-export function canCancelOrder(status: PurchaseOrderStatus): boolean {
-  return status === "draft" || status === "ordered";
-}
-
 export interface ReceiptLineInput {
   readonly lineId: string;
   /** 受入数（仕入単位） */

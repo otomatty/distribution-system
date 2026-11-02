@@ -914,8 +914,9 @@ body.touch .picker-table td {
 details > summary {
   cursor: pointer;
   min-height: var(--tap);
-  display: inline-flex;
-  align-items: center;
+  padding: 0.4rem 0;
+  font-weight: 600;
+  color: var(--primary);
 }
 
 @media print {

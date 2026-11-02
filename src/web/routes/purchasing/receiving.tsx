@@ -7,7 +7,7 @@
 import { Hono, type Context } from "hono";
 
 import { toBusinessDate } from "../../../domain/dates";
-import { DESTINATION_LABELS } from "../../../domain/purchasing";
+import { DESTINATION_LABELS, PURCHASE_ORDER_STATUS_LABELS } from "../../../domain/purchasing";
 import type { DomainError } from "../../../domain/result";
 import type { PurchaseOrderView } from "../../../usecases/purchasing/purchase-orders";
 import { bool, formKey, int, readForm, str, strs, type FormData_ } from "../../form";
@@ -291,8 +291,8 @@ function ReceivePage(props: {
         />
       ) : canReceive ? (
         <Alert kind="info">
-          この発注は「{order.status === "draft" ? "作成中" : "発注済み"}
-          」ではないため、入荷を記録できません。
+          この発注は「{PURCHASE_ORDER_STATUS_LABELS[order.status]}
+          」のため、入荷を記録できません（入荷を記録できるのは発注済みの発注だけです）。
         </Alert>
       ) : (
         <Alert kind="warning">入荷を記録する権限がありません。</Alert>

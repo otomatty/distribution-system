@@ -403,7 +403,7 @@ function OrderLineRow(props: { line: LineView }) {
           ) : null}
         </div>
       </td>
-      <td>
+      <td class="nowrap">
         <input
           id={`qty-${item.id}`}
           name="lineQuantity"

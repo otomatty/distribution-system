@@ -7,7 +7,6 @@ import {
   cancelReceipt,
   cancelSupplierInvoice,
   cancelSupplierPayment,
-  canCancelOrder,
   canEditOrder,
   confirmOrder,
   invoiceDifference,
@@ -15,6 +14,7 @@ import {
   orderLinePrice,
   orderStatusAfterInvoicePaid,
   orderStatusAfterPaymentCancelled,
+  payableBalances,
   paySupplierInvoice,
   purchaseReturnAmount,
   ratesOn,
@@ -49,9 +49,6 @@ describe("purchase order", () => {
     expect(cancelOrder("ordered", 1, "数量の誤り").ok).toBe(false);
     expect(cancelOrder("received", 0, "数量の誤り").ok).toBe(false);
     expect(unwrapErr(cancelOrder("ordered", 0, "  ")).fields?.[0]?.field).toBe("reason");
-    expect(canCancelOrder("draft")).toBe(true);
-    expect(canCancelOrder("ordered")).toBe(true);
-    expect(canCancelOrder("received")).toBe(false);
   });
   it("メールで送る確定には宛先が必要", () => {
     expect(unwrapErr(confirmOrder("draft", 1, "email", null)).fields?.[0]?.field).toBe("recipient");
@@ -351,5 +348,21 @@ describe("仕入先請求書と支払", () => {
     expect(orderStatusAfterInvoicePaid("ordered", true)).toBe("ordered");
     expect(orderStatusAfterPaymentCancelled("paid")).toBe("received");
     expect(orderStatusAfterPaymentCancelled("ordered")).toBe("ordered");
+  });
+  it("買掛残高は前月末の残高に請求額を足し、支払額を引いて月ごとに求める", () => {
+    expect(
+      payableBalances(
+        1000,
+        ["2026-09", "2026-10", "2026-11"],
+        new Map([
+          ["2026-09", { invoiced: 5000, paid: 1000 }],
+          ["2026-11", { invoiced: 0, paid: 5000 }],
+        ]),
+      ),
+    ).toEqual([
+      { month: "2026-09", invoiced: 5000, paid: 1000, balance: 5000 },
+      { month: "2026-10", invoiced: 0, paid: 0, balance: 5000 },
+      { month: "2026-11", invoiced: 0, paid: 5000, balance: 0 },
+    ]);
   });
 });

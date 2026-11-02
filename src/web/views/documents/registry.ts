@@ -25,12 +25,7 @@ import { purchaseOrderTemplate } from "./purchase-order";
 
 // テンプレートの定義（defineTemplate）は define-template.ts にある。テンプレートのファイルはそちらを読み込む
 // （ここを読み込むと、テンプレートの一覧との間で循環する）
-export {
-  defineTemplate,
-  type DocumentMeta,
-  type DocumentTemplate,
-  type RenderedSheet,
-} from "./define-template";
+export { defineTemplate, type DocumentMeta, type DocumentTemplate } from "./define-template";
 
 /**
  * 帳票の種類 → テンプレート。帳票を追加する区分が1行ずつ登録する。

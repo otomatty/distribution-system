@@ -208,7 +208,7 @@ describe("入荷確認（分納）", () => {
     expect(r.ok).toBe(false);
     const purchasing = await createEmployee(["purchasing"]);
     const draftPage = await (await as(purchasing).get(`/receiving/${draft.id}`)).text();
-    expect(draftPage).toContain("入荷を記録できません");
+    expect(draftPage).toContain("「作成中」のため、入荷を記録できません");
   });
 });
 
