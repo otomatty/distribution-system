@@ -60,6 +60,13 @@ export const businessMigrations: {
         "when": 1793629730127,
         "tag": "0007_purchase_return_cancel",
         "breakpoints": true
+      },
+      {
+        "idx": 8,
+        "version": "6",
+        "when": 1793629730946,
+        "tag": "0008_disposal_cancel",
+        "breakpoints": true
       }
     ]
   },
@@ -71,6 +78,7 @@ export const businessMigrations: {
     "m0004": "CREATE INDEX `audit_logs_employee` ON `audit_logs` (`employee_id`,`occurred_at`);--> statement-breakpoint\nCREATE INDEX `audit_logs_action` ON `audit_logs` (`action`,`occurred_at`);",
     "m0005": "CREATE INDEX `purchase_orders_ordered` ON `purchase_orders` (`ordered_on`,`number`);--> statement-breakpoint\nCREATE INDEX `receipts_received` ON `receipts` (`received_on`);--> statement-breakpoint\nCREATE INDEX `customer_payments_customer_amount` ON `customer_payments` (`customer_id`,`cancelled`,`amount`);--> statement-breakpoint\nCREATE INDEX `invoices_issued` ON `invoices` (`issued_on`,`number`);--> statement-breakpoint\nCREATE INDEX `payment_allocations_payment_amount` ON `payment_allocations` (`payment_id`,`cancelled`,`amount`);--> statement-breakpoint\nCREATE INDEX `sales_orders_split_from` ON `sales_orders` (`split_from_id`);--> statement-breakpoint\nCREATE INDEX `sales_orders_ship_planned` ON `sales_orders` (`ship_planned_on`,`number`);--> statement-breakpoint\nCREATE INDEX `shipments_unbilled` ON `shipments` (`invoice_id`,`shipped_on`);--> statement-breakpoint\nCREATE INDEX `documents_status` ON `documents` (`status`);",
     "m0006": "ALTER TABLE `supplier_invoices` ADD `paid_amount` integer DEFAULT 0 NOT NULL;--> statement-breakpoint\nUPDATE `supplier_invoices` SET `paid_amount` = coalesce((SELECT sum(p.`amount`) FROM `supplier_payments` p WHERE p.`supplier_invoice_id` = `supplier_invoices`.`id` AND p.`cancelled` = 0), 0);\n",
-    "m0007": "ALTER TABLE `purchase_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_by` text;"
+    "m0007": "ALTER TABLE `purchase_returns` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `purchase_returns` ADD `cancelled_by` text;",
+    "m0008": "ALTER TABLE `disposals` ADD `cancelled` integer DEFAULT false NOT NULL;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancel_reason` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_at` text;--> statement-breakpoint\nALTER TABLE `disposals` ADD `cancelled_by` text;"
   }
 };

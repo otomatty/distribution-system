@@ -236,6 +236,11 @@ export const disposals = sqliteTable(
     disposedOn: text("disposed_on").notNull(),
     contactName: text("contact_name"),
     memo: text("memo"),
+    /** 取消（取り消した伝票は一覧に残し、廃棄率の集計から除く）と、その理由・日時（UTC）・操作者 */
+    cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
+    cancelReason: text("cancel_reason"),
+    cancelledAt: text("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
     ...auditColumns,
   },
   (t) => [index("disposals_customer").on(t.customerId, t.disposedOn)],

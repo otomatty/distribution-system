@@ -50,6 +50,8 @@ export const billingPaths = {
   /** 廃棄伝票の登録画面：商品選択ダイアログから行を足す（部分 HTML） */
   disposalLines: () => "/disposals/new/lines",
   disposal: (id: string, query?: Query) => withQuery(`/disposals/${enc(id)}`, query),
+  /** 廃棄伝票の取消（POST） */
+  disposalCancel: (id: string) => `/disposals/${enc(id)}/cancel`,
   disposalRates: (query?: Query) => withQuery("/disposals/rates", query),
   disposalRatesCsv: () => "/disposals/rates/csv",
 };

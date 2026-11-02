@@ -1,7 +1,8 @@
 /**
- * 販売先廃棄（要件定義書 3.12、5章 販売先廃棄）。廃棄伝票の一覧・登録・詳細と、廃棄率の集計（CSV つき）。
+ * 販売先廃棄（要件定義書 3.12、5章 販売先廃棄）。廃棄伝票の一覧・登録・詳細・取消と、廃棄率の集計（CSV つき）。
  * 登録画面では、販売先を選ぶとその販売先に出荷したことのある商品を先に並べ、ほかの商品は商品選択ダイアログで足す。
- * 記録と分析のためだけに使い、請求・入金・自社の在庫には影響しない。
+ * 記録と分析のためだけに使い、請求・入金・自社の在庫には影響しない。取り消した伝票は一覧に「取消」の印つきで残り、
+ * 廃棄率の集計から外れる。
  */
 import { Hono, type Context } from "hono";
 import type { Child } from "hono/jsx";
@@ -19,6 +20,8 @@ import { queryAs, runCommand, runQuery } from "../../usecase";
 import { disposalReasonLabel } from "../../views/billing";
 import {
   Alert,
+  Badge,
+  CancelledNote,
   Checkbox,
   DescriptionList,
   EmptyState,
@@ -31,6 +34,7 @@ import {
   Select,
   TextArea,
   toFormErrors,
+  Version,
   type FormErrors,
   type Option,
 } from "../../views/components";
@@ -54,9 +58,20 @@ async function customerOptions(c: Context<AppEnv>): Promise<Option[]> {
 
 // ---- 一覧 ---------------------------------------------------------------------
 
+const CANCELLED_FILTERS = ["exclude", "only"] as const;
+const CANCELLED_OPTIONS: Option[] = [
+  { value: "exclude", label: "取り消していない伝票だけ" },
+  { value: "only", label: "取り消した伝票だけ" },
+];
+
 function filterFrom(get: (name: string) => string) {
   const text = (name: string) => get(name).trim() || undefined;
-  return { customerId: text("customerId"), from: text("from"), to: text("to") };
+  return {
+    customerId: text("customerId"),
+    from: text("from"),
+    to: text("to"),
+    cancelled: CANCELLED_FILTERS.find((v) => v === get("cancelled")),
+  };
 }
 
 function Tabs(props: { current: "list" | "rates" }) {
@@ -123,6 +138,14 @@ disposalRoutes.get("/", async (c) => {
         <Field label="廃棄日（まで）" name="to">
           <Input name="to" type="date" value={filter.to} />
         </Field>
+        <Field label="取消" name="cancelled">
+          <Select
+            name="cancelled"
+            value={filter.cancelled}
+            options={CANCELLED_OPTIONS}
+            empty="取り消した伝票も表示する"
+          />
+        </Field>
         <noscript>
           <button type="submit" class="btn btn-secondary">
             検索
@@ -152,12 +175,21 @@ disposalRoutes.get("/", async (c) => {
               </thead>
               <tbody>
                 {result.value.rows.map((d) => (
-                  <tr>
+                  <tr class={d.cancelled ? "row-muted" : undefined}>
                     <td class="nowrap">
                       <a href={paths.disposal(d.id)}>{d.number}</a>
+                      {d.cancelled ? (
+                        <>
+                          {" "}
+                          <Badge>取消</Badge>
+                        </>
+                      ) : null}
                     </td>
                     <td class="nowrap">{d.disposedOn}</td>
-                    <td>{d.customerName}</td>
+                    <td>
+                      {d.customerName}
+                      {d.cancelled ? <CancelledNote reason={d.cancelReason} /> : null}
+                    </td>
                     <td>{d.contactName ?? ""}</td>
                     <td class="num">{d.lineCount}</td>
                     <td class="num">{qty(d.totalQuantity)}</td>
@@ -589,7 +621,8 @@ disposalRoutes.get("/rates", async (c) => {
         <div class="toolbar">
           <CsvButton action={paths.disposalRatesCsv()} filters={query} />
           <p class="muted small">
-            廃棄率 = 廃棄数 ÷ 出荷数（期間内に発送した数。発送を取り消したものは除く）
+            廃棄率 = 廃棄数 ÷
+            出荷数（期間内に発送した数。発送を取り消したもの・取り消した廃棄伝票は除く）
           </p>
         </div>
         {!result.ok ? (
@@ -651,13 +684,58 @@ disposalRoutes.post("/rates/csv", async (c) => {
 
 // ---- 詳細 ---------------------------------------------------------------------
 
+const DISPOSAL_NOTICES: Readonly<Record<string, string>> = {
+  created: "廃棄伝票を登録しました",
+  cancelled: "廃棄伝票を取り消しました。廃棄率の集計には含めません",
+};
+
+/** 廃棄伝票の取消（理由を入力する）。失敗したら、この欄だけを差し替えて理由を出す */
+function CancelDisposalForm(props: { id: string; version: number; error?: DomainError | null }) {
+  const errors = props.error ? toFormErrors(props.error) : {};
+  return (
+    <details class="card" id="disposal-cancel" open={props.error ? true : undefined}>
+      <summary>廃棄伝票を取り消す</summary>
+      <form
+        method="post"
+        action={paths.disposalCancel(props.id)}
+        hx-post={paths.disposalCancel(props.id)}
+        hx-target="#disposal-cancel"
+        hx-swap="outerHTML"
+        class="form"
+      >
+        <ErrorSummary error={props.error} />
+        <FormKey />
+        <Version value={props.version} />
+        <Field label="取消の理由" name="reason" required error={errors["reason"]}>
+          <TextArea name="reason" rows={2} />
+        </Field>
+        <p class="hint">
+          取り消した伝票は一覧に「取消」の印をつけて残し、廃棄率の集計には含めません。在庫・請求には影響しません。
+        </p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-danger">
+            取り消す
+          </button>
+        </div>
+      </form>
+    </details>
+  );
+}
+
 disposalRoutes.get("/:id", async (c) => {
   const d = await runQuery(c, "disposals.get", { id: c.req.param("id") });
   if (!d) return c.notFound();
-  const notice = c.req.query("notice") === "created" ? "廃棄伝票を登録しました" : undefined;
+  const notice = DISPOSAL_NOTICES[c.req.query("notice") ?? ""];
+  const canManage = hasPermission(c.get("actor").roles, "disposals.manage");
   return c.html(
     <Layout title="廃棄伝票" actor={c.get("actor")} current={paths.disposals()}>
-      <PageHeader title={`廃棄伝票 ${d.number}`} />
+      <PageHeader title={`廃棄伝票 ${d.number}`}>
+        {d.cancelled ? (
+          <p>
+            <Badge>取消</Badge>
+          </p>
+        ) : null}
+      </PageHeader>
       {notice ? <Alert kind="success">{notice}</Alert> : null}
       <section class="card">
         <DescriptionList
@@ -667,6 +745,12 @@ disposalRoutes.get("/:id", async (c) => {
             ["先方の担当者", d.contactName],
             ["メモ", d.memo ? <span class="pre">{d.memo}</span> : null],
             ["登録", `${dateTime(d.createdAt)} ${d.createdByName ?? ""}`],
+            ...(d.cancelled
+              ? ([
+                  ["取消の理由", d.cancelReason],
+                  ["取消", `${dateTime(d.cancelledAt)} ${d.cancelledByName ?? ""}`],
+                ] as const)
+              : []),
           ]}
         />
       </section>
@@ -698,9 +782,24 @@ disposalRoutes.get("/:id", async (c) => {
           </table>
         </div>
       </section>
+      {canManage && !d.cancelled ? <CancelDisposalForm id={d.id} version={d.version} /> : null}
       <p>
         <a href={paths.disposals()}>廃棄伝票の一覧に戻る</a>
       </p>
     </Layout>,
   );
+});
+
+disposalRoutes.post("/:id/cancel", async (c) => {
+  const id = c.req.param("id");
+  const form = await readForm(c);
+  const version = Number(str(form, "version")) || 0;
+  const result = await runCommand(
+    c,
+    "disposals.cancel",
+    { id, version, reason: str(form, "reason") },
+    formKey(form),
+  );
+  if (result.ok) return redirectTo(c, paths.disposal(id, { notice: "cancelled" }));
+  return c.html(<CancelDisposalForm id={id} version={version} error={result.error} />);
 });

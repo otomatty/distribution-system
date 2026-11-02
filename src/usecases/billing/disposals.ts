@@ -1,19 +1,26 @@
 /**
  * 販売先廃棄（要件定義書 3.12）。記録と分析のためだけに使い、請求・入金・自社の在庫には影響させない。
  * 廃棄伝票で、1つの販売先・廃棄日に対して複数の商品を登録する。廃棄理由（賞味期限切れ・破損・その他）は任意。
- * 集計では、期間・販売先・商品ごとに廃棄数と出荷数に対する廃棄率を出す。
+ * 集計では、期間・販売先・商品ごとに廃棄数と出荷数に対する廃棄率を出す（取り消した伝票は含めない）。
+ * 誤って登録した伝票は、理由を入力して取り消す（一覧には取消の印をつけて残す）。
  */
 import { z } from "zod";
 
-import { summarizeDisposalRates, validateDisposalLines } from "../../domain/billing";
+import {
+  cancelDisposal,
+  summarizeDisposalRates,
+  validateDisposalLines,
+} from "../../domain/billing";
 import { err, ok } from "../../domain/result";
-import { defineCommand, defineQuery } from "../core";
+import { defineCommand, defineQuery, STALE_VERSION_MESSAGE } from "../core";
 import {
   businessDate,
   idSchema,
   optionalBusinessDate,
   optionalText,
   pageInput,
+  requiredText,
+  version,
   type Page,
 } from "../schemas";
 import type {
@@ -90,17 +97,49 @@ export const createDisposal = defineCommand({
   },
 });
 
-/** 廃棄伝票の一覧（廃棄日の新しい順） */
+/**
+ * 廃棄伝票の取消（domain の cancelDisposal）。理由が必須。在庫・請求・入金には何もしない。
+ * 取り消した伝票は一覧に残り（取消の印と理由）、廃棄率の集計から外れる
+ */
+export const cancelDisposalCommand = defineCommand({
+  permission: "disposals.manage",
+  input: z.object({ id: idSchema, version, reason: requiredText(500) }),
+  run(ctx, { id, version: v, reason }) {
+    const disposal = ctx.stores.disposals.get(id);
+    if (!disposal) return err("not_found", "廃棄伝票が見つかりません");
+    const next = cancelDisposal(disposal, reason);
+    if (!next.ok) return next;
+    const meta = { at: ctx.clock.now().toISOString(), by: ctx.actor.employeeId };
+    if (!ctx.stores.disposals.markCancelled(id, v, reason, meta))
+      return err("conflict", STALE_VERSION_MESSAGE);
+    ctx.audit.record({
+      entityType: "disposal",
+      entityId: id,
+      action: "cancel",
+      before: { cancelled: false },
+      after: { cancelled: true, reason },
+    });
+    return ok({ id, number: disposal.number });
+  },
+});
+
+/** 廃棄伝票の一覧（廃棄日の新しい順）。取り消した伝票も含める（cancelled で絞り込める） */
 export const listDisposals = defineQuery({
   permission: "view",
   input: pageInput.extend({
     customerId: z.string().max(64).optional(),
     from: optionalBusinessDate,
     to: optionalBusinessDate,
+    cancelled: z.enum(["exclude", "only"]).optional(),
   }),
-  run(ctx, { customerId, from, to, page, pageSize }): Page<DisposalListRow> {
+  run(ctx, { customerId, from, to, cancelled, page, pageSize }): Page<DisposalListRow> {
     return ctx.stores.disposals.list(
-      { customerId: customerId || undefined, from: from ?? undefined, to: to ?? undefined },
+      {
+        customerId: customerId || undefined,
+        from: from ?? undefined,
+        to: to ?? undefined,
+        cancelled,
+      },
       page,
       pageSize,
     );
@@ -146,7 +185,8 @@ const GROUP_KEYS: Readonly<
 };
 
 /**
- * 廃棄率の集計：期間内の廃棄数と出荷数（取り消していない発送）を、販売先 × 商品・販売先・商品のどれかで合計する。
+ * 廃棄率の集計：期間内の廃棄数（取り消していない廃棄伝票）と出荷数（取り消していない発送）を、
+ * 販売先 × 商品・販売先・商品のどれかで合計する。
  * onlyDisposed なら廃棄のあるものだけ。並びは販売先の読み仮名・商品コードの順
  */
 export const disposalRates = defineQuery({

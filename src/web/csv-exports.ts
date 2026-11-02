@@ -281,6 +281,8 @@ export const csvExports = {
       { header: "先方の担当者", value: (d) => d.contactName },
       { header: "商品数", value: (d) => d.lineCount },
       { header: "数量の合計", value: (d) => d.totalQuantity },
+      { header: "取消", value: (d) => (d.cancelled ? "取消" : "") },
+      { header: "取消の理由", value: (d) => d.cancelReason },
       { header: "登録日時", value: (d) => dateTime(d.createdAt) },
     ],
   }),

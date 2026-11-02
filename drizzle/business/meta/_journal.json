@@ -57,6 +57,13 @@
       "when": 1793629730127,
       "tag": "0007_purchase_return_cancel",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793629730946,
+      "tag": "0008_disposal_cancel",
+      "breakpoints": true
     }
   ]
 }
