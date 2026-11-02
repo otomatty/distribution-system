@@ -1,4 +1,11 @@
 /** 受注・発送・請求書・入金のルール（要件定義書 3.8〜3.11、4章）。 */
+import {
+  lineAmount,
+  summarizeTax,
+  type RoundingMode,
+  type TaxCategory,
+  type TaxSummary,
+} from "./money";
 import { err, ok, type Result } from "./result";
 
 export type SalesOrderStatus = "received" | "shipped" | "cancelled";
@@ -62,6 +69,199 @@ export function lotWarnings(quantity: number, minLot: number): string[] {
   if (minLot > 1 && quantity % minLot !== 0)
     warnings.push(`最低ロット（${minLot}）の倍数ではありません`);
   return warnings;
+}
+
+/**
+ * 受注の明細の出荷可能数：保管場所の出荷可能数に、この受注自身の引当を足し戻した数。
+ * 編集中の受注は、自分の引当を除いた残りと比べる（自分の分で「足りない」と出さないため）。
+ */
+export function availableForOrder(available: number, ownAllocated: number): number {
+  return available + ownAllocated;
+}
+
+/**
+ * 明細ごとの警告（登録はできる：要件定義書 3.8）。
+ * availableForOrder が null のとき（メーカー直、保管場所が未選択）は出荷可能数を比べない。
+ */
+export function salesLineWarnings(line: {
+  readonly quantity: number;
+  readonly minLot: number;
+  readonly availableForOrder: number | null;
+}): string[] {
+  const warnings: string[] = [];
+  if (line.availableForOrder !== null && line.quantity > line.availableForOrder) {
+    warnings.push(`出荷可能数（${Math.max(0, line.availableForOrder)}）を超えています`);
+  }
+  return [...warnings, ...lotWarnings(line.quantity, line.minLot)];
+}
+
+/** 卸単価と違う単価か（明細の単価は例外だけ修正する） */
+export function isPriceOverridden(unitPriceCenti: number, listPriceCenti: number): boolean {
+  return unitPriceCenti !== listPriceCenti;
+}
+
+/**
+ * 単価を修正した理由が必要か。卸単価と違い、かつ前に保存した単価からも変えた場合に必要。
+ * 保存済みの単価をそのまま使う明細は、後で商品の卸単価が変わっても理由を求めない。
+ */
+export function priceReasonRequired(line: {
+  readonly unitPriceCenti: number;
+  readonly listPriceCenti: number;
+  readonly previousPriceCenti: number | null;
+  readonly reason: string | null;
+}): boolean {
+  if (!isPriceOverridden(line.unitPriceCenti, line.listPriceCenti)) return false;
+  if (line.previousPriceCenti === line.unitPriceCenti) return false;
+  return line.reason === null || line.reason.trim() === "";
+}
+
+/** 受注の明細は1行以上で、同じ商品は1行にまとめる */
+export function validateOrderLines(lines: readonly { readonly itemId: string }[]): Result<void> {
+  if (lines.length === 0) return err("validation", "商品を1つ以上追加してください");
+  const seen = new Set<string>();
+  for (const l of lines) {
+    if (seen.has(l.itemId)) return err("validation", "同じ商品が複数の行にあります");
+    seen.add(l.itemId);
+  }
+  return ok(undefined);
+}
+
+export interface PricedLine {
+  readonly unitPriceCenti: number;
+  readonly quantity: number;
+  readonly taxCategory: TaxCategory;
+}
+
+/** 送料など（金額は税抜・円の単価 × 数量） */
+export interface ChargeLine {
+  readonly unitAmount: number;
+  readonly quantity: number;
+  readonly taxCategory: TaxCategory;
+}
+
+export interface OrderAmounts {
+  /** 明細ごとの金額（単価 × 数量を明細ごとに丸めた円） */
+  readonly lineAmounts: readonly number[];
+  readonly chargeAmounts: readonly number[];
+  /** 税率ごとの合計と消費税額（伝票1枚ごとに税率ごとに1回丸める） */
+  readonly summary: TaxSummary;
+}
+
+export function chargeAmount(charge: ChargeLine): number {
+  return charge.unitAmount * charge.quantity;
+}
+
+/**
+ * 受注・納品書の金額。明細の金額は明細ごとに、消費税は税率ごとに1回、どちらも設定の端数処理で丸める
+ * （AGENTS.md 4章）。rates は取引日時点の税率（money の ratesOn）。
+ */
+export function orderAmounts(
+  lines: readonly PricedLine[],
+  charges: readonly ChargeLine[],
+  rates: Readonly<Record<TaxCategory, number>>,
+  mode: RoundingMode,
+): OrderAmounts {
+  const lineAmounts = lines.map((l) => lineAmount(l.unitPriceCenti, l.quantity, mode));
+  const chargeAmounts = charges.map(chargeAmount);
+  const summary = summarizeTax(
+    [
+      ...lines.map((l, i) => ({ amount: lineAmounts[i] ?? 0, taxCategory: l.taxCategory })),
+      ...charges.map((c, i) => ({ amount: chargeAmounts[i] ?? 0, taxCategory: c.taxCategory })),
+    ],
+    rates,
+    mode,
+  );
+  return { lineAmounts, chargeAmounts, summary };
+}
+
+export interface BulkShipmentOrder {
+  readonly id: string;
+  readonly lines: readonly { readonly itemId: string; readonly quantity: number }[];
+}
+
+export interface BulkShipmentPlan {
+  /** 発送できる受注（渡した順） */
+  readonly shippable: readonly string[];
+  /** 在庫が足りない受注と、その時点で足りない商品と数 */
+  readonly short: readonly {
+    readonly orderId: string;
+    readonly shortages: readonly { readonly itemId: string; readonly shortBy: number }[];
+  }[];
+}
+
+/**
+ * 一括発送の計画（要件定義書 3.9）。受注を渡した順に、1つの保管場所の現在庫から引いていき、
+ * どれかの商品が足りない受注は発送しない（その受注の分は在庫を使わず、後の受注に回す）。
+ * onHand は商品ごとの現在庫（ない商品は 0）。
+ */
+export function planBulkShipment(
+  orders: readonly BulkShipmentOrder[],
+  onHand: ReadonlyMap<string, number>,
+): BulkShipmentPlan {
+  const remaining = new Map(onHand);
+  const shippable: string[] = [];
+  const short: { orderId: string; shortages: { itemId: string; shortBy: number }[] }[] = [];
+  for (const order of orders) {
+    const need = new Map<string, number>();
+    for (const l of order.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + l.quantity);
+    const shortages = [...need].flatMap(([itemId, qty]) => {
+      const left = remaining.get(itemId) ?? 0;
+      return qty > left ? [{ itemId, shortBy: qty - Math.max(0, left) }] : [];
+    });
+    if (shortages.length > 0) {
+      short.push({ orderId: order.id, shortages });
+      continue;
+    }
+    for (const [itemId, qty] of need) remaining.set(itemId, (remaining.get(itemId) ?? 0) - qty);
+    shippable.push(order.id);
+  }
+  return { shippable, short };
+}
+
+export interface ShippingMatrix {
+  /** quantities[商品の行][販売先の列] */
+  readonly quantities: readonly (readonly number[])[];
+  /** 商品ごとの合計（右端の列） */
+  readonly rowTotals: readonly number[];
+  /** 販売先ごとの合計（最下行） */
+  readonly columnTotals: readonly number[];
+  readonly grandTotal: number;
+}
+
+/**
+ * 発送リストの表（行が商品、列が販売先、右端が合計）。列は販売先の ID で管理する。
+ * itemIds・customerIds の並びがそのまま行と列の順になり、そこにない商品・販売先の明細は数えない。
+ */
+export function shippingMatrix(
+  orders: readonly {
+    readonly customerId: string;
+    readonly lines: readonly { readonly itemId: string; readonly quantity: number }[];
+  }[],
+  itemIds: readonly string[],
+  customerIds: readonly string[],
+): ShippingMatrix {
+  const row = new Map(itemIds.map((id, i) => [id, i]));
+  const col = new Map(customerIds.map((id, i) => [id, i]));
+  const quantities = itemIds.map(() => customerIds.map(() => 0));
+  for (const o of orders) {
+    const c = col.get(o.customerId);
+    if (c === undefined) continue;
+    for (const l of o.lines) {
+      const r = row.get(l.itemId);
+      const cells = r === undefined ? undefined : quantities[r];
+      if (cells) cells[c] = (cells[c] ?? 0) + l.quantity;
+    }
+  }
+  const rowTotals = quantities.map((cells) => cells.reduce((s, n) => s + n, 0));
+  const columnTotals = customerIds.map((_, c) =>
+    quantities.reduce((s, cells) => s + (cells[c] ?? 0), 0),
+  );
+  return {
+    quantities,
+    rowTotals,
+    columnTotals,
+    grandTotal: rowTotals.reduce((s, n) => s + n, 0),
+  };
 }
 
 export type InvoiceStatus = "unpaid" | "partial" | "paid" | "cancelled";
