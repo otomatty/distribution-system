@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { businessDb } from "./client";
 
 describe("業務 DB の Durable Object の呼び出し", () => {
-  it("名前 main のオブジェクトを、アジア太平洋（apac）の配置の指定つきで呼ぶ", () => {
+  it("名前 main のオブジェクトを、北東アジア（apac-ne）の配置の指定つきで呼ぶ", () => {
     const calls: unknown[][] = [];
     const namespace = {
       idFromName: (name: string) => `id:${name}`,
@@ -18,6 +18,6 @@ describe("業務 DB の Durable Object の呼び出し", () => {
       BUSINESS_DB: namespace as unknown as Env["BUSINESS_DB"],
     });
     expect(stub).toBe("stub");
-    expect(calls).toEqual([["id:main", { locationHint: "apac" }]]);
+    expect(calls).toEqual([["id:main", { locationHint: "apac-ne" }]]);
   });
 });
