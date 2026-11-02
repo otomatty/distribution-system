@@ -235,8 +235,8 @@ export const discontinueItem = defineCommand({
 /** 取引で使われていない商品だけを削除できる（登録の誤りを消すため） */
 export const deleteItem = defineCommand({
   permission: "items.manage",
-  input: z.object({ id: idSchema }),
-  run(ctx, { id }) {
+  input: z.object({ id: idSchema, version }),
+  run(ctx, { id, version: v }) {
     const before = ctx.stores.items.get(id);
     if (!before) return err("not_found", "商品が見つかりません");
     if (ctx.stores.items.isUsed(id)) {
@@ -245,7 +245,7 @@ export const deleteItem = defineCommand({
         "取引や在庫で使われた商品は削除できません。「取扱終了」にしてください",
       );
     }
-    ctx.stores.items.delete(id);
+    if (!ctx.stores.items.delete(id, v)) return err("conflict", STALE_VERSION_MESSAGE);
     ctx.audit.record({ entityType: "item", entityId: id, action: "delete", before });
     return ok({ id });
   },

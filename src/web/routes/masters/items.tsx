@@ -640,6 +640,7 @@ itemRoutes.get("/:id", async (c) => {
               hx-confirm={`「${item.name}」を削除します。よろしいですか？`}
             >
               <FormKey />
+              <Version value={item.version} />
               <button type="submit" class="btn btn-danger">
                 削除
               </button>
@@ -724,7 +725,12 @@ itemRoutes.post("/:id/discontinue", async (c) => {
 itemRoutes.post("/:id/delete", async (c) => {
   const id = c.req.param("id");
   const form = await readForm(c);
-  const result = await runCommand(c, "items.delete", { id }, formKey(form));
+  const result = await runCommand(
+    c,
+    "items.delete",
+    { id, version: int(form, "version") },
+    formKey(form),
+  );
   if (result.ok) return redirectTo(c, paths.items({ notice: "deleted" }));
   if (isHtmx(c)) return c.html(<Alert kind="error">{result.error.message}</Alert>, 409);
   return c.html(

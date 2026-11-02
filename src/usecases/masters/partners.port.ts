@@ -69,5 +69,6 @@ export interface PartnerStore {
   ): boolean;
   /** 取引（発注・受注・商品など）で使われているか */
   isReferenced(id: string): boolean;
-  delete(id: string): void;
+  /** 版番号が一致したときだけ削除する。削除したら true */
+  delete(id: string, expectedVersion: number): boolean;
 }

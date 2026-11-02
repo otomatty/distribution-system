@@ -502,6 +502,7 @@ partnerRoutes.get("/:id", async (c) => {
               hx-confirm={`「${p.name}」を削除します。取引で使われている場合は削除できません。よろしいですか？`}
             >
               <FormKey />
+              <Version value={p.version} />
               <button type="submit" class="btn btn-danger">
                 削除
               </button>
@@ -672,7 +673,12 @@ partnerRoutes.post("/:id/archive", async (c) => {
 partnerRoutes.post("/:id/delete", async (c) => {
   const id = c.req.param("id");
   const form = await readForm(c);
-  const result = await runCommand(c, "partners.delete", { id }, formKey(form));
+  const result = await runCommand(
+    c,
+    "partners.delete",
+    { id, version: int(form, "version") },
+    formKey(form),
+  );
   if (result.ok) return redirectTo(c, paths.partners({ notice: "deleted" }));
   return c.html(
     <Layout title="削除できません" actor={c.get("actor")} current={paths.partners()}>
