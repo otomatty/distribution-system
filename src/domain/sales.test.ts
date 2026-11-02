@@ -43,8 +43,8 @@ describe("sales order", () => {
     expect(validateSplit(lines, new Map([["a", 4]]))).toEqual({
       ok: true,
       value: [
-        { id: "a", keep: 6, move: 4 },
-        { id: "b", keep: 2, move: 0 },
+        { line: lines[0], keep: 6, move: 4 },
+        { line: lines[1], keep: 2, move: 0 },
       ],
     });
     expect(validateSplit(lines, new Map()).ok).toBe(false);
@@ -120,8 +120,10 @@ describe("受注の金額", () => {
       { standard: 1000, reduced: 800 },
       "floor",
     );
-    expect(r.lineAmounts).toEqual([451, 100, 999]);
-    expect(r.chargeAmounts).toEqual([800]);
+    expect(r.lines.map((l) => l.amount)).toEqual([451, 100, 999]);
+    expect(r.charges.map((c) => c.amount)).toEqual([800]);
+    // 明細の項目はそのまま返す
+    expect(r.lines[0]).toMatchObject({ unitPriceCenti: 15050, quantity: 3 });
     expect(r.summary.groups).toEqual([
       { category: "standard", rateBps: 1000, subtotal: 1799, tax: 179 },
       { category: "reduced", rateBps: 800, subtotal: 551, tax: 44 },
@@ -157,8 +159,13 @@ describe("一括発送の計画", () => {
         ["b", 1],
       ]),
     );
-    expect(plan.shippable).toEqual(["o1", "o3"]);
-    expect(plan.short).toEqual([
+    expect(plan.shippable.map((o) => o.id)).toEqual(["o1", "o3"]);
+    expect(
+      plan.short.map((s) => ({
+        orderId: s.order.id,
+        shortages: s.shortages.map((x) => ({ itemId: x.line.itemId, shortBy: x.shortBy })),
+      })),
+    ).toEqual([
       { orderId: "o2", shortages: [{ itemId: "a", shortBy: 2 }] },
       { orderId: "o4", shortages: [{ itemId: "c", shortBy: 1 }] },
     ]);
@@ -176,7 +183,8 @@ describe("一括発送の計画", () => {
       ],
       new Map([["a", 3]]),
     );
-    expect(plan.short).toEqual([{ orderId: "o1", shortages: [{ itemId: "a", shortBy: 1 }] }]);
+    expect(plan.short).toHaveLength(1);
+    expect(plan.short[0]?.shortages).toEqual([{ line: { itemId: "a", quantity: 2 }, shortBy: 1 }]);
   });
   it("発送する数は現在庫を超えず、外した受注はその時点で本当に足りない（性質）", () => {
     const items = ["a", "b", "c"];
@@ -201,13 +209,14 @@ describe("一括発送の計画", () => {
           const orders = orderLines.map((lines, i) => ({ id: `o${i}`, lines }));
           const onHand = new Map(items.map((id, i) => [id, stock[i] ?? 0]));
           const plan = planBulkShipment(orders, onHand);
+          const shippableIds = plan.shippable.map((o) => o.id);
           // すべての受注がどちらか一方に入り、順番は渡した順
-          const shortIds = plan.short.map((s) => s.orderId);
-          expect([...plan.shippable, ...shortIds].toSorted()).toEqual(
+          const shortIds = plan.short.map((s) => s.order.id);
+          expect([...shippableIds, ...shortIds].toSorted()).toEqual(
             orders.map((o) => o.id).toSorted(),
           );
-          expect(plan.shippable).toEqual(
-            orders.map((o) => o.id).filter((id) => plan.shippable.includes(id)),
+          expect(shippableIds).toEqual(
+            orders.map((o) => o.id).filter((id) => shippableIds.includes(id)),
           );
           // 順にたどって、発送する受注は足り、外す受注は足りないことを確かめる
           const left = new Map(onHand);
@@ -215,7 +224,7 @@ describe("一括発送の計画", () => {
             const need = new Map<string, number>();
             for (const l of o.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + l.quantity);
             const fits = [...need].every(([id, q]) => q <= (left.get(id) ?? 0));
-            expect(plan.shippable.includes(o.id)).toBe(fits);
+            expect(shippableIds.includes(o.id)).toBe(fits);
             if (fits) for (const [id, q] of need) left.set(id, (left.get(id) ?? 0) - q);
           }
           // 発送後の在庫は、もとがマイナスでなければマイナスにならない
