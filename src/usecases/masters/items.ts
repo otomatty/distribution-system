@@ -78,7 +78,16 @@ const fieldsShape = {
   temperatureZone: z
     .enum(TEMPERATURE_ZONES, { error: "温度帯を選んでください" })
     .default("ambient"),
-  taxCategory: z.enum(taxCategory.options, { error: "税区分を選んでください" }),
+  // 画面の選択肢の「選んでください」（空）も受け取り、エラーにする
+  taxCategory: z
+    .union([taxCategory, z.literal("")], { error: "税区分を選んでください" })
+    .transform((v, ctx) => {
+      if (v === "") {
+        ctx.addIssue({ code: "custom", message: "税区分を選んでください" });
+        return z.NEVER;
+      }
+      return v;
+    }),
   purchaseUnitName: requiredText(20),
   salesUnitName: requiredText(20),
   unitsPerPurchaseUnit: countInput("入数", 1, 99_999),

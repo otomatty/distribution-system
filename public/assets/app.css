@@ -691,6 +691,104 @@ body.touch .table th {
   background: var(--primary);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.text-danger {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* 種類の切り替え（在庫操作など、タブレットで押しやすい大きさ） */
+.tabs-lg a {
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1.2rem;
+  font-weight: 600;
+}
+
+/* 明細の数量（行ごとのエラーを下に出す） */
+.stepper {
+  flex-wrap: wrap;
+}
+.stepper .field-error {
+  flex-basis: 100%;
+}
+
+/* ---- ダイアログ（商品選択など） ---- */
+.dialog {
+  width: min(60rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgba(23, 50, 79, 0.25);
+}
+.dialog::backdrop {
+  background: rgba(23, 50, 79, 0.45);
+}
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.dialog-header h2 {
+  margin: 0;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.picker-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0;
+}
+.picker-search .field {
+  flex: 1;
+  margin: 0;
+}
+.picker-results {
+  max-height: 55vh;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+}
+.picker-table input[type="checkbox"] {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.picker-table label {
+  display: block;
+  cursor: pointer;
+}
+body.touch .picker-table td {
+  padding: 0.7rem 0.75rem;
+}
+.shortage-table {
+  margin-top: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
 @media print {
   .app-header,
   .app-nav,

@@ -189,7 +189,13 @@ export function isBelowReorderPoint(
   return availableQty + incomingQty < reorderPoint;
 }
 
-export type StockOperationKind = "adjustment" | "transfer" | "store_transfer" | "stocktake";
+export const STOCK_OPERATION_KINDS = [
+  "adjustment",
+  "transfer",
+  "store_transfer",
+  "stocktake",
+] as const;
+export type StockOperationKind = (typeof STOCK_OPERATION_KINDS)[number];
 
 export const STOCK_OPERATION_LABELS: Readonly<Record<StockOperationKind, string>> = {
   adjustment: "調整",

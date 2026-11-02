@@ -313,6 +313,23 @@ describe("applyAllocationChanges", () => {
   });
 });
 
+describe("parseShortages と allocationDelta の端の場合", () => {
+  it("形の崩れた details は読み飛ばす", () => {
+    expect(parseShortages(["a\u0000b\u00002", "壊れた値", "a\u0000\u00001"])).toEqual([
+      { itemId: "a", locationId: "b", shortBy: 2 },
+    ]);
+    expect(parseShortages(undefined)).toEqual([]);
+  });
+  it("変更後の明細がメーカー直なら引き当てない", () => {
+    expect(
+      allocationDelta(
+        [{ itemId: "a", locationId: "x", quantity: 2 }],
+        [{ itemId: "a", locationId: null, quantity: 2 }],
+      ),
+    ).toEqual([{ itemId: "a", locationId: "x", quantity: -2 }]);
+  });
+});
+
 describe("openEntries", () => {
   it("打ち消し済みの行と打ち消しの行を除く", () => {
     const entries = [

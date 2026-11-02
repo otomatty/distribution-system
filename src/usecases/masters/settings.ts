@@ -59,8 +59,12 @@ export const updateCompanySettings = defineCommand({
 export const addTaxRate = defineCommand({
   permission: "settings.manage",
   input: z.object({
-    category: z.enum(["standard", "reduced"]),
-    ratePercent: z.number().min(0, "0以上で入力してください").max(100, "100以下で入力してください"),
+    category: z.enum(["standard", "reduced"], { error: "税区分を選んでください" }),
+    ratePercent: z
+      .number({ error: "税率は数字で入力してください" })
+      .min(0, "0以上で入力してください")
+      .max(100, "100以下で入力してください")
+      .refine((v) => Number.isInteger(v * 100), "税率は小数第2位までで入力してください"),
     effectiveFrom: businessDate,
   }),
   run(ctx, input) {

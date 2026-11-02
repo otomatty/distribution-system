@@ -7,12 +7,13 @@ import { z } from "zod";
 import { err, ok, type Result } from "../../domain/result";
 import {
   ADJUSTMENT_REASONS,
+  STOCK_OPERATION_KINDS,
   stockOperationMovements,
-  type StockOperationKind,
 } from "../../domain/stock";
 import { defineCommand, defineQuery, type UsecaseContext } from "../core";
 import { businessDate, idSchema, optionalText, pageInput } from "../schemas";
 import { postStock } from "./ledger";
+import type { LedgerEntry } from "./ledger.port";
 import type { StockOperationDetail, StockOperationFields } from "./operations.port";
 
 const quantityInput = z
@@ -36,7 +37,16 @@ const common = {
 const createInput = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("adjustment"),
-    reason: z.enum(ADJUSTMENT_REASONS, { error: "理由を選んでください" }),
+    // 理由は台帳に残るので、画面では必ず選んでもらう（未選択の「」はエラーにする）
+    reason: z
+      .union([z.enum(ADJUSTMENT_REASONS), z.literal("")], { error: "理由を選んでください" })
+      .transform((v, ctx) => {
+        if (v === "") {
+          ctx.addIssue({ code: "custom", message: "理由を選んでください" });
+          return z.NEVER;
+        }
+        return v;
+      }),
     ...common,
   }),
   z.object({ kind: z.literal("transfer"), toLocationId: idSchema, ...common }),
@@ -159,17 +169,10 @@ export const createStockOperation = defineCommand({
   },
 });
 
-const KINDS = [
-  "adjustment",
-  "transfer",
-  "store_transfer",
-  "stocktake",
-] as const satisfies readonly StockOperationKind[];
-
 export const listStockOperations = defineQuery({
   permission: "view",
   input: pageInput.extend({
-    kind: z.enum(KINDS).optional(),
+    kind: z.enum(STOCK_OPERATION_KINDS).optional(),
     locationId: z.string().max(64).optional(),
     from: z.string().max(10).optional(),
     to: z.string().max(10).optional(),
@@ -179,10 +182,13 @@ export const listStockOperations = defineQuery({
   },
 });
 
+/** 在庫操作の伝票と、台帳に記録した増減（棚卸では差異。打ち消しの行も含む） */
 export const getStockOperation = defineQuery({
   permission: "view",
   input: z.object({ id: idSchema }),
-  run(ctx, { id }): StockOperationDetail | null {
-    return ctx.stores.stockOperations.get(id) ?? null;
+  run(ctx, { id }): (StockOperationDetail & { movements: LedgerEntry[] }) | null {
+    const op = ctx.stores.stockOperations.get(id);
+    if (!op) return null;
+    return { ...op, movements: ctx.stores.stock.entriesBySource("stock_operation", id) };
   },
 });

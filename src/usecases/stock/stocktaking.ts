@@ -115,6 +115,6 @@ export const stocktakeSheet = defineQuery({
       .getMany(balances.map((b) => b.itemId))
       .map((item) => ({ item, onHand: onHand.get(item.id) ?? 0 }))
       .filter((r) => !(r.item.discontinued && r.onHand === 0))
-      .toSorted((a, b) => (a.item.code < b.item.code ? -1 : a.item.code > b.item.code ? 1 : 0));
+      .toSorted((a, b) => a.item.code.localeCompare(b.item.code));
   },
 });
