@@ -1,0 +1,169 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "ignorePatterns": [
+    "src/worker-configuration.d.ts",
+    "drizzle/**",
+    "src/infra/db/migrations/*.generated.ts",
+    "public/assets/vendor/**",
+    "playwright-report/**",
+    "coverage/**"
+  ],
+  "rules": {
+    "eqeqeq": "error",
+    "no-console": "error",
+    "no-param-reassign": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/ban-ts-comment": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/require-await": "error",
+    "typescript/return-await": ["error", "in-try-catch"],
+    "typescript/only-throw-error": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/no-base-to-string": "error",
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "unicorn/no-array-for-each": "off",
+    "unicorn/no-null": "off",
+    "unicorn/prefer-top-level-await": "off",
+    "no-await-in-loop": "off"
+  },
+  "overrides": [
+    {
+      "files": ["src/domain/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/usecases/**",
+                  "**/infra/**",
+                  "**/web/**",
+                  "hono",
+                  "hono/*",
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "better-auth",
+                  "better-auth/*",
+                  "zod",
+                  "zod/*",
+                  "cloudflare:*"
+                ],
+                "message": "domain 層は他の層や外部ライブラリに依存しない（AGENTS.md 2章）"
+              }
+            ]
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "Date",
+            "property": "now",
+            "message": "domain 層では現在時刻を取得せず、引数で受け取る"
+          },
+          {
+            "object": "Math",
+            "property": "random",
+            "message": "domain 層では乱数を使わない"
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/usecases/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/infra/**",
+                  "**/web/**",
+                  "hono",
+                  "hono/*",
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "better-auth",
+                  "better-auth/*",
+                  "cloudflare:*"
+                ],
+                "message": "usecases 層は domain 層とポート（インターフェース）だけに依存する（AGENTS.md 2章）"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/web/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/infra/db/**", "drizzle-orm", "drizzle-orm/*"],
+                "message": "web 層は DB に直接触れず、usecases を業務 DB の Durable Object 経由で呼ぶ（AGENTS.md 2章）"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/infra/observability/**", "scripts/**"],
+      "rules": {
+        "no-console": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "tests/**"],
+      "rules": {
+        "typescript/no-non-null-assertion": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-type-assertion": "off",
+        "import/no-named-as-default-member": "off"
+      }
+    },
+    {
+      "files": ["public/assets/*.js"],
+      "rules": {
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    }
+  ]
+}

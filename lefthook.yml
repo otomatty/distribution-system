@@ -1,0 +1,15 @@
+# Git フック（bun install で自動的に設定される）
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      glob: "*.{ts,tsx,js,mjs,json,jsonc,md,css,yml,yaml}"
+      run: bunx oxfmt --check {staged_files}
+    - name: lint
+      glob: "*.{ts,tsx,js,mjs}"
+      run: bunx oxlint --type-aware {staged_files}
+
+pre-push:
+  jobs:
+    - name: check
+      run: bun run check

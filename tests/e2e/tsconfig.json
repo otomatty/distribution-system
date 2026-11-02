@@ -1,0 +1,9 @@
+{
+  // E2E テストは Node.js で動く（Workers の型は使わない）
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["."],
+  "exclude": []
+}

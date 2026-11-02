@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "sortImports": {},
+  "ignorePatterns": [
+    "src/worker-configuration.d.ts",
+    "drizzle/**",
+    "src/infra/db/migrations/*.generated.ts",
+    "public/assets/vendor/**",
+    "bun.lock"
+  ]
+}

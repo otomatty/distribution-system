@@ -1,0 +1,4 @@
+# ローカル開発用の秘密情報。.dev.vars にコピーして値を入れる（.dev.vars はコミットしない）
+BETTER_AUTH_SECRET=change-me-to-a-long-random-string
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=

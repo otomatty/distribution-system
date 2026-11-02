@@ -1,0 +1,4 @@
+# ツールのバージョンを固定する（https://mise.jdx.dev）
+[tools]
+node = "22"
+bun = "1.4.4"

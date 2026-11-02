@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits", ":timezone(Asia/Tokyo)"],
+  "schedule": ["before 9am on monday"],
+  "rangeStrategy": "pin",
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "dev dependencies (non-major)"
+    },
+    {
+      "matchPackageNames": ["wrangler", "@cloudflare/vitest-plugin"],
+      "groupName": "cloudflare tooling"
+    }
+  ]
+}
