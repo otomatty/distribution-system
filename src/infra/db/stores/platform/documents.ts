@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte, ne, sql, type SQL } from "drizzle-orm";
 
 import type { SendMethod, SendStatus } from "../../../../domain/documents";
 import type {
@@ -11,6 +11,7 @@ import type {
 import type { Page } from "../../../../usecases/schemas";
 import { likePattern, type Db } from "../../client";
 import { documentSends, documents, employees, jobs, partners } from "../../schema";
+import { inList } from "../../sql-helpers";
 
 /** 帳票ごとの最新の送付（ULID は作成順に並ぶので、ID の大きいものが最新） */
 const lastSendStatus = sql<SendStatus | null>`(SELECT s.status FROM ${documentSends} s WHERE s.document_id = ${documents.id} ORDER BY s.id DESC LIMIT 1)`;
@@ -46,7 +47,7 @@ function conditions(filter: DocumentFilter): SQL | undefined {
     );
   }
   if (filter.documentType) conds.push(eq(documents.documentType, filter.documentType));
-  if (filter.documentTypes) conds.push(inArray(documents.documentType, [...filter.documentTypes]));
+  if (filter.documentTypes) conds.push(inList(documents.documentType, filter.documentTypes));
   if (filter.number) {
     conds.push(sql`${documents.number} LIKE ${likePattern(filter.number)} ESCAPE '\\'`);
   }
@@ -138,7 +139,7 @@ export function documentStore(db: Db): DocumentStore {
         db
           .select({ id: documents.id })
           .from(documents)
-          .where(inArray(documents.id, [...ids]))
+          .where(inList(documents.id, ids))
           .all()
           .map((r) => r.id),
       );
@@ -153,7 +154,7 @@ export function documentStore(db: Db): DocumentStore {
         .where(
           and(
             eq(documents.documentType, type),
-            inArray(documents.entityId, [...entityIds]),
+            inList(documents.entityId, entityIds),
             eq(documents.cancelled, false),
           ),
         )

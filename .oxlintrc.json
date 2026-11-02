@@ -45,6 +45,18 @@
     "typescript/no-base-to-string": "error",
     "import/no-cycle": "error",
     "import/no-duplicates": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "drizzle-orm",
+            "importNames": ["inArray", "notInArray"],
+            "message": "Durable Objects の SQLite はバインド変数が100個までなので、infra/db/sql-helpers.ts の inList / notInList を使う"
+          }
+        ]
+      }
+    ],
     "unicorn/no-array-for-each": "off",
     "unicorn/no-null": "off",
     "unicorn/prefer-top-level-await": "off",

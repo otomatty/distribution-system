@@ -28,7 +28,7 @@ import {
   type Option,
 } from "../../views/components";
 import { jaDate, qty } from "../../views/format";
-import { Layout } from "../../views/layout";
+import { HtmlDocument, Layout } from "../../views/layout";
 
 export const shippingRoutes = new Hono<AppEnv>();
 
@@ -567,7 +567,7 @@ shippingRoutes.post("/delivery-notes", async (c) => {
 /** 印刷用のページ（public/assets/print.css。画面の CSP のままで、埋め込みのスタイルやスクリプトは使わない） */
 function PrintLayout(props: { title: string; back: string; children: Child; portrait?: boolean }) {
   return (
-    <html lang="ja">
+    <HtmlDocument>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -586,7 +586,7 @@ function PrintLayout(props: { title: string; back: string; children: Child; port
         </div>
         {props.children}
       </body>
-    </html>
+    </HtmlDocument>
   );
 }
 

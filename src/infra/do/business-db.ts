@@ -4,7 +4,7 @@
  * 在庫の引当や採番が競合しない（要件定義書 8章）。
  */
 import { DurableObject } from "cloudflare:workers";
-import { and, asc, eq, getTableName, inArray, is, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, is, lt, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -21,6 +21,7 @@ import { commands, queries } from "../../usecases/registry";
 import { auditInsert, type Db } from "../db/client";
 import { businessMigrations } from "../db/migrations/business.generated";
 import * as schema from "../db/schema";
+import { inList } from "../db/sql-helpers";
 import { createStores } from "../db/stores";
 import { bootstrapSettings } from "../db/stores/masters/settings";
 import { errorFields, log } from "../observability/log";
@@ -638,17 +639,14 @@ export class BusinessDb extends DurableObject<Env> {
         .select({ id: schema.jobs.id })
         .from(schema.jobs)
         .where(
-          and(
-            inArray(schema.jobs.status, ["queued", "running"]),
-            lt(schema.jobs.updatedAt, before),
-          ),
+          and(inList(schema.jobs.status, ["queued", "running"]), lt(schema.jobs.updatedAt, before)),
         )
         .all()
         .map((j) => j.id);
       if (stale.length === 0) return 0;
       tx.update(schema.jobs)
         .set({ status: "failed", error: message, finishedAt: at, updatedAt: at })
-        .where(inArray(schema.jobs.id, stale))
+        .where(inList(schema.jobs.id, stale))
         .run();
       tx.update(schema.documentSends)
         .set({
@@ -660,7 +658,7 @@ export class BusinessDb extends DurableObject<Env> {
         })
         .where(
           and(
-            inArray(schema.documentSends.jobId, stale),
+            inList(schema.documentSends.jobId, stale),
             eq(schema.documentSends.status, "pending"),
           ),
         )

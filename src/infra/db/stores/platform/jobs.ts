@@ -1,9 +1,10 @@
-import { and, count, desc, eq, gte, inArray, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, type SQL } from "drizzle-orm";
 
 import { JOB_TYPES, type JobStatus, type JobType } from "../../../../domain/jobs";
 import type { JobFilter, JobStore, JobView } from "../../../../usecases/platform/jobs.port";
 import type { Db } from "../../client";
 import { employees, jobs } from "../../schema";
+import { inList } from "../../sql-helpers";
 
 const ACTIVE: JobStatus[] = ["pending", "queued", "running"];
 
@@ -33,9 +34,9 @@ function toView(r: Row): JobView[] {
 }
 
 function conditions(filter: JobFilter): SQL[] {
-  const conds: SQL[] = [inArray(jobs.type, [...filter.types])];
+  const conds: SQL[] = [inList(jobs.type, filter.types)];
   if (filter.createdBy !== undefined) conds.push(eq(jobs.createdBy, filter.createdBy));
-  if (filter.status === "active") conds.push(inArray(jobs.status, ACTIVE));
+  if (filter.status === "active") conds.push(inList(jobs.status, ACTIVE));
   if (filter.status === "failed") conds.push(eq(jobs.status, "failed"));
   return conds;
 }
@@ -64,7 +65,7 @@ export function jobStore(db: Db): JobStore {
         db
           .select({ n: count() })
           .from(jobs)
-          .where(and(...base, inArray(jobs.status, ACTIVE)))
+          .where(and(...base, inList(jobs.status, ACTIVE)))
           .get()?.n ?? 0;
       const failed =
         db

@@ -1,4 +1,5 @@
 /** 画面の共通レイアウト：ヘッダー、業務の区分ごとのメニュー、通信断の表示 */
+import { raw } from "hono/html";
 import type { Child } from "hono/jsx";
 
 import { can, isRole, type Permission } from "../../domain/roles";
@@ -70,6 +71,16 @@ const NAV: readonly { readonly title: string; readonly items: readonly NavItem[]
   },
 ];
 
+/** <!DOCTYPE html> つきの html 要素（付けないとブラウザが互換モードで描画する） */
+export function HtmlDocument(props: { children: Child }) {
+  return (
+    <>
+      {raw("<!DOCTYPE html>")}
+      <html lang="ja">{props.children}</html>
+    </>
+  );
+}
+
 function roleList(actor: ActorSummary) {
   return actor.roles.filter(isRole);
 }
@@ -83,7 +94,7 @@ export function Layout(props: {
 }) {
   const roles = roleList(props.actor);
   return (
-    <html lang="ja">
+    <HtmlDocument>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -144,14 +155,14 @@ export function Layout(props: {
           </main>
         </div>
       </body>
-    </html>
+    </HtmlDocument>
   );
 }
 
 /** ログイン前の画面（ログイン、利用登録なし） */
 export function BareLayout(props: { title: string; children: Child }) {
   return (
-    <html lang="ja">
+    <HtmlDocument>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -163,6 +174,6 @@ export function BareLayout(props: { title: string; children: Child }) {
       <body class="bare">
         <main class="bare-main">{props.children}</main>
       </body>
-    </html>
+    </HtmlDocument>
   );
 }

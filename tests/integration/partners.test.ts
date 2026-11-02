@@ -28,6 +28,14 @@ describe("取引先の画面", () => {
     expect(res.headers.get("Location")).toBe("/login");
   });
 
+  it("画面は <!DOCTYPE html> から始まる（互換モードで描画させない）", async () => {
+    const user = await createEmployee(["purchasing"]);
+    const page = await (await as(user).get("/partners")).text();
+    expect(page.startsWith("<!DOCTYPE html>")).toBe(true);
+    const login = await (await anonymous().get("/login")).text();
+    expect(login.startsWith("<!DOCTYPE html>")).toBe(true);
+  });
+
   it("登録されていない社員は利用できない", async () => {
     const res = await as("unknown@example.co.jp").get("/partners");
     expect(res.status).toBe(302);

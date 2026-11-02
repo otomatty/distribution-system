@@ -13,7 +13,6 @@ import {
   type QueueResult,
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { inArray } from "drizzle-orm";
 import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { monotonicFactory } from "ulid";
 import { z } from "zod";
@@ -21,6 +20,7 @@ import { z } from "zod";
 import type { DocumentType } from "../../src/domain/documents";
 import type { Result } from "../../src/domain/result";
 import * as schema from "../../src/infra/db/schema";
+import { inList } from "../../src/infra/db/sql-helpers";
 import { businessDb } from "../../src/infra/do/client";
 import { documentPort, jobPort } from "../../src/infra/do/document-port";
 import type { IssueDocumentInput } from "../../src/usecases/core";
@@ -166,7 +166,7 @@ export async function pendingJobIds(type?: string): Promise<string[]> {
     db
       .select({ id: schema.jobs.id, type: schema.jobs.type })
       .from(schema.jobs)
-      .where(inArray(schema.jobs.status, ["pending", "queued", "running"]))
+      .where(inList(schema.jobs.status, ["pending", "queued", "running"]))
       .all(),
   );
   return rows.filter((r) => type === undefined || r.type === type).map((r) => r.id);
