@@ -118,7 +118,7 @@ docs/requirements.md 要件定義書の写し
 ### テストデータ（bun run db:seed）
 
 - 投入の処理は `src/infra/seed/`。業務 DB の Durable Object の `seed`（`/dev/seed`）から呼び、開発用ログインと同じく ENVIRONMENT が development / test のときだけ動く
-- 書き込みは必ず本物のユースケースを通す（`session.run(コマンド, 入力, 社員, 時刻)`。過去の業務日の時刻で実行する）。テーブルに直接書かない
+- 書き込みは必ず本物のユースケースを通す（`session.run(コマンド, 入力, 社員, 時刻)`。過去の業務日の時刻で実行する）。テーブルに直接書かない。受付番号（`seed:<規模>:<手順>:<回>:<何番目>`）は `session.run` が付ける
 - 乱数は `session.random(対象のキー…)` を使う。キーには番号・名前・日付を使い、ID（ULID は毎回変わる）を使わない
 - 手順を足すときは `src/infra/seed/index.ts` の `STEPS`、毎日の操作を足すときは `operations.ts` の `DAILY`（発注・入荷・受注・発送・在庫・仕入先請求書・支払）か `billing.ts`（返品伝票・請求書・締め処理・返還請求書・入金と消込・販売先廃棄。1日の取引の最後に行う）に追加する。後から期間をまとめて処理すると、途中の未請求・未処理が実際の運用より大きく膨らむため、毎日の流れの中で行う
 - 整合の確認（`verify.ts`）と結合テスト（`tests/integration/seed.test.ts`）も更新する
