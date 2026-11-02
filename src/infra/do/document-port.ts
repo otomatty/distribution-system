@@ -30,11 +30,16 @@ export function jobPort(db: Db, meta: WriteMeta, nextId: () => string, created: 
   };
 }
 
+/**
+ * render が false のときは、帳票の索引だけを登録して PDF 化を予約しない
+ * （開発用のテストデータの古い帳票。必要になったら帳票の画面の「PDF の作成をやり直す」で作る）。
+ */
 export function documentPort(
   db: Db,
   meta: WriteMeta,
   nextId: () => string,
   jobQueue: JobPort,
+  render = true,
 ): DocumentPort {
   return {
     issue(input) {
@@ -54,7 +59,7 @@ export function documentPort(
           ...auditInsert(meta),
         })
         .run();
-      jobQueue.enqueue("render_document", { documentId: id });
+      if (render) jobQueue.enqueue("render_document", { documentId: id });
       return id;
     },
     cancel(documentId) {

@@ -14,9 +14,16 @@ import type { z } from "zod";
 import { toBusinessDate, yearOf } from "../../domain/dates";
 import type { DocumentType, RenderStatus, SendMethod, SendStatus } from "../../domain/documents";
 import { formatDocumentNumber, sequenceKey } from "../../domain/numbering";
-import { err, type Result } from "../../domain/result";
+import { err, type DomainError, type Result } from "../../domain/result";
 import { can, ROLES } from "../../domain/roles";
-import type { Actor, CommandDef, JobType, QueryDef, UsecaseContext } from "../../usecases/core";
+import type {
+  Actor,
+  CommandDef,
+  JobType,
+  QueryContext,
+  QueryDef,
+  UsecaseContext,
+} from "../../usecases/core";
 import { commands, queries } from "../../usecases/registry";
 import { auditInsert, type Db } from "../db/client";
 import { businessMigrations } from "../db/migrations/business.generated";
@@ -25,11 +32,23 @@ import { inList } from "../db/sql-helpers";
 import { createStores } from "../db/stores";
 import { bootstrapSettings } from "../db/stores/masters/settings";
 import { errorFields, log } from "../observability/log";
+import { runSeed } from "../seed";
+import { seedRequestSchema, type SeedResult } from "../seed/request";
+import type { SeedHost } from "../seed/session";
 import { isDevAuthAllowed, type ActorRef } from "./actor-ref";
 import { documentPort, jobPort } from "./document-port";
 
 const commandMap = new Map<string, CommandDef<z.ZodType, unknown>>(Object.entries(commands));
 const queryMap = new Map<string, QueryDef<z.ZodType, unknown>>(Object.entries(queries));
+/** ユースケースの定義 → 名前（テストデータの投入で、操作履歴に名前を残すため） */
+const commandNames = new Map<CommandDef<z.ZodType, unknown>, string>(
+  Object.entries(commands).map(([name, def]) => [def, name]),
+);
+const queryNames = new Map<QueryDef<z.ZodType, unknown>, string>(
+  Object.entries(queries).map(([name, def]) => [def, name]),
+);
+
+export const SEED_FORBIDDEN_MESSAGE = "テストデータの投入は開発環境とテストでだけ使えます";
 
 const SYSTEM_ACTOR: Actor = {
   employeeId: "system",
@@ -40,9 +59,20 @@ const SYSTEM_ACTOR: Actor = {
 
 /** 業務エラーでトランザクションを取り消すための目印 */
 class Rollback extends Error {
-  constructor(readonly result: Result<unknown>) {
+  constructor(readonly error: DomainError) {
     super("rollback");
   }
+}
+
+/**
+ * ユースケースを実行するときの時刻・ID・帳票の扱い。通常の操作は今の時刻で実行する。
+ * 開発用のテストデータ（infra/seed）は、過去の業務日の時刻で同じユースケースを実行する。
+ */
+export interface RunOptions {
+  readonly now: Date;
+  readonly nextId: () => string;
+  /** false なら帳票の索引だけを登録し、PDF 化を予約しない */
+  readonly renderDocuments: boolean;
 }
 
 /** 保存しておいた処理結果（JSON）を読み戻す */
@@ -237,11 +267,21 @@ export class BusinessDb extends DurableObject<Env> {
 
   // ---- ユースケースの実行 --------------------------------------------------------
 
-  private context(db: Db, actor: Actor, command: string, createdJobs: string[]): UsecaseContext {
-    const now = new Date();
+  private realtime(): RunOptions {
+    return { now: new Date(), nextId: () => this.ulid(), renderDocuments: true };
+  }
+
+  private context(
+    db: Db,
+    actor: Actor,
+    command: string,
+    createdJobs: string[],
+    options: RunOptions,
+  ): UsecaseContext {
+    const now = options.now;
     const at = now.toISOString();
     const meta = { at, by: actor.employeeId };
-    const nextId = () => this.ulid();
+    const nextId = options.nextId;
     const jobs = jobPort(db, meta, nextId, createdJobs);
     return {
       actor,
@@ -253,7 +293,7 @@ export class BusinessDb extends DurableObject<Env> {
         record: (entry) => {
           db.insert(schema.auditLogs)
             .values({
-              id: this.ulid(),
+              id: nextId(),
               occurredAt: at,
               employeeId: actor.employeeId,
               command,
@@ -286,7 +326,55 @@ export class BusinessDb extends DurableObject<Env> {
         },
       },
       jobs,
-      documents: documentPort(db, meta, nextId, jobs),
+      documents: documentPort(db, meta, nextId, jobs, options.renderDocuments),
+    };
+  }
+
+  /**
+   * 検証済みの入力でユースケースを1つのトランザクションとして実行する。業務エラーなら書き込みをすべて取り消す。
+   * 受付番号（冪等キー）があれば、結果と一緒に同じトランザクションで保存する。
+   */
+  private transact<S extends z.ZodType, O>(
+    def: CommandDef<S, O>,
+    name: string,
+    input: z.output<S>,
+    actor: Actor,
+    idempotencyKey: string | null,
+    options: RunOptions,
+    createdJobs: string[],
+  ): Result<O> {
+    try {
+      return this.db.transaction((tx) => {
+        const r = def.run(this.context(tx, actor, name, createdJobs, options), input);
+        if (!r.ok) throw new Rollback(r.error);
+        if (idempotencyKey) {
+          tx.insert(schema.idempotencyKeys)
+            .values({
+              key: idempotencyKey,
+              command: name,
+              employeeId: actor.employeeId,
+              resultJson: JSON.stringify(r),
+              createdAt: options.now.toISOString(),
+            })
+            .run();
+        }
+        return r;
+      });
+    } catch (e) {
+      if (e instanceof Rollback) return { ok: false, error: e.error };
+      log("error", "command failed", { command: name, ...errorFields(e) });
+      throw e;
+    }
+  }
+
+  private queryContext(actor: Actor, name: string, options: RunOptions): QueryContext {
+    const now = options.now;
+    return {
+      actor,
+      command: name,
+      clock: { now: () => now, today: () => toBusinessDate(now) },
+      ids: { next: options.nextId },
+      stores: createStores(this.db),
     };
   }
 
@@ -327,30 +415,16 @@ export class BusinessDb extends DurableObject<Env> {
     }
 
     const createdJobs: string[] = [];
-    let result: Result<unknown>;
-    try {
-      result = this.db.transaction((tx) => {
-        const r = def.run(this.context(tx, actor, name, createdJobs), parsed.data);
-        if (!r.ok) throw new Rollback(r);
-        if (idempotencyKey) {
-          tx.insert(schema.idempotencyKeys)
-            .values({
-              key: idempotencyKey,
-              command: name,
-              employeeId: actor.employeeId,
-              resultJson: JSON.stringify(r),
-              createdAt: new Date().toISOString(),
-            })
-            .run();
-        }
-        return r;
-      });
-    } catch (e) {
-      if (e instanceof Rollback) return e.result;
-      log("error", "command failed", { command: name, ...errorFields(e) });
-      throw e;
-    }
-    if (createdJobs.length > 0) await this.dispatchJobs(createdJobs);
+    const result = this.transact(
+      def,
+      name,
+      parsed.data,
+      actor,
+      idempotencyKey,
+      this.realtime(),
+      createdJobs,
+    );
+    if (result.ok && createdJobs.length > 0) await this.dispatchJobs(createdJobs);
     return result;
   }
 
@@ -365,17 +439,7 @@ export class BusinessDb extends DurableObject<Env> {
     const parsed = def.input.safeParse(input);
     if (!parsed.success)
       return err("validation", "条件を確認してください", { fields: zodFields(parsed.error) });
-    const now = new Date();
-    const value = def.run(
-      {
-        actor,
-        command: name,
-        clock: { now: () => now, today: () => toBusinessDate(now) },
-        ids: { next: () => this.ulid() },
-        stores: createStores(this.db),
-      },
-      parsed.data,
-    );
+    const value = def.run(this.queryContext(actor, name, this.realtime()), parsed.data);
     return { ok: true, value };
   }
 
@@ -623,6 +687,91 @@ export class BusinessDb extends DurableObject<Env> {
       })
       .where(and(eq(schema.documentSends.id, sendId), eq(schema.documentSends.status, "pending")))
       .run();
+  }
+
+  // ---- 開発用のテストデータの投入（infra/seed。本番・検証環境では使えない） -----------------------
+
+  /**
+   * テストデータの投入の手順を1回分実行する（scripts/seed.mjs → /dev/seed から呼ぶ）。
+   * 開発用ログインと同じく、ENVIRONMENT が development / test のときだけ受け付ける。
+   */
+  async seed(request: unknown): Promise<Result<SeedResult>> {
+    if (!isDevAuthAllowed(this.env.ENVIRONMENT)) return err("forbidden", SEED_FORBIDDEN_MESSAGE);
+    const parsed = seedRequestSchema.safeParse(request);
+    if (!parsed.success)
+      return err("validation", "依頼の内容が正しくありません", { fields: zodFields(parsed.error) });
+    if (parsed.data.action === "reset") {
+      // 業務データ（SQLite のテーブルを含む）をすべて消し、マイグレーションと初期データからやり直す
+      await this.ctx.storage.deleteAll();
+      await migrate(this.db, businessMigrations);
+      this.bootstrap();
+      return { ok: true, value: { action: "reset" } };
+    }
+    const createdJobs: string[] = [];
+    const result = runSeed(this.seedHost(createdJobs), parsed.data, toBusinessDate(new Date()));
+    if (createdJobs.length > 0) await this.dispatchJobs(createdJobs);
+    return result;
+  }
+
+  /** テストデータの投入で、過去の時刻でユースケースを実行する入口 */
+  private seedHost(createdJobs: string[]): SeedHost {
+    const ulid = monotonicFactory();
+    const actors = new Map<string, Actor | null>();
+    const actorFor = (email: string): Actor | null => {
+      if (email === "system") return SYSTEM_ACTOR;
+      const cached = actors.get(email);
+      if (cached !== undefined) return cached;
+      const target = email === "admin" ? (this.env.INITIAL_ADMIN_EMAIL ?? "") : email;
+      const e = createStores(this.db).employees.findByEmail(target.toLowerCase());
+      const actor: Actor | null =
+        e && e.active
+          ? { employeeId: e.id, name: e.name, email: e.email, roles: e.roles }
+          : email === "admin"
+            ? SYSTEM_ACTOR
+            : null;
+      actors.set(email, actor);
+      return actor;
+    };
+    const options = (at: Date, renderDocuments: boolean): RunOptions => ({
+      now: at,
+      // 過去の時刻の ULID（ID の順が登録の順になる）
+      nextId: () => ulid(at.getTime()),
+      renderDocuments,
+    });
+    return {
+      db: this.db,
+      command: (def, input, actorEmail, at, renderDocuments) => {
+        const actor = actorFor(actorEmail);
+        if (!actor) return err("unauthenticated", `有効な社員 ${actorEmail} が登録されていません`);
+        if (!can(actor.roles, def.permission))
+          return err("forbidden", "この操作を行う権限がありません");
+        const parsed = def.input.safeParse(input);
+        if (!parsed.success)
+          return err("validation", "入力内容を確認してください", {
+            fields: zodFields(parsed.error),
+          });
+        const jobs: string[] = [];
+        const name = commandNames.get(def) ?? "seed";
+        const r = this.transact(
+          def,
+          name,
+          parsed.data,
+          actor,
+          null,
+          options(at, renderDocuments),
+          jobs,
+        );
+        if (r.ok) createdJobs.push(...jobs);
+        return r;
+      },
+      query: (def, input, at) => {
+        const parsed = def.input.safeParse(input);
+        if (!parsed.success) return err("validation", "条件を確認してください");
+        const name = queryNames.get(def) ?? "seed";
+        const ctx = this.queryContext(SYSTEM_ACTOR, name, options(at, false));
+        return { ok: true, value: def.run(ctx, parsed.data) };
+      },
+    };
   }
 
   // ---- 定期処理（バックアップ、受付番号の掃除、止まった処理、エラーの通知） ------------------

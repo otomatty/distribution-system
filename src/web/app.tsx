@@ -9,6 +9,7 @@ import { requireActor, securityHeaders } from "./middleware";
 import { authRoutes } from "./routes/auth";
 import { billingRoutes } from "./routes/billing";
 import { dashboardRoutes } from "./routes/dashboard";
+import { devRoutes } from "./routes/dev";
 import { mastersRoutes } from "./routes/masters";
 import { platformRoutes } from "./routes/platform";
 import { purchasingRoutes } from "./routes/purchasing";
@@ -32,6 +33,7 @@ export function createApp(): Hono<AppEnv> {
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => authFor(c.env).handler(c.req.raw));
   app.route("/", authRoutes);
+  app.route("/", devRoutes);
 
   // ここから下はログインが必要
   app.use("*", requireActor);
