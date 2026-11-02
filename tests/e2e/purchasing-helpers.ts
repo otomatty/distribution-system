@@ -11,6 +11,8 @@ export async function createAndConfirmOrder(
   await page.goto("/purchase-orders/new");
   await page.getByLabel(/^仕入先/).selectOption({ label: supplier });
   await page.getByRole("button", { name: "次へ" }).click();
+  // 画面の補助スクリプト（defer。ダイアログを開く）が動くまで待つ。待たないと「商品を追加」を押しても開かないことがある
+  await page.waitForURL(/\/purchase-orders\/new\?supplierId=/);
   await page.getByLabel("保管場所（在庫に入れる）").selectOption({ label: location });
 
   await page.getByRole("button", { name: "商品を追加" }).click();

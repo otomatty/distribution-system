@@ -24,6 +24,15 @@ function isPage(url) {
   return url.origin === self.location.origin && PAGES.indexOf(url.pathname) >= 0;
 }
 
+/** 発送リスト・入荷予定一覧の画面からの読み込みか（同じ生成元なので referrer に画面の URL が入る） */
+function fromSnapshotPage(request) {
+  try {
+    return isPage(new URL(request.referrer));
+  } catch {
+    return false;
+  }
+}
+
 /** 目印のある、正常な同じ生成元の HTML の応答なら残す（見出しは CSP なども含めてそのまま残す） */
 function storePage(url, response) {
   var type = response.headers.get("Content-Type") || "";
@@ -158,5 +167,7 @@ self.addEventListener("fetch", function (event) {
       event.respondWith(fetchAndStorePage(request, url));
     return;
   }
-  if (ASSETS.indexOf(url.pathname) >= 0) event.respondWith(networkFirstAsset(request, url));
+  // CSS・スクリプトは、発送リスト・入荷予定一覧の画面から読むときだけ受け持つ（入荷確認・印刷などの画面には関わらない）
+  if (ASSETS.indexOf(url.pathname) >= 0 && fromSnapshotPage(request))
+    event.respondWith(networkFirstAsset(request, url));
 });

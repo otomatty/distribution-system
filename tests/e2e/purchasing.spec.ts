@@ -15,6 +15,8 @@ test("発注を作成して確定し、タブレットで分納の入荷を記�
   await page.goto("/receiving");
   await expect(page.locator("body")).toHaveClass(/touch/);
   await page.getByRole("link", { name: new RegExp(number) }).click();
+  // 「−」「＋」は画面の補助スクリプト（defer）で動くので、読み込みが終わるまで待つ
+  await page.waitForURL(/\/receiving\/[0-9A-Z]{26}$/);
   await expect(page.getByRole("heading", { name: `入荷確認 ${number}` })).toBeVisible();
 
   // 1回目：5ケースのうち2ケースだけ届いた（＋ボタンでも増減できる）
