@@ -834,6 +834,10 @@ body.touch .picker-table td {
 }
 
 /* ---- 受注・発送 ---- */
+/* fieldset は既定で中身の幅より狭くならないので、明細の表は枠の中で横にスクロールさせる */
+.so-form fieldset {
+  min-width: 0;
+}
 .so-lines .price-input {
   max-width: 9rem;
   text-align: right;

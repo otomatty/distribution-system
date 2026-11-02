@@ -246,12 +246,16 @@ export function ChargeRow(props: { view: ChargeView }) {
   );
 }
 
+/**
+ * 合計欄。oob なら hx-swap-oob で差し替える。行（tr）と一緒に返すと、HTML の構文の都合で
+ * tfoot が行として読まれてしまうので、<template> に包んで返す（htmx は template の中の oob も差し替える）
+ */
 export function OrderTotals(props: {
   summary: TaxSummary | null;
   incomplete: boolean;
   oob?: boolean;
 }) {
-  return (
+  const foot = (
     <TotalsFoot
       id={TOTALS_ID}
       oob={props.oob ?? false}
@@ -260,6 +264,7 @@ export function OrderTotals(props: {
       columns={COLUMNS}
     />
   );
+  return props.oob ? <template>{foot}</template> : foot;
 }
 
 export function ShipDateField(props: { value: string; error?: string | undefined }) {
