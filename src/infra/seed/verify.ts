@@ -5,10 +5,11 @@
  * - 発注：明細の入荷済みの数 = 有効な入荷の受入数 + 返品数、入荷済み・支払済みの発注は残りが0
  * - 仕入先請求書：支払済みの請求書には有効な支払が1件、支払済みの発注の入荷（受入のあるもの）はすべて支払済みの請求書に入っている
  * - 請求：請求書の消込済みの額 = 有効な消込の合計、状態（未入金・一部入金・入金済み）が消込と合う、
- *   請求した発送は有効な請求書に載っている、入金より多く消し込んでいない
+ *   請求した発送は有効な請求書に載っている、締め日のない販売先の発送は今日の分を除いて請求済み、
+ *   入金より多く消し込んでいない
  * - 採番：番号の最大 = 採番の次の番号 − 1
  */
-import { and, count, eq, isNotNull, sql } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 
 import { DOCUMENT_PREFIXES, sequenceKey, type DocumentKind } from "../../domain/numbering";
 import type { Db } from "../db/client";
@@ -207,10 +208,34 @@ function billingChecks(db: Db): SeedCheck[] {
     .all()
     .filter((p) => p.used > p.amount)
     .map((p) => `入金 ${p.id} ${p.amount} に ${p.used} を消し込んでいる`);
+  // 締め日のない販売先の発送は、最後の日（今日）の分を除いてすべて請求書に載っている
+  const lastShipped = db
+    .select({ on: sql<string | null>`max(${schema.shipments.shippedOn})` })
+    .from(schema.shipments)
+    .get()?.on;
+  const unbilled = db
+    .select({
+      number: schema.shipments.deliveryNoteNumber,
+      shippedOn: schema.shipments.shippedOn,
+    })
+    .from(schema.shipments)
+    .innerJoin(schema.salesOrders, eq(schema.salesOrders.id, schema.shipments.salesOrderId))
+    .innerJoin(schema.partners, eq(schema.partners.id, schema.salesOrders.customerId))
+    .where(
+      and(
+        eq(schema.shipments.cancelled, false),
+        isNull(schema.shipments.invoiceId),
+        isNull(schema.partners.closingDay),
+        lt(schema.shipments.shippedOn, lastShipped ?? ""),
+      ),
+    )
+    .all()
+    .map((s) => `${s.number}（${s.shippedOn}）`);
   return [
     check("請求書の消込済みの額 = 消込の合計", allocated),
     check("請求書の状態 = 消込の状態", status),
     check("請求した発送は有効な請求書に載っている", shipments),
+    check("締め日のない販売先の発送は、今日の分を除いて請求済み", unbilled),
     check("入金より多く消し込んでいない", payments),
   ];
 }

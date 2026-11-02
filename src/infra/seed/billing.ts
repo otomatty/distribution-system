@@ -11,7 +11,7 @@
  *   期限の日に払う。ごく一部は一部だけ入金・振込手数料を差し引いて入金・期限を過ぎても未入金のままにする
  * - 今日は締め処理をしない（ダッシュボードの「締め処理待ちの販売先」に出す）
  */
-import { and, asc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
 
 import { addDays } from "../../domain/dates";
 import { createDisposal } from "../../usecases/billing/disposals";
@@ -81,9 +81,13 @@ function recordSalesReturns(session: SeedSession, day: SeedDay): void {
   }
 }
 
-/** 締め日のない販売先：前日の発送ごとに請求書を発行する（未請求の返品伝票もマイナスで載せる） */
+/**
+ * 締め日のない販売先：前の営業日の発送ごとに請求書を発行する（未請求の返品伝票もマイナスで載せる）。
+ * 月曜は土曜の分（日曜は休み）
+ */
 function issuePerShipment(session: SeedSession, day: SeedDay): void {
   const db = session.db;
+  const previous = addDays(day.date, weekday(day.date) === 1 ? -2 : -1);
   const shipments = db
     .select({ id: schema.shipments.id, version: schema.shipments.version })
     .from(schema.shipments)
@@ -91,7 +95,8 @@ function issuePerShipment(session: SeedSession, day: SeedDay): void {
     .innerJoin(schema.partners, eq(schema.partners.id, schema.salesOrders.customerId))
     .where(
       and(
-        eq(schema.shipments.shippedOn, addDays(day.date, -1)),
+        gte(schema.shipments.shippedOn, previous),
+        lte(schema.shipments.shippedOn, addDays(day.date, -1)),
         eq(schema.shipments.cancelled, false),
         isNull(schema.shipments.invoiceId),
         isNull(schema.partners.closingDay),
