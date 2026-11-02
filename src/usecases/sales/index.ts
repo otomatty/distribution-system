@@ -4,6 +4,7 @@ import {
   cancelSalesOrderCommand,
   createSalesOrder,
   defaultShipDate,
+  getLinkedPurchaseOrders,
   getSalesOrder,
   listSalesOrders,
   previewSalesOrder,
@@ -35,6 +36,7 @@ export const salesCommands = {
 export const salesQueries = {
   "salesOrders.list": listSalesOrders,
   "salesOrders.get": getSalesOrder,
+  "salesOrders.linkedPurchaseOrders": getLinkedPurchaseOrders,
   "salesOrders.preview": previewSalesOrder,
   "salesOrders.defaultShipDate": defaultShipDate,
   "shipping.list": shippingList,

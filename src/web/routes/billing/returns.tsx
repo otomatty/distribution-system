@@ -1,11 +1,13 @@
 /**
  * 返品伝票と返還請求書（要件定義書 3.11、5章 受注詳細の返品伝票）。
  * 受注詳細から開く返品伝票の登録（明細ごとの返品数、在庫に戻すか廃棄か）、返品伝票の詳細（取消、返還請求書の発行）。
+ * 請求書で差し引けない返品（どの請求書にも載っていない返品伝票）は、返還請求書を発行して精算し、返還額を入金（相殺）にする。
  */
 import { Hono, type Context } from "hono";
 import type { Child } from "hono/jsx";
 
 import { toBusinessDate } from "../../../domain/dates";
+import type { TaxSummary } from "../../../domain/money";
 import type { DomainError } from "../../../domain/result";
 import type { OrderReturns, SalesReturnView } from "../../../usecases/billing/returns";
 import type { ShortageDetail } from "../../../usecases/stock/queries";
@@ -41,6 +43,10 @@ const RETURN_NOTICES: Readonly<Record<string, string>> = {
   created: "返品伝票を登録しました",
   cancelled: "返品伝票を取り消しました。在庫に戻した分は打ち消しの行で戻しました",
   credit_note: "返還請求書を発行しました（PDF はこの後に作成します）",
+  credit_note_unbilled:
+    "返還請求書を発行しました。返品は精算済みにし（請求書では差し引きません）、返還額を入金（相殺）として記録しました（PDF はこの後に作成します）",
+  credit_note_cancelled:
+    "返還請求書を取り消しました。返還額の入金を取り消し、返品伝票は未請求に戻りました",
 };
 
 // ---- 登録 ---------------------------------------------------------------------
@@ -299,6 +305,105 @@ salesReturnRoutes.post("/new", async (c) => {
 
 // ---- 詳細 ---------------------------------------------------------------------
 
+const UNBILLED_CREDIT_HINT =
+  "この返品はどの請求書にも載っていません。次の請求書で差し引けない場合（この販売先への発送がもうない、" +
+  "返品の額が次の請求を上回るなど）は、返還請求書を発行して精算します。精算した返品は以後の請求書・締め処理に載せず、" +
+  "返還額（税込）は販売先への入金（相殺）として売掛残高を減らします。返還額は後の請求書に消し込むか、返金済みにします。";
+
+function CreditPreview(props: { summary: TaxSummary }) {
+  return (
+    <p class="small">
+      返還額：
+      {props.summary.groups
+        .map((g) => `${rate(g.rateBps)}対象 ${yen(g.subtotal)}（消費税 ${yen(g.tax)}）`)
+        .join("、")}
+      、合計（税込） {yen(props.summary.total)}
+    </p>
+  );
+}
+
+/** 返還請求書の発行のフォーム（請求済みの返品は帳票だけ、請求書で差し引けない返品は精算と返還額） */
+function IssueForm(props: {
+  ret: SalesReturnView["ret"];
+  today: string;
+  unbilled: boolean;
+  total: number | null;
+}) {
+  const { ret } = props;
+  const action = props.unbilled
+    ? paths.creditNoteIssueUnbilled(ret.id)
+    : paths.creditNoteIssue(ret.id);
+  return (
+    <form
+      method="post"
+      action={action}
+      hx-post={action}
+      hx-target="#return-detail"
+      hx-swap="outerHTML"
+      class="inline-form"
+      {...(props.unbilled
+        ? {
+            "hx-confirm": `返品伝票 ${ret.number} の返還請求書を発行し、返品を精算します（請求書では差し引きません）。返還額${props.total === null ? "" : ` ${yen(props.total)}`}を入金（相殺）として記録します。よろしいですか？`,
+          }
+        : {})}
+    >
+      <FormKey />
+      <Version value={ret.version} />
+      <Field label="発行日" name="issuedOn" required>
+        <Input name="issuedOn" type="date" value={props.today} min={ret.returnedOn} />
+      </Field>
+      <button type="submit" class="btn btn-primary">
+        {props.unbilled ? "返還請求書を発行（請求書で差し引けない返品）" : "返還請求書を発行する"}
+      </button>
+    </form>
+  );
+}
+
+/** 返還請求書で精算した返品の返還額の使い道と、返還請求書の取消 */
+function CreditSummary(props: { view: SalesReturnView; canManage: boolean }) {
+  const credit = props.view.credit;
+  const { ret } = props.view;
+  if (!credit) return null;
+  return (
+    <div class="credit-summary">
+      <p>
+        この返品は返還請求書で精算しました（請求書では差し引きません）。返還額（税込）{" "}
+        <strong>{yen(credit.amount)}</strong>：請求書に充てた額 {yen(credit.allocated)}・返金{" "}
+        {yen(credit.refunded)}・残り <strong>{yen(credit.remaining)}</strong>
+      </p>
+      <p>
+        <a href={paths.customerReceipt(credit.paymentId)}>
+          返還額の入金を開く（請求書に消し込む・返金済みにする）
+        </a>
+      </p>
+      {credit.cancellable && props.canManage ? (
+        <details class="disclosure">
+          <summary class="btn btn-secondary btn-sm">返還請求書を取り消す</summary>
+          <form
+            method="post"
+            action={paths.creditNoteCancelUnbilled(ret.id)}
+            hx-post={paths.creditNoteCancelUnbilled(ret.id)}
+            hx-target="#return-detail"
+            hx-swap="outerHTML"
+            hx-confirm={`返還請求書 ${ret.creditNoteNumber ?? ""} を取り消します。返還額の入金を取り消し、返品伝票は未請求に戻ります。よろしいですか？`}
+          >
+            <FormKey />
+            <Version value={ret.version} />
+            <Field label="取り消す理由" name="creditNoteReason" required>
+              <textarea id="f-creditNoteReason" name="reason" rows={2} maxlength={500}></textarea>
+            </Field>
+            <button type="submit" class="btn btn-danger">
+              返還請求書を取り消す
+            </button>
+          </form>
+        </details>
+      ) : credit.cancelBlocker ? (
+        <p class="muted small">{credit.cancelBlocker}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function DetailBody(props: {
   view: SalesReturnView;
   shortages?: readonly ShortageDetail[] | undefined;
@@ -319,7 +424,8 @@ function DetailBody(props: {
           ) : ret.cancelled ? null : (
             <Badge>未請求</Badge>
           )}{" "}
-          {ret.creditNoteNumber ? <Badge kind="success">返還請求書 発行済み</Badge> : null}
+          {ret.creditNoteNumber ? <Badge kind="success">返還請求書 発行済み</Badge> : null}{" "}
+          {ret.creditPaymentId ? <Badge kind="info">返還請求書で精算</Badge> : null}
         </p>
       </PageHeader>
       {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
@@ -338,7 +444,9 @@ function DetailBody(props: {
               "請求書",
               ret.invoiceId ? (
                 <a href={paths.invoice(ret.invoiceId)}>{ret.invoiceNumber}</a>
-              ) : ret.cancelled ? null : (
+              ) : ret.cancelled ? null : ret.creditPaymentId ? (
+                "返還請求書で精算（請求書では差し引きません）"
+              ) : (
                 "未請求（次の請求書にマイナスの明細として載せます）"
               ),
             ],
@@ -392,7 +500,7 @@ function DetailBody(props: {
           </table>
         </div>
       </section>
-      <section class="card">
+      <section class="card" id="credit-note">
         <h2>返還請求書</h2>
         {creditNote.documentId ? (
           <p>
@@ -405,40 +513,27 @@ function DetailBody(props: {
             </a>
           </p>
         ) : null}
+        {props.view.credit ? (
+          <CreditSummary view={props.view} canManage={props.canIssueCreditNote} />
+        ) : null}
         {creditNote.preview && !creditNote.documentId ? (
-          <p class="small">
-            返還額：
-            {creditNote.preview.groups
-              .map((g) => `${rate(g.rateBps)}対象 ${yen(g.subtotal)}（消費税 ${yen(g.tax)}）`)
-              .join("、")}
-            、合計（税込） {yen(creditNote.preview.total)}
-          </p>
+          <CreditPreview summary={creditNote.preview} />
         ) : null}
         {creditNote.issuable ? (
           <>
+            {creditNote.kind === "unbilled" ? <p class="hint">{UNBILLED_CREDIT_HINT}</p> : null}
             {creditNote.obligation === "required" ? (
               <Alert kind="warning">税込1万円以上の返品なので、返還請求書の交付が必要です。</Alert>
             ) : (
               <Alert kind="info">税込1万円未満の返品なので、返還請求書の交付は任意です。</Alert>
             )}
             {props.canIssueCreditNote ? (
-              <form
-                method="post"
-                action={paths.creditNoteIssue(ret.id)}
-                hx-post={paths.creditNoteIssue(ret.id)}
-                hx-target="#return-detail"
-                hx-swap="outerHTML"
-                class="inline-form"
-              >
-                <FormKey />
-                <Version value={ret.version} />
-                <Field label="発行日" name="issuedOn" required>
-                  <Input name="issuedOn" type="date" value={today} min={ret.returnedOn} />
-                </Field>
-                <button type="submit" class="btn btn-primary">
-                  返還請求書を発行する
-                </button>
-              </form>
+              <IssueForm
+                ret={ret}
+                today={today}
+                unbilled={creditNote.kind === "unbilled"}
+                total={creditNote.preview?.total ?? null}
+              />
             ) : (
               <p class="muted">返還請求書を発行する権限がありません。</p>
             )}
@@ -561,4 +656,37 @@ salesReturnRoutes.post("/:id/credit-note", async (c) => {
     formKey(form),
   );
   return afterAction(c, id, result, "credit_note");
+});
+
+/** 請求書で差し引けない返品の返還請求書の発行（返品の精算と、返還額の入金） */
+salesReturnRoutes.post("/:id/credit-note/unbilled", async (c) => {
+  const id = c.req.param("id");
+  const form = await readForm(c);
+  const result = await runCommand(
+    c,
+    "creditNotes.issueUnbilled",
+    {
+      salesReturnId: id,
+      version: Number(str(form, "version")) || 0,
+      issuedOn: str(form, "issuedOn"),
+    },
+    formKey(form),
+  );
+  return afterAction(c, id, result, "credit_note_unbilled");
+});
+
+salesReturnRoutes.post("/:id/credit-note/cancel", async (c) => {
+  const id = c.req.param("id");
+  const form = await readForm(c);
+  const result = await runCommand(
+    c,
+    "creditNotes.cancelUnbilled",
+    {
+      salesReturnId: id,
+      version: Number(str(form, "version")) || 0,
+      reason: str(form, "reason"),
+    },
+    formKey(form),
+  );
+  return afterAction(c, id, result, "credit_note_cancelled");
 });

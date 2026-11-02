@@ -11,7 +11,11 @@ import { SALES_ORDER_STATUS_LABELS, type SalesOrderStatus } from "../../../domai
 import type { OrderReturns } from "../../../usecases/billing/returns";
 import type { MakerDirectPlan } from "../../../usecases/purchasing/maker-direct";
 import type { OrderEvaluation } from "../../../usecases/sales/evaluate";
-import type { SalesOrderView } from "../../../usecases/sales/orders";
+import type {
+  LinkedPurchaseOrder,
+  LinkedPurchaseOrders,
+  SalesOrderView,
+} from "../../../usecases/sales/orders";
 import type { ShortageDetail } from "../../../usecases/stock/queries";
 import { exportCsv } from "../../csv-exports";
 import { bool, formKey, int, readForm, str, strs, type FormData_ } from "../../form";
@@ -44,7 +48,7 @@ import { CsvButton } from "../../views/csv-button";
 import { centiPlain, dateTime, qty, yen } from "../../views/format";
 import { ItemPicker, pickedItemIds } from "../../views/item-picker";
 import { Layout } from "../../views/layout";
-import { MakerDirectOrders } from "../../views/maker-direct";
+import { LinkedPurchaseOrdersNotice, MakerDirectOrders } from "../../views/maker-direct";
 import { OrderLinesTable, SalesOrderStatusBadge } from "../../views/sales";
 import {
   ChargeRow,
@@ -485,10 +489,18 @@ async function renderForm(
   );
 }
 
-function FormPage(props: { title: string; c: Context<AppEnv>; form: unknown; canManage: boolean }) {
+function FormPage(props: {
+  title: string;
+  c: Context<AppEnv>;
+  form: unknown;
+  canManage: boolean;
+  /** 編集する受注から作った、取り消していない発注（保存しても発注は変わらないことを知らせる） */
+  linked?: readonly LinkedPurchaseOrder[] | undefined;
+}) {
   return (
     <Layout title={props.title} actor={props.c.get("actor")} current={paths.salesOrders()}>
       <PageHeader title={props.title} />
+      {props.linked ? <LinkedPurchaseOrdersNotice orders={props.linked} /> : null}
       {props.canManage ? (
         <>
           {props.form}
@@ -707,13 +719,17 @@ function DetailBody(props: {
   canManage: boolean;
   canShip: boolean;
   canReturn: boolean;
+  canIssueCreditNote: boolean;
   notice?: string | undefined;
   error?: DomainError | undefined;
   shortages?: readonly ShortageDetail[] | undefined;
   /** メーカー直の受注から作った発注（メーカー直の受注だけ） */
   makerDirect?: MakerDirectPlan | null | undefined;
+  /** 取消・編集・分割の後に知らせる、受注から作った（取り消していない）発注 */
+  linked?: LinkedPurchaseOrders | null | undefined;
 }) {
   const { order, evaluation, shipments, actions } = props.view;
+  const linked = props.linked ?? null;
   const today = toBusinessDate(new Date());
   return (
     <div id="so-detail">
@@ -742,6 +758,16 @@ function DetailBody(props: {
         </p>
       </PageHeader>
       {props.notice ? <Alert kind="success">{props.notice}</Alert> : null}
+      {linked ? (
+        <LinkedPurchaseOrdersNotice
+          orders={linked.orders}
+          source={
+            linked.salesOrderId === order.id
+              ? null
+              : { id: linked.salesOrderId, number: linked.salesOrderNumber }
+          }
+        />
+      ) : null}
       {props.error?.code === "insufficient_stock" ? (
         <StockErrorSummary error={props.error} shortages={props.shortages} />
       ) : (
@@ -939,18 +965,28 @@ function DetailBody(props: {
         )}
       </section>
       {props.returns ? (
-        <SalesReturnsSection orderId={order.id} data={props.returns} canManage={props.canReturn} />
+        <SalesReturnsSection
+          orderId={order.id}
+          data={props.returns}
+          canManage={props.canReturn}
+          canIssueCreditNote={props.canIssueCreditNote}
+        />
       ) : null}
       {actions.cancel && props.canManage ? (
         <section class="card">
           <h2>受注の取消</h2>
+          <LinkedPurchaseOrdersNotice orders={props.view.linkedPurchaseOrders} />
           <form
             method="post"
             action={paths.salesOrderCancel(order.id)}
             hx-post={paths.salesOrderCancel(order.id)}
             hx-target="#so-detail"
             hx-swap="outerHTML"
-            hx-confirm={`受注 ${order.number} を取り消します。引当を解除します。よろしいですか？`}
+            hx-confirm={`受注 ${order.number} を取り消します。引当を解除します。${
+              props.view.linkedPurchaseOrders.length > 0
+                ? `この受注から作った発注 ${props.view.linkedPurchaseOrders.length} 件（${props.view.linkedPurchaseOrders.map((o) => o.number).join("、")}）は取り消しません。`
+                : ""
+            }よろしいですか？`}
           >
             <FormKey />
             <Version value={order.version} />
@@ -990,10 +1026,24 @@ async function detailBody(
   extra: {
     notice?: string | undefined;
     error?: DomainError | undefined;
+    /** 操作の後に知らせる発注の受注（分割の後は分割元の受注）。発注がなければ何も出さない */
+    linkedFrom?: string | undefined;
   } = {},
 ) {
   const view = await runQuery(c, "salesOrders.get", { id });
   if (!view) return null;
+  const linked =
+    extra.linkedFrom === undefined
+      ? null
+      : extra.linkedFrom === id
+        ? {
+            salesOrderId: id,
+            salesOrderNumber: view.order.number,
+            orders: view.linkedPurchaseOrders,
+          }
+        : await runQuery(c, "salesOrders.linkedPurchaseOrders", {
+            salesOrderId: extra.linkedFrom,
+          });
   const returns = await runQuery(c, "salesReturns.forOrder", { salesOrderId: id });
   const roles = c.get("actor").roles;
   const shortages =
@@ -1017,10 +1067,12 @@ async function detailBody(
       canManage={hasPermission(roles, "salesOrders.manage")}
       canShip={hasPermission(roles, "shipments.manage")}
       canReturn={hasPermission(roles, "salesReturns.manage")}
+      canIssueCreditNote={hasPermission(roles, "invoices.manage")}
       notice={extra.notice}
       error={extra.error}
       shortages={shortages}
       makerDirect={makerDirect}
+      linked={linked}
     />
   );
 }
@@ -1028,6 +1080,7 @@ async function detailBody(
 salesOrderRoutes.get("/:id", async (c) => {
   const body = await detailBody(c, c.req.param("id"), {
     notice: ORDER_NOTICES[c.req.query("notice") ?? ""],
+    linkedFrom: c.req.query("linked") || undefined,
   });
   if (!body) return c.notFound();
   return c.html(
@@ -1043,9 +1096,12 @@ async function afterAction(
   id: string,
   result: { ok: true } | { ok: false; error: DomainError },
   notice: string,
+  /** 操作の結果の、受注から作った（取り消していない）発注。あれば操作の後の詳細で知らせる */
+  linkedPurchaseOrders: readonly LinkedPurchaseOrder[] = [],
 ) {
+  const linkedFrom = result.ok && linkedPurchaseOrders.length > 0 ? id : undefined;
   if (!isHtmx(c)) {
-    if (result.ok) return redirectTo(c, paths.salesOrder(id, { notice }));
+    if (result.ok) return redirectTo(c, paths.salesOrder(id, { notice, linked: linkedFrom }));
     const body = await detailBody(c, id, { error: result.error });
     if (!body) return c.notFound();
     return c.html(
@@ -1058,7 +1114,7 @@ async function afterAction(
   const body = await detailBody(
     c,
     id,
-    result.ok ? { notice: ORDER_NOTICES[notice] } : { error: result.error },
+    result.ok ? { notice: ORDER_NOTICES[notice], linkedFrom } : { error: result.error },
   );
   if (!body) return c.notFound();
   return c.html(body);
@@ -1106,7 +1162,13 @@ salesOrderRoutes.post("/:id/cancel", async (c) => {
     { id, version: int(form, "version"), reason: str(form, "reason") },
     formKey(form),
   );
-  return afterAction(c, id, result, "cancelled");
+  return afterAction(
+    c,
+    id,
+    result,
+    "cancelled",
+    result.ok ? result.value.linkedPurchaseOrders : [],
+  );
 });
 
 // ---- 編集 ---------------------------------------------------------------------
@@ -1162,7 +1224,13 @@ salesOrderRoutes.get("/:id/edit", async (c) => {
     options,
   });
   return c.html(
-    <FormPage title={`受注 ${order.number} の編集`} c={c} form={form} canManage={canManage} />,
+    <FormPage
+      title={`受注 ${order.number} の編集`}
+      c={c}
+      form={form}
+      canManage={canManage}
+      linked={view.linkedPurchaseOrders}
+    />,
   );
 });
 
@@ -1177,7 +1245,14 @@ salesOrderRoutes.post("/:id/edit", async (c) => {
     { id, version, fields: commandFields(values, form) },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, paths.salesOrder(id, { notice: "updated" }));
+  if (result.ok)
+    return redirectTo(
+      c,
+      paths.salesOrder(id, {
+        notice: "updated",
+        linked: result.value.linkedPurchaseOrders.length > 0 ? id : undefined,
+      }),
+    );
   return c.html(
     await renderForm(c, {
       orderId: id,
@@ -1210,6 +1285,7 @@ function SplitForm(props: {
       hx-swap="outerHTML"
       class="form"
     >
+      <LinkedPurchaseOrdersNotice orders={props.view.linkedPurchaseOrders} />
       <ErrorSummary error={props.error} />
       <FormKey />
       <Version value={order.version} />
@@ -1315,7 +1391,14 @@ salesOrderRoutes.post("/:id/split", async (c) => {
     { id, version: int(form, "version"), moves, shipPlannedOn: str(form, "shipPlannedOn") },
     formKey(form),
   );
-  if (result.ok) return redirectTo(c, paths.salesOrder(result.value.id, { notice: "split" }));
+  if (result.ok)
+    return redirectTo(
+      c,
+      paths.salesOrder(result.value.id, {
+        notice: "split",
+        linked: result.value.linkedPurchaseOrders.length > 0 ? id : undefined,
+      }),
+    );
   const view = await runQuery(c, "salesOrders.get", { id });
   if (!view) return c.notFound();
   return c.html(

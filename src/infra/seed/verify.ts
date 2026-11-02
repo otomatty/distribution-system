@@ -6,7 +6,9 @@
  * - 仕入先請求書：支払済みの請求書には有効な支払が1件、支払済みの発注の入荷（受入のあるもの）はすべて支払済みの請求書に入っている
  * - 請求：請求書の消込済みの額 = 有効な消込の合計、状態（未入金・一部入金・入金済み）が消込と合う、
  *   請求した発送は有効な請求書に載っている、締め日のない販売先の発送は今日の分を除いて請求済み、
- *   入金より多く消し込んでいない
+ *   入金より多く消し込み・返金していない
+ * - 返還請求書で精算した返品伝票：請求書に載っていない・取り消していない・返還請求書の番号がある・有効な返還額は1件、
+ *   返還額 = 返還請求書（取り消していない帳票）の金額、返金は返還請求書の返還額だけ
  * - 採番：番号の最大 = 採番の次の番号 − 1
  */
 import { and, count, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
@@ -201,13 +203,15 @@ function billingChecks(db: Db): SeedCheck[] {
       id: schema.customerPayments.id,
       amount: schema.customerPayments.amount,
       used: sql<number>`coalesce((SELECT sum(a.amount) FROM payment_allocations a
-        WHERE a.payment_id = customer_payments.id AND a.cancelled = 0), 0)`,
+        WHERE a.payment_id = customer_payments.id AND a.cancelled = 0), 0)
+        + coalesce((SELECT sum(r.amount) FROM customer_refunds r
+        WHERE r.payment_id = customer_payments.id AND r.cancelled = 0), 0)`,
     })
     .from(schema.customerPayments)
     .where(eq(schema.customerPayments.cancelled, false))
     .all()
     .filter((p) => p.used > p.amount)
-    .map((p) => `入金 ${p.id} ${p.amount} に ${p.used} を消し込んでいる`);
+    .map((p) => `入金 ${p.id} ${p.amount} に ${p.used} を消し込み・返金している`);
   // 締め日のない販売先の発送は、最後の日（今日）の分を除いてすべて請求書に載っている
   const lastShipped = db
     .select({ on: sql<string | null>`max(${schema.shipments.shippedOn})` })
@@ -236,7 +240,66 @@ function billingChecks(db: Db): SeedCheck[] {
     check("請求書の状態 = 消込の状態", status),
     check("請求した発送は有効な請求書に載っている", shipments),
     check("締め日のない販売先の発送は、今日の分を除いて請求済み", unbilled),
-    check("入金より多く消し込んでいない", payments),
+    check("入金より多く消し込み・返金していない", payments),
+    ...creditChecks(db),
+  ];
+}
+
+/** 請求書で差し引けない返品を返還請求書で精算した返品伝票と、その返還額・返金 */
+function creditChecks(db: Db): SeedCheck[] {
+  const credits = db
+    .select({
+      returnNumber: schema.salesReturns.number,
+      invoiceId: schema.salesReturns.invoiceId,
+      cancelled: schema.salesReturns.cancelled,
+      creditNoteNumber: schema.salesReturns.creditNoteNumber,
+      amount: schema.customerPayments.amount,
+      method: schema.customerPayments.method,
+      active: sql<number>`(SELECT count(*) FROM customer_payments p
+        WHERE p.sales_return_id = sales_returns.id AND p.cancelled = 0)`,
+      documentAmount: sql<number | null>`(SELECT d.amount FROM documents d
+        WHERE d.document_type = 'credit_note' AND d.entity_id = sales_returns.id AND d.cancelled = 0
+        ORDER BY d.id DESC LIMIT 1)`,
+    })
+    .from(schema.customerPayments)
+    .innerJoin(
+      schema.salesReturns,
+      eq(schema.salesReturns.id, schema.customerPayments.salesReturnId),
+    )
+    .where(eq(schema.customerPayments.cancelled, false))
+    .all();
+  const settled = credits
+    .filter(
+      (c) =>
+        c.invoiceId !== null ||
+        c.cancelled ||
+        c.creditNoteNumber === null ||
+        c.active !== 1 ||
+        c.method !== "offset",
+    )
+    .map((c) => `${c.returnNumber}（請求書 ${c.invoiceId ?? "なし"}・返還額 ${c.active} 件）`);
+  const amounts = credits
+    .filter((c) => c.documentAmount !== c.amount)
+    .map((c) => `${c.returnNumber} 返還額 ${c.amount} / 返還請求書 ${c.documentAmount ?? "なし"}`);
+  const refunds = db
+    .select({ id: schema.customerRefunds.id })
+    .from(schema.customerRefunds)
+    .innerJoin(
+      schema.customerPayments,
+      eq(schema.customerPayments.id, schema.customerRefunds.paymentId),
+    )
+    .where(
+      and(
+        eq(schema.customerRefunds.cancelled, false),
+        sql`(${schema.customerPayments.salesReturnId} IS NULL OR ${schema.customerPayments.cancelled} = 1)`,
+      ),
+    )
+    .all()
+    .map((r) => `返金 ${r.id} が返還額でない・取り消した入金にある`);
+  return [
+    check("返還請求書で精算した返品伝票は請求書に載らず、有効な返還額が1件", settled),
+    check("返還額 = 返還請求書の金額", amounts),
+    check("返金は有効な返還請求書の返還額だけ", refunds),
   ];
 }
 
@@ -315,13 +378,14 @@ function sequenceChecks(db: Db): SeedCheck[] {
         .map((r) => r.n),
     ],
     [
+      // 取り消した返還請求書は返品伝票から番号が消えるので、帳票の索引の番号で数える
       "creditNote",
       db
-        .select({ n: schema.salesReturns.creditNoteNumber })
-        .from(schema.salesReturns)
-        .where(isNotNull(schema.salesReturns.creditNoteNumber))
+        .select({ n: schema.documents.number })
+        .from(schema.documents)
+        .where(eq(schema.documents.documentType, "credit_note"))
         .all()
-        .map((r) => r.n ?? ""),
+        .map((r) => r.n),
     ],
     [
       "disposal",
@@ -475,6 +539,41 @@ export function verifySeed(db: Db): SeedVerifyResult {
         .select({ n: count() })
         .from(schema.salesReturns)
         .where(isNotNull(schema.salesReturns.creditNoteNumber))
+        .get(),
+    ),
+    返還請求書で精算した返品伝票: n(
+      db
+        .select({ n: count() })
+        .from(schema.customerPayments)
+        .where(
+          and(
+            isNotNull(schema.customerPayments.salesReturnId),
+            eq(schema.customerPayments.cancelled, false),
+          ),
+        )
+        .get(),
+    ),
+    返還額の消込: n(
+      db
+        .select({ n: count() })
+        .from(schema.paymentAllocations)
+        .innerJoin(
+          schema.customerPayments,
+          eq(schema.customerPayments.id, schema.paymentAllocations.paymentId),
+        )
+        .where(
+          and(
+            isNotNull(schema.customerPayments.salesReturnId),
+            eq(schema.paymentAllocations.cancelled, false),
+          ),
+        )
+        .get(),
+    ),
+    返金: n(
+      db
+        .select({ n: count() })
+        .from(schema.customerRefunds)
+        .where(eq(schema.customerRefunds.cancelled, false))
         .get(),
     ),
     販売先廃棄: n(db.select({ n: count() }).from(schema.disposals).get()),

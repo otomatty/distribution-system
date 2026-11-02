@@ -1,5 +1,6 @@
 /**
- * ダッシュボードの「受注・出荷」の欄（要件定義書 3.13）：今日の出荷予定（保管場所別）、出荷可能数が足りない受注、
+ * ダッシュボードの「受注・出荷」の欄（要件定義書 3.13）：今日までの出荷予定（保管場所別。出荷予定日を過ぎた未発送の受注を含み、
+ * その件数を「うち遅れ」に出す）、出荷可能数が足りない受注、
  * 出荷予定日を過ぎた未発送の受注、今日の入荷予定（倉庫で受け取る。件数は仕入の区分の照会で数える）。
  */
 import { paths } from "../paths";
@@ -15,24 +16,21 @@ export const salesSection: DashboardSection = {
       runQuery(c, "sales.dashboard", {}),
       runQuery(c, "receipts.dueToday", {}),
     ]);
+    // 発送リストと同じく、出荷予定日を過ぎた（遅れの）未発送の受注も含めて数える
     const items: DashboardItem[] = d.shipPlanned.map((p) => ({
-      label: `今日の出荷予定（${p.locationName}）`,
+      label: `今日までの出荷予定（${p.locationName}）`,
       count: p.count,
       href:
         p.locationId === null
-          ? paths.salesOrders({
-              status: "received",
-              locationId: "maker",
-              shipFrom: d.today,
-              shipTo: d.today,
-            })
+          ? paths.salesOrders({ status: "received", locationId: "maker", shipTo: d.today })
           : paths.shipping({ date: d.today, locationId: p.locationId }),
+      ...(p.overdue > 0 ? { note: `うち遅れ ${p.overdue} 件` } : {}),
     }));
     if (items.length === 0) {
       items.push({
-        label: "今日の出荷予定",
+        label: "今日までの出荷予定",
         count: 0,
-        href: paths.salesOrders({ status: "received", shipFrom: d.today, shipTo: d.today }),
+        href: paths.salesOrders({ status: "received", shipTo: d.today }),
       });
     }
     items.push(

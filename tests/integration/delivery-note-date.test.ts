@@ -11,10 +11,16 @@ import { as, createEmployee, newKey, systemCommand, systemQuery } from "./helper
 import { documentRow, systemCommandResult } from "./platform-helpers";
 import { createCustomer, createOrder, getOrder, salesSetup, today } from "./sales-fixtures";
 
-async function orderFor(setup: Awaited<ReturnType<typeof salesSetup>>, customerId: string) {
+/** 受注（発送日は受注日より前にできないので、過去の日に発送する受注は受注日もその日以前にする） */
+async function orderFor(
+  setup: Awaited<ReturnType<typeof salesSetup>>,
+  customerId: string,
+  orderedOn = today(),
+) {
   return createOrder({
     customerId,
     locationId: setup.locationId,
+    orderedOn,
     lines: [{ itemId: setup.a.id, quantity: 1, unitPriceCenti: 15_050 }],
   });
 }
@@ -34,7 +40,7 @@ describe("納品書の発行日", () => {
   it("締め日のない販売先は当日が初期値で、受注詳細の発送で変えられる（発送日より前はエラー）", async () => {
     const user = await createEmployee(["sales"]);
     const setup = await salesSetup({ a: 20 });
-    const order = await orderFor(setup, setup.customer.id);
+    const order = await orderFor(setup, setup.customer.id, addDays(today(), -3));
     const page = await (await as(user).get(`/sales-orders/${order.id}`)).text();
     expect(page).toContain("納品書の発行日");
     // 入力欄は空（空なら初期値）。初期値は案内に出す
@@ -83,11 +89,11 @@ describe("納品書の発行日", () => {
     const user = await createEmployee(["sales"]);
     const setup = await salesSetup({ a: 20 });
     const customer = await createClosingCustomer();
-    const order = await orderFor(setup, customer.id);
+    const period = lastMonth();
+    const order = await orderFor(setup, customer.id, period.from);
     const monthEnd = monthRange(monthOf(today())).to;
     const page = await (await as(user).get(`/sales-orders/${order.id}`)).text();
     expect(page).toContain(`空なら初期値（${monthEnd}）にします`);
-    const period = lastMonth();
     const partial = await (
       await as(user).hx(`/sales-orders/${order.id}/ship/delivery-note-date`, {
         shippedOn: period.from,

@@ -107,6 +107,14 @@ body.print.portrait .print-page {
 .print-table.sorting .item {
   width: auto;
 }
+/* 出荷予定日を過ぎた受注（遅れ）。白黒で印刷しても分かるように太字と枠で示す */
+.print-header .overdue {
+  font-weight: 700;
+}
+.print-table th.overdue {
+  border: 0.6mm solid #000;
+  font-weight: 700;
+}
 .memo {
   margin-top: 3mm;
   padding: 2mm;

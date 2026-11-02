@@ -27,6 +27,24 @@ export function shipSalesOrder(status: SalesOrderStatus): Result<"shipped"> {
     : err("invalid_state", "受注済みの受注だけを発送できます");
 }
 
+/**
+ * 発送日は受注日より前にできない（個別の発送・一括発送で共通）。
+ * 一括発送では、受注日が発送日より後の受注は外して続ける（画面に理由を示す）
+ */
+export function validateShippedOn(shippedOn: string, orderedOn: string): Result<void> {
+  if (shippedOn >= orderedOn) return ok(undefined);
+  const message = `発送日は受注日（${orderedOn}）以降にしてください`;
+  return err("validation", message, { fields: [{ field: "shippedOn", message }] });
+}
+
+/**
+ * 発送リストの受注が遅れているか。発送リストは、選んだ日までに出荷予定日が来た未発送の受注を出し、
+ * 出荷予定日が選んだ日より前のものを「遅れ」とする
+ */
+export function isShipmentOverdue(shipPlannedOn: string, date: string): boolean {
+  return shipPlannedOn < date;
+}
+
 export function cancelSalesOrder(status: SalesOrderStatus): Result<"cancelled"> {
   return status === "received"
     ? ok("cancelled")

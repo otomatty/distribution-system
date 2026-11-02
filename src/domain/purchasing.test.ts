@@ -28,6 +28,7 @@ import {
   revertReceipt,
   settledOrderStatus,
   stockQuantity,
+  validateReceivedOn,
   supplierInvoiceAmount,
   type PurchaseOrderLineState,
 } from "./purchasing";
@@ -93,6 +94,14 @@ describe("purchase order", () => {
 });
 
 describe("入荷", () => {
+  it("入荷日は発注日より前にできない（同じ日はできる）", () => {
+    expect(validateReceivedOn("2026-11-02", "2026-11-02").ok).toBe(true);
+    expect(validateReceivedOn("2026-11-05", "2026-11-02").ok).toBe(true);
+    expect(unwrapErr(validateReceivedOn("2026-11-01", "2026-11-02")).fields).toEqual([
+      { field: "receivedOn", message: "入荷日は発注日（2026-11-02）以降にしてください" },
+    ]);
+  });
+
   it("分納：一部だけ入荷すると発注済みのまま", () => {
     const r = recordReceipt(
       "ordered",

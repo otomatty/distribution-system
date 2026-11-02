@@ -1,11 +1,15 @@
 /**
  * 受注（要件定義書 3.8、4章 受注の状態遷移）。登録・編集・分割・取消で引当を更新する。
  * 出荷可能数を超える数量、最低ロット未満、ロットの倍数でない数量は警告だけで、登録はできる。
+ * 受注から作った発注（メーカー直）は、受注の取消・編集・分割で取り消さない。取り消していない発注があれば、
+ * 結果と受注詳細にその発注を返し、画面で「必要なら発注も取り消してください」と知らせる。
  */
 import { z } from "zod";
 
 import { plannedShipDate } from "../../domain/dates";
+import { isActiveLinkedOrder } from "../../domain/maker-direct";
 import { ratesOn } from "../../domain/money";
+import type { PurchaseOrderStatus } from "../../domain/purchasing";
 import { err, ok, type Result } from "../../domain/result";
 import {
   canEditSalesOrder,
@@ -17,7 +21,13 @@ import {
   validateSplit,
 } from "../../domain/sales";
 import { allocationDelta, type AllocationLine } from "../../domain/stock";
-import { defineCommand, defineQuery, STALE_VERSION_MESSAGE, type UsecaseContext } from "../core";
+import {
+  defineCommand,
+  defineQuery,
+  STALE_VERSION_MESSAGE,
+  type QueryContext,
+  type UsecaseContext,
+} from "../core";
 import {
   businessDate,
   centi,
@@ -87,6 +97,28 @@ function fieldError(field: string, message: string): Result<never> {
 
 function meta(ctx: UsecaseContext) {
   return { at: ctx.clock.now().toISOString(), by: ctx.actor.employeeId };
+}
+
+/** 受注から作った（purchase_orders.sales_order_id が受注を指す）発注 */
+export interface LinkedPurchaseOrder {
+  readonly id: string;
+  readonly number: string;
+  readonly status: PurchaseOrderStatus;
+}
+
+/**
+ * 受注から作った発注のうち、取り消していないもの（発注番号の順）。受注の取消・編集・分割では取り消さず、
+ * 画面で知らせるために返す
+ */
+function linkedPurchaseOrders(
+  ctx: Pick<QueryContext, "stores">,
+  salesOrderId: string,
+): LinkedPurchaseOrder[] {
+  return ctx.stores.purchaseOrders
+    .list({ salesOrderId }, 1, 100)
+    .rows.filter((o) => isActiveLinkedOrder(o.status))
+    .map((o) => ({ id: o.id, number: o.number, status: o.status }))
+    .toSorted((a, b) => a.number.localeCompare(b.number));
 }
 
 /** 引当の対象（メーカー直・取消済みは引き当てない） */
@@ -267,7 +299,7 @@ export const updateSalesOrder = defineCommand({
       before,
       after: { ...head.value, lines: lines.value, charges },
     });
-    return ok({ id });
+    return ok({ id, linkedPurchaseOrders: linkedPurchaseOrders(ctx, id) });
   },
 });
 
@@ -292,7 +324,7 @@ export const cancelSalesOrderCommand = defineCommand({
       before: { status: before.status },
       after: { status: next.value, reason },
     });
-    return ok({ id });
+    return ok({ id, linkedPurchaseOrders: linkedPurchaseOrders(ctx, id) });
   },
 });
 
@@ -375,7 +407,8 @@ export const splitSalesOrder = defineCommand({
       action: "create_by_split",
       after: { number, splitFromId: id, ...head, lines: moved },
     });
-    return ok({ id: newId, number });
+    // 発送前の受注から作った発注は元の受注に結びついたまま（分割した受注には結びつけない）
+    return ok({ id: newId, number, linkedPurchaseOrders: linkedPurchaseOrders(ctx, id) });
   },
 });
 
@@ -432,6 +465,8 @@ export const listSalesOrders = defineQuery({
 
 export interface SalesOrderView {
   readonly order: SalesOrderDetail;
+  /** この受注から作った、取り消していない発注（受注の取消・編集・分割の画面で知らせる） */
+  readonly linkedPurchaseOrders: readonly LinkedPurchaseOrder[];
   readonly evaluation: OrderEvaluation;
   readonly shipments: readonly (ShipmentHistoryRow & {
     /** 発送を取り消せるか（状態と請求書の有無。権限は画面で判定する） */
@@ -474,6 +509,7 @@ export const getSalesOrder = defineQuery({
       );
     return {
       order,
+      linkedPurchaseOrders: linkedPurchaseOrders(ctx, id),
       evaluation,
       shipments,
       actions: {
@@ -482,6 +518,30 @@ export const getSalesOrder = defineQuery({
         cancel: open,
         split: open && order.lines.reduce((s, l) => s + l.quantity, 0) > 1,
       },
+    };
+  },
+});
+
+export interface LinkedPurchaseOrders {
+  readonly salesOrderId: string;
+  readonly salesOrderNumber: string;
+  readonly orders: readonly LinkedPurchaseOrder[];
+}
+
+/**
+ * 受注から作った、取り消していない発注（受注の編集・分割の画面と、操作の後の受注詳細で知らせる。
+ * 分割した後は、分割元の受注の発注を分割した受注の詳細に出す）
+ */
+export const getLinkedPurchaseOrders = defineQuery({
+  permission: "view",
+  input: z.object({ salesOrderId: idSchema }),
+  run(ctx, { salesOrderId }): LinkedPurchaseOrders | null {
+    const order = ctx.stores.salesOrders.get(salesOrderId);
+    if (!order) return null;
+    return {
+      salesOrderId: order.id,
+      salesOrderNumber: order.number,
+      orders: linkedPurchaseOrders(ctx, order.id),
     };
   },
 });

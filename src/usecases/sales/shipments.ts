@@ -11,9 +11,11 @@ import {
   cancelShipment,
   defaultDeliveryNoteDate,
   deliveryNoteIssueDate,
+  isShipmentOverdue,
   planBulkShipment,
   shippingMatrix,
   shipSalesOrder,
+  validateShippedOn,
   type ShippingMatrix,
 } from "../../domain/sales";
 import {
@@ -70,6 +72,8 @@ function shipOrder(
 ): Result<ShipResult> {
   const next = shipSalesOrder(order.status);
   if (!next.ok) return err(next.error.code, `${order.number}：${next.error.message}`);
+  const dated = validateShippedOn(shippedOn, order.orderedOn);
+  if (!dated.ok) return dated;
   const issuedOn = deliveryNoteIssueDate({
     shippedOn,
     today: ctx.clock.today(),
@@ -261,12 +265,16 @@ export interface BulkCheckShortage {
 }
 
 export interface BulkCheck {
+  /** 確かめた発送日 */
+  readonly shippedOn: string;
   /** 発送できる受注（受注番号の順） */
   readonly shippable: readonly BulkCheckOrder[];
   /** 在庫が足りない受注と、足りない商品と数 */
   readonly short: readonly (BulkCheckOrder & {
     readonly shortages: readonly BulkCheckShortage[];
   })[];
+  /** 受注日が発送日より後の受注（その発送日では発送できないので外す。在庫も使わない） */
+  readonly tooEarly: readonly (BulkCheckOrder & { readonly orderedOn: string })[];
   /** 対象外（発送済み・取消・メーカー直・見つからないなど）の受注の ID */
   readonly ineligibleIds: readonly string[];
 }
@@ -285,6 +293,7 @@ interface BulkPlan {
       readonly shortBy: number;
     }[];
   })[];
+  readonly tooEarly: readonly Planned[];
   readonly ineligibleIds: readonly string[];
 }
 
@@ -295,22 +304,29 @@ function hasLocation(
 }
 
 /**
- * 一括発送の計画。受注番号の順に保管場所の現在庫から引いていき、足りない受注を見つける。
- * 照会（確認の画面）と一括発送のコマンドで同じ計画を使う。
+ * 一括発送の計画。受注日が発送日より後の受注は外し（validateShippedOn）、残りを受注番号の順に
+ * 保管場所の現在庫から引いていき、足りない受注を見つける。照会（確認の画面）と一括発送のコマンドで同じ計画を使う。
  */
 function planBulk(
   ctx: Pick<QueryContext, "stores">,
   requests: readonly { readonly id: string; readonly version: number | null }[],
+  shippedOn: string,
 ): BulkPlan {
   const eligible: Planned[] = [];
+  const tooEarly: Planned[] = [];
   const ineligibleIds: string[] = [];
   for (const r of requests) {
     const order = ctx.stores.salesOrders.get(r.id);
-    if (order && order.status === "received" && hasLocation(order))
-      eligible.push({ order, expectedVersion: r.version ?? order.version });
-    else ineligibleIds.push(r.id);
+    if (!order || order.status !== "received" || !hasLocation(order)) {
+      ineligibleIds.push(r.id);
+      continue;
+    }
+    const planned = { order, expectedVersion: r.version ?? order.version };
+    if (validateShippedOn(shippedOn, order.orderedOn).ok) eligible.push(planned);
+    else tooEarly.push(planned);
   }
   eligible.sort((a, b) => a.order.number.localeCompare(b.order.number));
+  tooEarly.sort((a, b) => a.order.number.localeCompare(b.order.number));
   const byLocation = new Map<string, Planned[]>();
   for (const p of eligible) {
     const list = byLocation.get(p.order.locationId);
@@ -338,6 +354,7 @@ function planBulk(
       const s = short.get(p);
       return s ? [s] : [];
     }),
+    tooEarly,
     ineligibleIds,
   };
 }
@@ -353,8 +370,9 @@ function checkOrderView(p: Planned): BulkCheckOrder {
   };
 }
 
-function checkView(plan: BulkPlan): BulkCheck {
+function checkView(plan: BulkPlan, shippedOn: string): BulkCheck {
   return {
+    shippedOn,
     shippable: plan.shippable.map(checkOrderView),
     short: plan.short.map((s) => ({
       ...checkOrderView(s),
@@ -366,29 +384,37 @@ function checkView(plan: BulkPlan): BulkCheck {
         shortBy: x.shortBy,
       })),
     })),
+    tooEarly: plan.tooEarly.map((p) => ({ ...checkOrderView(p), orderedOn: p.order.orderedOn })),
     ineligibleIds: plan.ineligibleIds,
   };
 }
 
 const orderIdsInput = z.array(idSchema).max(200, "一度に発送できるのは200件までです");
 
-/** 一括発送の確認：選んだ受注のうち、在庫が足りずに発送できないもの */
+/**
+ * 一括発送の確認：選んだ受注のうち、在庫が足りずに発送できないものと、受注日が発送日より後のもの。
+ * 発送日を指定しなければ今日で確かめる
+ */
 export const checkBulkShipment = defineQuery({
   permission: "view",
-  input: z.object({ orderIds: orderIdsInput }),
-  run(ctx, { orderIds }): BulkCheck {
+  input: z.object({ orderIds: orderIdsInput, shippedOn: optionalBusinessDate }),
+  run(ctx, { orderIds, shippedOn }): BulkCheck {
+    const date = shippedOn ?? ctx.clock.today();
     return checkView(
       planBulk(
         ctx,
         [...new Set(orderIds)].map((id) => ({ id, version: null })),
+        date,
       ),
+      date,
     );
   },
 });
 
 /**
  * 一括発送。選んだ受注（exclude で外したものを除く）を1つのトランザクションで発送する。
- * 在庫が足りない受注が1件でもあれば何も発送せずに insufficient_stock を返す（画面で「外して続ける」か「中止」を選ぶ）。
+ * 在庫が足りない受注が1件でもあれば何も発送せずに insufficient_stock を、受注日が発送日より後の受注が
+ * 1件でもあれば何も発送せずに validation（発送日の欄）を返す（画面で理由を示し、「外して続ける」か「中止」を選ぶ）。
  * 受注の版番号が確認の画面を開いた後に変わっていれば conflict。
  */
 export const bulkShip = defineCommand({
@@ -407,13 +433,20 @@ export const bulkShip = defineCommand({
     const excluded = new Set(exclude);
     const targets = orders.filter((o) => !excluded.has(o.id));
     if (targets.length === 0) return err("validation", "発送する受注を選んでください");
-    const plan = planBulk(ctx, targets);
+    const plan = planBulk(ctx, targets, shippedOn);
     if (plan.ineligibleIds.length > 0) {
       return err(
         "invalid_state",
         "発送できない状態の受注が含まれています。画面を開き直してください",
         { details: plan.ineligibleIds },
       );
+    }
+    if (plan.tooEarly.length > 0) {
+      const message = `受注日が発送日（${shippedOn}）より後の受注があります。外して続けるか、発送日を変えてください`;
+      return err("validation", message, {
+        fields: [{ field: "shippedOn", message }],
+        details: plan.tooEarly.map((p) => `${p.order.number}（受注日 ${p.order.orderedOn}）`),
+      });
     }
     if (plan.short.length > 0) {
       return err("insufficient_stock", "在庫が足りない受注があります", {
@@ -468,35 +501,58 @@ export interface ShippingListItem {
   readonly onHand: number;
 }
 
+/** 発送リストの受注（列の販売先の受注と、一括発送の表の行） */
+export interface ShippingListOrderRef {
+  readonly id: string;
+  readonly number: string;
+  readonly memo: string | null;
+  readonly shipPlannedOn: string;
+  /** 出荷予定日が表示する日より前（遅れ） */
+  readonly overdue: boolean;
+}
+
 export interface ShippingListCustomer {
   readonly id: string;
   readonly name: string;
   readonly honorific: "御中" | "様";
-  readonly orders: readonly {
-    readonly id: string;
-    readonly number: string;
-    readonly memo: string | null;
-  }[];
+  readonly orders: readonly ShippingListOrderRef[];
+  /** 遅れの受注がある */
+  readonly overdue: boolean;
 }
 
 export interface ShippingList {
+  /** 表示する日（この日までに出荷予定日が来た未発送の受注を出す） */
   readonly date: string;
   readonly locationId: string;
   readonly locationName: string;
   /** 行（商品コードの順） */
   readonly items: readonly ShippingListItem[];
-  /** 列（その日に受注がある販売先だけ。読み仮名の順、列は販売先の ID で管理する） */
+  /** 列（受注がある販売先だけ。読み仮名の順、列は販売先の ID で管理する） */
   readonly customers: readonly ShippingListCustomer[];
   readonly matrix: ShippingMatrix;
   /** 発送する受注（受注番号の順） */
-  readonly orders: readonly BulkCheckOrder[];
+  readonly orders: readonly (BulkCheckOrder & {
+    readonly shipPlannedOn: string;
+    readonly overdue: boolean;
+  })[];
+  /** 遅れの受注（出荷予定日の古い順、同じ日なら受注番号の順） */
+  readonly overdueOrders: readonly (ShippingListOrderRef & { readonly customerName: string })[];
   /** 今の在庫では発送できない受注の ID（受注番号の順に在庫を引いた場合） */
   readonly shortOrderIds: readonly string[];
-  /** 同じ出荷予定日 × 保管場所で、すでに発送した受注の発送 ID */
+  /** 受注日が今日より後で、今日の発送日では発送できない受注の ID */
+  readonly tooEarlyOrderIds: readonly string[];
+  /**
+   * 発送済みの受注の発送 ID：この保管場所の、出荷予定日がこの日までで、この日に発送したもの
+   * （この日の発送リストから発送した受注。遅れて発送した受注も含む）
+   */
   readonly shippedShipmentIds: readonly string[];
 }
 
-/** 発送リスト：出荷予定日 × 保管場所の、行が商品・列が販売先・右端が合計の表（受注済みの受注） */
+/**
+ * 発送リスト：表示する日 × 保管場所の、行が商品・列が販売先・右端が合計の表。
+ * 受注済み（メーカー直を除く）で、出荷予定日がこの日までの受注をすべて出す。出荷予定日がこの日より前の受注は「遅れ」。
+ * 一括発送・印刷・仕分けリスト・納品書の一括 PDF は、どれもこの受注を対象にする
+ */
 export const shippingList = defineQuery({
   permission: "view",
   input: z.object({ date: businessDate, locationId: idSchema }),
@@ -506,6 +562,7 @@ export const shippingList = defineQuery({
     const orders = ctx.stores.salesOrders.forShipping(date, locationId);
     const items = new Map<string, ShippingListItem>();
     const customers = new Map<string, { customer: ShippingListCustomer; kana: string }>();
+    const refs = new Map<string, ShippingListOrderRef & { customerName: string }>();
     for (const o of orders) {
       for (const l of o.lines) {
         items.set(l.itemId, {
@@ -516,14 +573,24 @@ export const shippingList = defineQuery({
           onHand: l.onHand,
         });
       }
+      const ref: ShippingListOrderRef = {
+        id: o.id,
+        number: o.number,
+        memo: o.memo,
+        shipPlannedOn: o.shipPlannedOn,
+        overdue: isShipmentOverdue(o.shipPlannedOn, date),
+      };
+      refs.set(o.id, { ...ref, customerName: o.customerName });
       const c = customers.get(o.customerId);
+      const list = [...(c?.customer.orders ?? []), ref];
       customers.set(o.customerId, {
         kana: o.customerKana,
         customer: {
           id: o.customerId,
           name: o.customerName,
           honorific: o.customerHonorific,
-          orders: [...(c?.customer.orders ?? []), { id: o.id, number: o.number, memo: o.memo }],
+          orders: list,
+          overdue: list.some((x) => x.overdue),
         },
       });
     }
@@ -532,15 +599,23 @@ export const shippingList = defineQuery({
     const columns = [...customers.values()]
       .toSorted((a, b) => a.kana.localeCompare(b.kana, "ja"))
       .map((c) => c.customer);
+    // 一括発送の確認の発送日の初期値（今日）で、在庫と受注日を確かめる
+    const today = ctx.clock.today();
     const check = checkView(
       planBulk(
         ctx,
         orders.map((o) => ({ id: o.id, version: null })),
+        today,
       ),
+      today,
     );
     const shipped = ctx.stores.shipments.activeForOrders(
       ctx.stores.salesOrders.shippedIds(date, locationId),
     );
+    const withPlan = (o: BulkCheckOrder) => {
+      const ref = refs.get(o.id);
+      return { ...o, shipPlannedOn: ref?.shipPlannedOn ?? date, overdue: ref?.overdue ?? false };
+    };
     return {
       date,
       locationId,
@@ -552,10 +627,17 @@ export const shippingList = defineQuery({
         rows.map((i) => i.id),
         columns.map((c) => c.id),
       ),
-      orders: [...check.shippable, ...check.short].toSorted((a, b) =>
-        a.number.localeCompare(b.number),
-      ),
+      orders: [...check.shippable, ...check.short, ...check.tooEarly]
+        .toSorted((a, b) => a.number.localeCompare(b.number))
+        .map(withPlan),
+      overdueOrders: [...refs.values()]
+        .filter((r) => r.overdue)
+        .toSorted(
+          (a, b) =>
+            a.shipPlannedOn.localeCompare(b.shipPlannedOn) || a.number.localeCompare(b.number),
+        ),
       shortOrderIds: check.short.map((s) => s.id),
+      tooEarlyOrderIds: check.tooEarly.map((s) => s.id),
       shippedShipmentIds: shipped.map((s) => s.id),
     };
   },

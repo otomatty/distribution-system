@@ -13,6 +13,7 @@ import {
   deliveryNoteIssueDate,
   invoiceStatus,
   isPriceOverridden,
+  isShipmentOverdue,
   lotWarnings,
   orderAmounts,
   planBulkShipment,
@@ -22,6 +23,7 @@ import {
   shipSalesOrder,
   validateAllocations,
   validateOrderLines,
+  validateShippedOn,
   validateSplit,
 } from "./sales";
 
@@ -278,6 +280,28 @@ describe("一括発送の計画", () => {
         },
       ),
     );
+  });
+});
+
+describe("発送日と発送リストの遅れ", () => {
+  it("発送日は受注日より前にできない（同じ日はできる）", () => {
+    expect(validateShippedOn("2026-11-02", "2026-11-02").ok).toBe(true);
+    expect(validateShippedOn("2026-11-03", "2026-11-02").ok).toBe(true);
+    const r = validateShippedOn("2026-11-01", "2026-11-02");
+    expect(r).toEqual({
+      ok: false,
+      error: {
+        code: "validation",
+        message: "発送日は受注日（2026-11-02）以降にしてください",
+        fields: [{ field: "shippedOn", message: "発送日は受注日（2026-11-02）以降にしてください" }],
+      },
+    });
+  });
+
+  it("出荷予定日が表示する日より前の受注が遅れ（同じ日は遅れでない）", () => {
+    expect(isShipmentOverdue("2026-10-30", "2026-11-02")).toBe(true);
+    expect(isShipmentOverdue("2026-11-02", "2026-11-02")).toBe(false);
+    expect(isShipmentOverdue("2026-11-03", "2026-11-02")).toBe(false);
   });
 });
 

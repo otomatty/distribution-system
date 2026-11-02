@@ -2,6 +2,7 @@
  * 請求書（要件定義書 3.10、4章 請求書の状態遷移）。
  * - 締め日のない販売先は発送ごとに発行し、締め日のある販売先は締め処理で締め期間内の未請求の発送をまとめて発行する（繰越なし）
  * - 発行で明細・金額・宛名・自社情報を保存し、対象の発送と未請求の返品伝票（マイナスの明細）を請求書に結びつけ、帳票を発行する
+ *   （返還請求書で精算した返品伝票は未請求に含めず、請求書にも締め処理にも載せない）
  * - 取消は消込がないときだけ（理由が必須）。対象の発送と返品伝票は未請求に戻り、帳票は取消済みになる
  * - 再発行は取消と同時に、同じ発送・返品伝票で新しい番号の請求書を発行する（元の請求書を reissued_from_id で指す）
  */
@@ -337,10 +338,10 @@ function loadReturns(
     const r = byId.get(ref.id);
     if (!r || r.customerId !== customerId)
       return err("validation", "対象外の返品伝票が含まれています");
-    if (r.cancelled || r.invoiceId !== null)
+    if (r.cancelled || r.invoiceId !== null || r.creditPaymentId !== null)
       return err(
         "conflict",
-        `返品伝票 ${r.number} はすでに請求書に載っているか、取り消されています`,
+        `返品伝票 ${r.number} はすでに請求書に載っているか、返還請求書で精算したか、取り消されています`,
       );
     if (r.version !== ref.version) return conflict();
     out.push(r);

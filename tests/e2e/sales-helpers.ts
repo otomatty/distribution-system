@@ -45,18 +45,39 @@ export async function addStock(
   await expect(page.getByRole("heading", { name: /^調整 SOP-/ })).toBeVisible();
 }
 
-/** 受注を画面から登録して、受注番号を返す（出荷予定日は今日） */
+/** 受注を画面から登録して、受注番号を返す（受注日・出荷予定日は指定がなければ今日） */
 export async function registerSalesOrder(
   page: Page,
-  order: { customer: string; location: string; itemName: string; quantity: number },
+  order: {
+    customer: string;
+    location: string;
+    itemName: string;
+    quantity: number;
+    orderedOn?: string;
+    shipPlannedOn?: string;
+  },
 ): Promise<string> {
   await page.goto("/sales-orders/new");
   await page.getByLabel(/^販売先/).selectOption({ label: order.customer });
   await page.getByLabel(/^出荷元の保管場所/).selectOption({ label: order.location });
+  if (order.orderedOn) {
+    // 受注日を変えると明細を計算し直す（その応答を待ってから商品を足す）
+    const recalc = page.waitForResponse((r) => r.url().includes("/sales-orders/form/recalc"));
+    await page.getByLabel(/^受注日/).fill(order.orderedOn);
+    await page.getByLabel(/^受注日/).blur();
+    await recalc;
+  }
   await pickItem(page, order.itemName, "#so-lines");
   const quantity = page.getByLabel(`${order.itemName}の数量`, { exact: true });
   await quantity.fill(String(order.quantity));
   await quantity.blur();
+  if (order.shipPlannedOn) {
+    // 販売先を選ぶと出荷予定日の欄を初期値で差し替えるので、最後に入れて値を確かめる
+    const shipDate = page.getByLabel(/^出荷予定日/);
+    await shipDate.fill(order.shipPlannedOn);
+    await shipDate.blur();
+    await expect(shipDate).toHaveValue(order.shipPlannedOn);
+  }
   await page.getByRole("button", { name: "登録する" }).click();
   const heading = page.getByRole("heading", { name: /^受注 SO-\d{4}-\d{6}$/ });
   await expect(heading).toBeVisible();

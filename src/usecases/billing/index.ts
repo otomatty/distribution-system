@@ -22,18 +22,22 @@ import {
   allocateCustomerPayment,
   cancelAllocationCommand,
   cancelCustomerPayment,
+  cancelCustomerRefund,
   createCustomerPayment,
   getCustomerPayment,
   listCustomerPayments,
   listOpenInvoices,
   listReceivables,
   listReceiptSchedule,
+  refundCustomerCredit,
 } from "./payments";
 import {
   cancelSalesReturnCommand,
+  cancelUnbilledCreditNoteCommand,
   createSalesReturn,
   getSalesReturn,
   issueCreditNote,
+  issueUnbilledCreditNote,
   orderReturns,
 } from "./returns";
 
@@ -45,9 +49,13 @@ export const billingCommands = {
   "salesReturns.create": createSalesReturn,
   "salesReturns.cancel": cancelSalesReturnCommand,
   "creditNotes.issue": issueCreditNote,
+  "creditNotes.issueUnbilled": issueUnbilledCreditNote,
+  "creditNotes.cancelUnbilled": cancelUnbilledCreditNoteCommand,
   "customerPayments.create": createCustomerPayment,
   "customerPayments.allocate": allocateCustomerPayment,
   "customerPayments.cancel": cancelCustomerPayment,
+  "customerPayments.refund": refundCustomerCredit,
+  "customerRefunds.cancel": cancelCustomerRefund,
   "paymentAllocations.cancel": cancelAllocationCommand,
   "disposals.create": createDisposal,
 } as const;

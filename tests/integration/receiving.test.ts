@@ -55,6 +55,49 @@ describe("入荷予定一覧", () => {
   });
 });
 
+describe("入荷日と発注日", () => {
+  it("入荷日は発注日より前にできない（業務エラー、入荷確認の画面では入荷日の欄に出す）。同じ日はできる", async () => {
+    const user = await createEmployee(["purchasing"]);
+    const { supplierId, locationId, a } = await purchasingSetup();
+    const po = await createConfirmedOrder({
+      supplierId,
+      locationId,
+      orderedOn: "2026-10-05",
+      lines: [{ itemId: a.id, quantity: 2 }],
+    });
+    const view = await orderView(po.id);
+    const early = await systemCommandResult("receipts.record", {
+      purchaseOrderId: po.id,
+      version: view.order.version,
+      receivedOn: "2026-10-04",
+      lines: [{ lineId: view.order.lines[0]!.id, accepted: 1, returned: 0 }],
+    });
+    expect(early).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation",
+        fields: [
+          { field: "receivedOn", message: "入荷日は発注日（2026-10-05）以降にしてください" },
+        ],
+      },
+    });
+    expect(await onHand(a.id, locationId)).toBe(0);
+    const page = await (await as(user).get(`/receiving/${po.id}`)).text();
+    expect(page).toContain('min="2026-10-05"');
+    const res = await as(user).hx(
+      `/receiving/${po.id}`,
+      receiveForm(
+        view,
+        { [view.order.lines[0]!.id]: { accepted: "1" } },
+        { receivedOn: "2026-10-04" },
+      ),
+    );
+    expect(await res.text()).toContain("入荷日は発注日（2026-10-05）以降にしてください");
+    await receive(po.id, [1], { receivedOn: "2026-10-05" });
+    expect(await onHand(a.id, locationId)).toBe(12);
+  });
+});
+
 describe("入荷確認（分納）", () => {
   it("一部の入荷では発注済みのまま、残りの入荷で入荷済みになり、在庫は受入数 × 入数だけ増える", async () => {
     const user = await createEmployee(["sales"]);
