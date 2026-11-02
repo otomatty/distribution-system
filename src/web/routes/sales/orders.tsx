@@ -679,14 +679,18 @@ salesOrderRoutes.post("/form/ship-date", async (c) => {
 
 const DELIVERY_NOTE_DATE_ID = "delivery-note-date";
 
-/** 納品書の発行日の欄（発送日を変えると、初期値を計算し直してこの欄だけを差し替える） */
-function DeliveryNoteDateField(props: { value: string }) {
+/**
+ * 納品書の発行日の欄。空なら、発送するときに発送日から初期値を決める（当日、月締めの販売先は締め日）。
+ * 初期値は案内に出し、発送日を変えると計算し直してこの欄だけを差し替える。初期値を入力欄に入れておくと、
+ * 発送日を変えた直後に送ったときに古い初期値で発行してしまうため、入力欄は空にしておく
+ */
+function DeliveryNoteDateField(props: { defaultOn: string | null; value: string }) {
   return (
     <div id={DELIVERY_NOTE_DATE_ID}>
       <Field
         label="納品書の発行日"
         name="deliveryNoteIssuedOn"
-        hint="初期値は当日（月締めの販売先は、発送日を含む締め期間の締め日）。空なら初期値にします"
+        hint={`空なら初期値${props.defaultOn ? `（${props.defaultOn}）` : ""}にします。初期値は当日、月締めの販売先は発送日を含む締め期間の締め日です`}
       >
         <Input name="deliveryNoteIssuedOn" type="date" value={props.value} />
       </Field>
@@ -815,7 +819,7 @@ function DetailBody(props: {
                 <Input name="shippedOn" type="date" value={today} max={today} />
               </Field>
             </div>
-            <DeliveryNoteDateField value={props.deliveryNoteDefault ?? today} />
+            <DeliveryNoteDateField defaultOn={props.deliveryNoteDefault ?? null} value="" />
             <button type="submit" class="btn btn-primary btn-lg">
               発送する
             </button>
@@ -1084,9 +1088,13 @@ salesOrderRoutes.post("/:id/ship/delivery-note-date", async (c) => {
     salesOrderId: c.req.param("id"),
     shippedOn: str(form, "shippedOn"),
   });
-  // 発送日が正しくなければ、入力中の発行日のまま（発送するときに検証する）
-  const value = result.ok && result.value ? result.value : str(form, "deliveryNoteIssuedOn");
-  return c.html(<DeliveryNoteDateField value={value} />);
+  // 入力中の発行日はそのまま残す。発送日が正しくなければ初期値は出さない（発送するときに検証する）
+  return c.html(
+    <DeliveryNoteDateField
+      defaultOn={result.ok ? result.value : null}
+      value={str(form, "deliveryNoteIssuedOn")}
+    />,
+  );
 });
 
 salesOrderRoutes.post("/:id/cancel", async (c) => {

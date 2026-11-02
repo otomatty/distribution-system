@@ -37,15 +37,22 @@ describe("納品書の発行日", () => {
     const order = await orderFor(setup, setup.customer.id);
     const page = await (await as(user).get(`/sales-orders/${order.id}`)).text();
     expect(page).toContain("納品書の発行日");
-    expect(page).toContain(`name="deliveryNoteIssuedOn" type="date" value="${today()}"`);
-    // 発送日を変えると、初期値を計算し直す（締め日のない販売先は当日のまま）
+    // 入力欄は空（空なら初期値）。初期値は案内に出す
+    expect(page).toContain(`name="deliveryNoteIssuedOn" type="date" value=""`);
+    expect(page).toContain(`空なら初期値（${today()}）にします`);
+    // 発送日を変えると、初期値を計算し直す（締め日のない販売先は当日のまま）。入力中の値は残す
     const partial = await (
       await as(user).hx(`/sales-orders/${order.id}/ship/delivery-note-date`, {
         shippedOn: addDays(today(), -3),
-        deliveryNoteIssuedOn: today(),
+        deliveryNoteIssuedOn: addDays(today(), -1),
       })
     ).text();
-    expect(partial).toContain(`value="${today()}"`);
+    expect(partial).toContain(`空なら初期値（${today()}）にします`);
+    expect(partial).toContain(`value="${addDays(today(), -1)}"`);
+    const broken = await (
+      await as(user).hx(`/sales-orders/${order.id}/ship/delivery-note-date`, { shippedOn: "x" })
+    ).text();
+    expect(broken).toContain("空なら初期値にします");
 
     const version = String((await getOrder(order.id)).order.version);
     const shippedOn = addDays(today(), -3);
@@ -79,14 +86,14 @@ describe("納品書の発行日", () => {
     const order = await orderFor(setup, customer.id);
     const monthEnd = monthRange(monthOf(today())).to;
     const page = await (await as(user).get(`/sales-orders/${order.id}`)).text();
-    expect(page).toContain(`name="deliveryNoteIssuedOn" type="date" value="${monthEnd}"`);
+    expect(page).toContain(`空なら初期値（${monthEnd}）にします`);
     const period = lastMonth();
     const partial = await (
       await as(user).hx(`/sales-orders/${order.id}/ship/delivery-note-date`, {
         shippedOn: period.from,
       })
     ).text();
-    expect(partial).toContain(`value="${period.to}"`);
+    expect(partial).toContain(`空なら初期値（${period.to}）にします`);
     expect(
       await systemQuery("shipments.deliveryNoteDate", {
         salesOrderId: "missing",
